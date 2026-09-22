@@ -44,6 +44,8 @@ py-modules = [
   "discovery",
   "semver",
   "doctor",
+  "halogen_deploy",
+  "profiles",
 ]
 packages = ["halobridge_data"]
 
