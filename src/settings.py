@@ -166,6 +166,36 @@ class DashboardConfig:
 
 
 @dataclass
+class DeployConfig:
+    """Profile deployment: writing quadlet files from the dashboard.
+
+    allowed_roots bounds every host path a profile may mount; everything
+    outside these roots is rejected before any file is written.
+    """
+
+    enabled: bool = True
+    allowed_roots: list[Path] = field(default_factory=lambda: [Path.home()])
+    models_root: Path = field(default_factory=lambda: Path.home() / "halogen/models")
+    cache_root: Path = field(default_factory=lambda: Path.home() / "halogen/cache")
+
+    @classmethod
+    def from_section(cls, s: dict[str, Any]) -> "DeployConfig":
+        raw_roots = s.get("allowed_roots") or [str(Path.home())]
+        if not isinstance(raw_roots, list) or not raw_roots:
+            raise ConfigError("deploy.allowed_roots muss eine Liste von Pfaden sein")
+        return cls(
+            enabled=_as_bool(s, "enabled", True),
+            allowed_roots=[_expand(str(r)) for r in raw_roots],
+            models_root=_expand(
+                _as_str(s, "models_root", str(Path.home() / "halogen/models"))
+            ),
+            cache_root=_expand(
+                _as_str(s, "cache_root", str(Path.home() / "halogen/cache"))
+            ),
+        )
+
+
+@dataclass
 class SecurityConfig:
     auth_token: str = ""
     allow_install: bool = True
@@ -184,18 +214,27 @@ class Config:
     models: ModelsConfig = field(default_factory=ModelsConfig)
     updates: UpdatesConfig = field(default_factory=UpdatesConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    deploy: DeployConfig = field(default_factory=DeployConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     source: Path | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], source: Path | None = None) -> "Config":
-        for unknown in set(data) - {"router", "models", "updates", "dashboard", "security"}:
+        for unknown in set(data) - {
+            "router",
+            "models",
+            "updates",
+            "dashboard",
+            "deploy",
+            "security",
+        }:
             raise ConfigError(f"Unbekannter Konfigurationsbereich: {unknown}")
         return cls(
             router=RouterConfig.from_section(data.get("router", {})),
             models=ModelsConfig.from_section(data.get("models", {})),
             updates=UpdatesConfig.from_section(data.get("updates", {})),
             dashboard=DashboardConfig.from_section(data.get("dashboard", {})),
+            deploy=DeployConfig.from_section(data.get("deploy", {})),
             security=SecurityConfig.from_section(data.get("security", {})),
             source=source,
         )

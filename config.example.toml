@@ -72,6 +72,20 @@ gpu_card = "auto"
 # Example: "https://halo.example.net"
 public_endpoint = ""
 
+[deploy]
+# Let the dashboard install and manage Halogen backend profiles (quadlet files).
+# Every write goes through validation, a diff preview and a backup first.
+# Set false to keep the dashboard read-only for deployment.
+enabled = true
+
+# Host paths a profile may mount must live under one of these roots.
+# Defaults to the user's home directory.
+# allowed_roots = ["~"]
+
+# Base directories used when prefilling new profiles from templates.
+# models_root = "~/halogen/models"
+# cache_root = "~/halogen/cache"
+
 [security]
 # Empty means no token gate. Strongly recommended if not localhost-only.
 # Generate with: openssl rand -hex 32

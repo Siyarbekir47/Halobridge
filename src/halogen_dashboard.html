@@ -108,6 +108,22 @@
   .pager button { padding: 5px 10px; }
   .secondary { margin-top: 20px; border-top: 1px solid var(--line); }
   .secondary > details { border-bottom: 1px solid var(--line); padding: 16px 0; }
+  .deploy-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .deploy-row:last-child { border-bottom: 0; }
+  .deploy-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .deploy-row button { padding: 5px 10px; font-size: 12px; }
+  .deploy-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px 18px; margin: 14px 0; }
+  .deploy-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  .deploy-fields input, .deploy-fields select { padding: 7px 9px; font-size: 13px; min-width: 0; }
+  .deploy-fields label.chk { flex-direction: row; align-items: center; gap: 8px; }
+  .deploy-env-row { display: flex; gap: 8px; margin-bottom: 6px; }
+  .deploy-env-row input { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px; }
+  .deploy-diff { background: #0a1218; border: 1px solid var(--line); color: #c9d1d9; padding: 12px; border-radius: 8px; overflow: auto; font: 12px/1.5 Consolas, "Liberation Mono", monospace; white-space: pre-wrap; margin: 12px 0; max-height: 420px; }
+  .deploy-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .deploy-new { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .badge { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 11px; color: var(--muted); }
+  .badge.ok { color: var(--mint); border-color: var(--mint); }
+  .warning { color: var(--amber); white-space: pre-line; }
   summary { color: var(--muted); font-size: 14px; width: fit-content; }
   details[open] > summary { color: var(--text); margin-bottom: 16px; }
   .detail-body { animation: reveal .18s ease-out; }
@@ -254,6 +270,36 @@
         <button id="resetConfirm" class="danger" hidden>Ja, alles löschen</button>
         <button id="resetCancel" hidden data-i18n="reset_no">Abbrechen</button>
         <span id="resetStatus" class="muted" role="status"></span>
+      </div>
+    </div></details>
+    <details id="deploySection"><summary data-i18n="deploy_summary">Profile &amp; Deployment</summary><div class="detail-body">
+      <p id="deployHint" class="muted">–</p>
+      <p id="deployError" class="failure" role="alert" hidden></p>
+      <div id="deployList"><p>–</p></div>
+      <div id="deployNew" class="deploy-new">
+        <label for="deployTemplate" data-i18n="deploy_new_label">Neues Profil aus Vorlage:</label>
+        <select id="deployTemplate">
+          <option value="official" data-i18n="deploy_tpl_official">Offizielles Modell (Gewichte-Auto-Download)</option>
+          <option value="custom" data-i18n="deploy_tpl_custom">Eigenes Modell (GGUF- oder .hgn-Dateien)</option>
+        </select>
+        <button type="button" id="deployLoadTemplate" data-i18n="deploy_load_template">Vorlage bearbeiten</button>
+      </div>
+      <div id="deployEditor" hidden>
+        <h3 id="deployEditorTitle"></h3>
+        <div id="deployFields" class="deploy-fields"></div>
+        <div class="deploy-advanced">
+          <p class="list-title" data-i18n="deploy_advanced">Weitere Parameter (nur Allowlist)</p>
+          <div id="deployEnvRows"></div>
+          <button type="button" id="deployAddEnv" data-i18n="deploy_add_env">+ Parameter hinzufügen</button>
+          <datalist id="deployEnvKeys"></datalist>
+        </div>
+        <pre id="deployDiff" class="deploy-diff" hidden></pre>
+        <p id="deployWarnings" class="warning" hidden></p>
+        <div class="deploy-actions">
+          <button type="button" id="deployPreview" data-i18n="deploy_preview">Vorschau (Dry-Run)</button>
+          <button type="button" id="deployApply" disabled data-i18n="deploy_apply">Anwenden</button>
+          <button type="button" id="deployCancel" data-i18n="deploy_cancel">Abbrechen</button>
+        </div>
       </div>
     </div></details>
   </section>
@@ -697,6 +743,202 @@ $('resetConfirm').addEventListener('click', async () => {
     disarmReset();
   }
 });
+// ---------- Deployment ----------
+let deployData = null, deployBusy = false, deployPreviewOk = false, deployArm = null;
+const DEPLOY_ENV_FIELDS = [
+  ['HALOGEN_KV_SLOTS', 'number', 'deploy_f_kv_slots'],
+  ['HALOGEN_KV_POOL_POSITIONS', 'number', 'deploy_f_kv_pool'],
+  ['HALOGEN_CTX', 'number', 'deploy_f_ctx'],
+  ['HALOGEN_MAX_TOK', 'number', 'deploy_f_max_tok'],
+  ['HALOGEN_HOST_RESERVE_GIB', 'number', 'deploy_f_host_reserve'],
+  ['HALOGEN_CACHE_DISK_GIB', 'number', 'deploy_f_cache_gib'],
+  ['HALOGEN_CACHE_PRUNE_OLD', 'check', 'deploy_f_cache_prune'],
+  ['HALOGEN_REASONING_EFFORT', 'select:minimal,low,medium,high,xhigh', 'deploy_f_reasoning'],
+  ['HALOGEN_MAX_TOKENS_DEFAULT', 'number', 'deploy_f_out_default'],
+  ['HALOGEN_MAX_TOKENS_CAP', 'number', 'deploy_f_out_cap'],
+  ['HALOGEN_DOWNLOAD', 'text', 'deploy_f_download'],
+];
+const DEPLOY_ENV_NAMES = new Set(DEPLOY_ENV_FIELDS.map(f => f[0]));
+DEPLOY_ENV_NAMES.add('HALOGEN_MODEL_ID');
+function volHost(profile, containerPath) {
+  const v = (profile.volumes || []).find(x => x[1] === containerPath);
+  return v ? v[0] : '';
+}
+function volRo(profile, containerPath) {
+  const v = (profile.volumes || []).find(x => x[1] === containerPath);
+  return v ? v[2].includes('ro') : false;
+}
+function renderDeployForm(profile) {
+  const core = [
+    ['profile_id', 'text', 'deploy_f_profile_id', profile.profile_id],
+    ['model_id', 'text', 'deploy_f_model_id', (profile.env || {}).HALOGEN_MODEL_ID || ''],
+    ['image', 'text', 'deploy_f_image', profile.image],
+    ['host_port', 'number', 'deploy_f_port', profile.host_port],
+    ['models_host', 'text', 'deploy_f_models_path', volHost(profile, '/models')],
+    ['models_ro', 'check', 'deploy_f_models_ro', volRo(profile, '/models')],
+    ['cache_host', 'text', 'deploy_f_cache_path', volHost(profile, '/cache')],
+  ];
+  const fieldHtml = (name, type, key, value) => {
+    if (type === 'check') return `<label class="chk">${esc(t(key))}<input id="df_${name}" type="checkbox" ${value ? 'checked' : ''}></label>`;
+    if (type.startsWith('select')) {
+      const opts = type.split(':')[1].split(',');
+      return `<label>${esc(t(key))}<select id="df_${name}"><option value=""></option>${opts.map(c => `<option value="${c}" ${value === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>`;
+    }
+    return `<label>${esc(t(key))}<input id="df_${name}" type="${type}" value="${esc(String(value ?? ''))}"></label>`;
+  };
+  $('deployFields').innerHTML = core.map(f => fieldHtml(...f)).join('') + DEPLOY_ENV_FIELDS.map(([name, type, key]) => fieldHtml(name, type, key, (profile.env || {})[name] ?? '')).join('');
+  for (const el of $('deployFields').querySelectorAll('input,select')) el.addEventListener('input', invalidateDeployPreview);
+  $('deployEnvRows').innerHTML = '';
+  for (const [k, v] of Object.entries(profile.env || {})) if (!DEPLOY_ENV_NAMES.has(k)) addEnvRow(k, v);
+}
+function addEnvRow(key = '', value = '') {
+  const row = document.createElement('div');
+  row.className = 'deploy-env-row';
+  row.innerHTML = `<input list="deployEnvKeys" class="env-key" value="${esc(key)}" placeholder="HALOGEN_..."><input class="env-value" value="${esc(value)}" placeholder="Wert"><button type="button" class="env-del" aria-label="remove">✕</button>`;
+  row.querySelector('.env-del').addEventListener('click', () => { row.remove(); invalidateDeployPreview(); });
+  for (const el of row.querySelectorAll('input')) el.addEventListener('input', invalidateDeployPreview);
+  $('deployEnvRows').appendChild(row);
+}
+function collectDeploy() {
+  const env = {};
+  const set = (k, v) => { if (v !== '') env[k] = v; };
+  set('HALOGEN_MODEL_ID', $('df_model_id').value.trim());
+  for (const [name, type] of DEPLOY_ENV_FIELDS) {
+    const el = $('df_' + name);
+    set(name, type === 'check' ? (el.checked ? '1' : '') : el.value.trim());
+  }
+  for (const row of $('deployEnvRows').children) {
+    const k = row.querySelector('.env-key').value.trim();
+    if (k) env[k] = row.querySelector('.env-value').value.trim();
+  }
+  return {
+    profile_id: $('df_profile_id').value.trim(),
+    image: $('df_image').value.trim(),
+    host_port: parseInt($('df_host_port').value, 10) || 0,
+    volumes: [
+      [$('df_models_host').value.trim(), '/models', $('df_models_ro').checked ? 'ro,Z' : 'Z'],
+      [$('df_cache_host').value.trim(), '/cache', 'Z'],
+    ],
+    env,
+  };
+}
+function invalidateDeployPreview() { deployPreviewOk = false; $('deployApply').disabled = true; }
+function showDeployError(message) { const el = $('deployError'); el.hidden = false; el.textContent = message; }
+function resetDeployArm() { if (deployArm) { deployArm.btn.textContent = deployArm.label; deployArm = null; } }
+function armDeploy(btn, run) {
+  if (deployArm && deployArm.btn === btn) { const fn = deployArm.run; resetDeployArm(); fn(); return; }
+  resetDeployArm();
+  deployArm = {btn, label: btn.textContent, run};
+  btn.textContent = t('deploy_confirm');
+  setTimeout(resetDeployArm, 12000);
+}
+async function deployRequest(path, options = {}) {
+  const response = await fetch(path, {cache: 'no-store', ...options});
+  if (handleUnauthorized(response)) return null;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || t('deploy_failed'));
+  return data;
+}
+async function refreshDeploy() {
+  try { deployData = await deployRequest('/dashboard/api/deploy'); renderDeploy(); } catch { /* Backend offline */ }
+}
+function renderDeploy() {
+  if (!deployData) return;
+  $('deployError').hidden = true;
+  if (!deployData.enabled || !deployData.posix) {
+    $('deployHint').textContent = t('deploy_disabled');
+    $('deployList').innerHTML = '';
+    $('deployNew').hidden = true;
+    return;
+  }
+  $('deployNew').hidden = false;
+  $('deployHint').textContent = t('deploy_hint', {dir: deployData.quadlet_dir});
+  const rows = (deployData.profiles || []).map(p => {
+    if (p.error) return `<div class="deploy-row"><strong>${esc(p.profile_id)}</strong> <span class="failure">${esc(p.error)}</span></div>`;
+    const badge = p.service_active ? `<span class="badge ok">${esc(t('deploy_running'))}</span>` : `<span class="badge">${esc(t('deploy_stopped'))}</span>`;
+    const btns = [`<button type="button" data-act="edit" data-id="${esc(p.profile_id)}">${esc(t('deploy_edit'))}</button>`];
+    if (!p.service_active) btns.push(`<button type="button" data-act="start" data-id="${esc(p.profile_id)}">${esc(t('deploy_start'))}</button>`);
+    if (p.has_backup) btns.push(`<button type="button" data-act="rollback" data-id="${esc(p.profile_id)}">${esc(t('deploy_rollback'))}</button>`);
+    if (!p.service_active) btns.push(`<button type="button" data-act="delete" data-id="${esc(p.profile_id)}">${esc(t('deploy_delete'))}</button>`);
+    return `<div class="deploy-row"><div><strong>${esc(p.profile_id)}</strong> · <code>${esc(p.model_id)}</code> · <code>${esc(String(p.image).split(':').pop())}</code> ${badge}</div><div class="deploy-row-actions">${btns.join(' ')}</div></div>`;
+  }).join('');
+  $('deployList').innerHTML = rows || `<p class="muted">${esc(t('deploy_none'))}</p>`;
+  $('deployEnvKeys').innerHTML = (deployData.env_keys || []).map(k => `<option value="${k}"></option>`).join('');
+}
+async function deployReload() {
+  try { await deployRequest('/dashboard/api/deploy/reload', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}}); refreshLive(); } catch { /* reload optional */ }
+}
+async function runDeployAction(id, act) {
+  if (deployBusy) return;
+  deployBusy = true;
+  try {
+    await deployRequest(`/dashboard/api/deploy/${encodeURIComponent(id)}/${act}`, {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
+    await refreshDeploy();
+    if (act !== 'start') await deployReload();
+  } catch (err) { showDeployError(err.message); }
+  finally { deployBusy = false; resetDeployArm(); }
+}
+$('deployList').addEventListener('click', event => {
+  const btn = event.target.closest('button[data-act]');
+  if (!btn || deployBusy) return;
+  const act = btn.dataset.act, id = btn.dataset.id;
+  if (act === 'edit') {
+    const p = (deployData.profiles || []).find(x => x.profile_id === id);
+    if (p && !p.error) openDeployEditor(p, false);
+    return;
+  }
+  if (act === 'rollback' || act === 'delete') { armDeploy(btn, () => runDeployAction(id, act)); return; }
+  runDeployAction(id, act);
+});
+$('deployAddEnv').addEventListener('click', () => { addEnvRow(); invalidateDeployPreview(); });
+$('deployLoadTemplate').addEventListener('click', async () => {
+  if (deployBusy) return;
+  try {
+    const data = await deployRequest(`/dashboard/api/deploy/template/${$('deployTemplate').value}`);
+    openDeployEditor(data.profile, true);
+  } catch (err) { showDeployError(err.message); }
+});
+function openDeployEditor(profile, isNew) {
+  $('deployEditor').hidden = false;
+  $('deployEditorTitle').textContent = (isNew ? t('deploy_new_profile') : t('deploy_edit_profile')) + ': ' + profile.profile_id;
+  renderDeployForm(profile);
+  $('deployDiff').hidden = true;
+  $('deployWarnings').hidden = true;
+  $('deployApply').disabled = true;
+  deployPreviewOk = false;
+  $('deployEditor').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+$('deployCancel').addEventListener('click', () => { $('deployEditor').hidden = true; resetDeployArm(); });
+$('deployPreview').addEventListener('click', async () => {
+  if (deployBusy) return;
+  deployBusy = true;
+  $('deployError').hidden = true;
+  try {
+    const data = await deployRequest('/dashboard/api/deploy/dry-run', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify(collectDeploy())});
+    $('deployDiff').hidden = false;
+    $('deployDiff').textContent = data.diff;
+    const notes = [...(data.errors || []), ...(data.warnings || [])];
+    $('deployWarnings').hidden = notes.length === 0;
+    $('deployWarnings').textContent = notes.join('\n');
+    $('deployWarnings').className = data.ok ? 'warning' : 'failure';
+    deployPreviewOk = data.ok;
+    $('deployApply').disabled = !data.ok;
+  } catch (err) { showDeployError(err.message); }
+  finally { deployBusy = false; }
+});
+$('deployApply').addEventListener('click', () => {
+  if (!deployPreviewOk || deployBusy) return;
+  armDeploy($('deployApply'), async () => {
+    deployBusy = true;
+    try {
+      await deployRequest('/dashboard/api/deploy/apply', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify(collectDeploy())});
+      $('deployEditor').hidden = true;
+      await refreshDeploy();
+      await deployReload();
+    } catch (err) { showDeployError(err.message); }
+    finally { deployBusy = false; resetDeployArm(); }
+  });
+});
 $('toDate').value = localInput(new Date());
 $('fromDate').value = localInput(new Date(Date.now() - 86400000));
 new ResizeObserver(() => {
@@ -704,7 +946,7 @@ new ResizeObserver(() => {
 }).observe(document.querySelector('.chart-area'));
 document.addEventListener('visibilitychange', () => {
   clearTimeout(liveTimer); clearTimeout(analyticsTimer); clearTimeout(updatesTimer);
-  if (!document.hidden) { refreshLive(); refreshAnalytics(); refreshUpdates(); }
+  if (!document.hidden) { refreshLive(); refreshAnalytics(); refreshUpdates(); refreshDeploy(); }
 });
 function applyLocale() {
   document.documentElement.lang = currentLang;
@@ -737,6 +979,7 @@ async function switchLanguage(lang) {
   refreshLive();
   refreshAnalytics(true);
   refreshUpdates();
+  refreshDeploy();
 }
 const initialLang = (() => {
   try {

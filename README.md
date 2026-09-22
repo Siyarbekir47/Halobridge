@@ -17,6 +17,10 @@ one-click container updates.
 - Routes OpenAI-compatible requests to the currently active local Halogen model.
 - Switches between model services through systemd user units.
 - Discovers models from Podman Quadlet files.
+- **Installs and manages Halogen backend profiles from the dashboard**: create a
+  profile from a template, edit parameters such as KV slots, KV pool, context
+  size and cache size, preview the resulting Quadlet as a diff, then apply with
+  automatic backup and one-click rollback.
 - Shows request counts, input/output tokens, cache ratio, latency, and history.
 - Uses only API-reported `usage` values for token accounting.
 - Provides a safe update flow for the official Halogen container image.
@@ -28,6 +32,8 @@ one-click container updates.
 - It does not store prompts, responses, images, tool contents, or secrets.
 - It does not invent token counts when the API does not report usage.
 - It does not update to `latest`, release candidates, or non-stable tags.
+- It does not delete model or cache directories; deployment only writes,
+  backs up, and removes Quadlet files.
 
 ## Requirements
 
@@ -156,6 +162,43 @@ Important accounting rules:
 - Cache tokens are part of input tokens.
 - Reasoning tokens are part of output tokens.
 - Engine logs are independent and are not joined to router requests by timestamp.
+
+## Profiles & deployment
+
+If Halogen is not installed yet, the dashboard can install and manage it. If
+Quadlets already exist, they are imported and edited in place — the files on
+disk stay the source of truth.
+
+Open **Profile & Deployment** in the dashboard:
+
+- **New profile from template** — two starting points:
+  - *Official model*: preconfigured for the upstream weights repo. The first
+    start downloads the weights (~118 GiB) into the models directory through
+    `HALOGEN_DOWNLOAD`; later starts are offline.
+  - *Custom model*: for your own GGUF or `.hgn` files you place in the
+    models directory yourself.
+- **Editable parameters** — every field is validated against a typed allowlist
+  of upstream `HALOGEN_*` variables (KV slots, KV pool positions, context
+  size, prefill chunk, host RAM reserve, disk cache size and pruning,
+  reasoning effort, token defaults and caps, and more). Unknown variables and
+  out-of-range values are rejected before anything is written.
+- **Preview (dry-run)** — shows the exact Quadlet diff against the current
+  file before anything changes.
+- **Apply** — backs up the previous Quadlet, writes atomically, reloads
+  systemd, and verifies the generated unit. If verification fails, the
+  previous file is restored automatically.
+- **Rollback** — restores the most recent backup with one click.
+- **Start / delete** — a profile can only be started when no other backend is
+  active (Halobridge serves one backend at a time), and only deleted while
+  stopped. Model and cache directories are never deleted by the dashboard.
+
+Safety boundaries:
+
+- Host paths a profile may mount must live under `deploy.allowed_roots`
+  (default: the user's home directory).
+- Mutations require the dashboard session plus the `X-Halogen-Action: deploy`
+  header and same-origin checks.
+- Set `[deploy] enabled = false` to disable the whole deployment surface.
 
 ## Updates
 

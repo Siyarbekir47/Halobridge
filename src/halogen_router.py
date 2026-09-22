@@ -14,6 +14,7 @@ from typing import Optional
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, web
 from halogen_dashboard import Dashboard, INFERENCE_ENDPOINTS
+from halogen_deploy import DeployManager, DeployRoutes
 from halogen_updates import ContainerUpdater
 import settings
 from discovery import discover
@@ -971,6 +972,9 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     )
     await dashboard.initialize()
 
+    deploy_manager = DeployManager(manager, config, updater=updater, dashboard=dashboard)
+    deploy_routes = DeployRoutes(deploy_manager)
+
     app = web.Application(
         client_max_size=128 * 1024 * 1024,
     )
@@ -979,6 +983,7 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     app["manager"] = manager
     app["dashboard"] = dashboard
     app["updater"] = updater
+    app["deploy"] = deploy_manager
     app["models"] = models
     app["backend_url"] = config.router.backend_url
     app["config"] = config
@@ -1000,6 +1005,7 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
 
     dashboard.register_routes(app)
     updater.register_routes(app)
+    deploy_routes.register_routes(app)
     updater.start_checks()
     app.router.add_get("/v1/models", list_models)
     app.router.add_get("/router/status", router_status)
