@@ -7,7 +7,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 # If installed with pipx, the command is usually here:
-ExecStart=%h/.local/bin/halobridge router --config %h/.config/halobridge/halobridge.toml
+ExecStart=%h/.local/bin/halobridge --config %h/.config/halobridge/halobridge.toml router
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
