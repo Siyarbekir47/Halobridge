@@ -14,8 +14,11 @@ import asyncio
 import difflib
 import json
 import logging
+import os
 import re
+import shutil
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -25,6 +28,9 @@ from aiohttp import web
 from discovery import discover
 from profiles import (
     ENV_FIELDS,
+    OFFICIAL_WEIGHTS_REPO,
+    REPO_ID_RE,
+    UNCENSORED_HF_REPO,
     Profile,
     ProfileError,
     custom_template,
@@ -32,6 +38,7 @@ from profiles import (
     parse_quadlet,
     profile_to_dict,
     render_quadlet,
+    uncensored_template,
     validate_profile,
 )
 
@@ -68,6 +75,8 @@ class DeployManager:
         self.quadlet_dir = Path(config.models.quadlet_dir)
         self.backup_root = Path(config.updates.backup_dir)
         self.deploy_lock = asyncio.Lock()
+        self.job: dict | None = None
+        self._job_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------------ state
 
@@ -109,6 +118,8 @@ class DeployManager:
         models_root, cache_root = self._default_roots()
         if kind == "official":
             profile = official_template(tag, models_root, cache_root)
+        elif kind == "uncensored":
+            profile = uncensored_template(tag, models_root, cache_root)
         elif kind == "custom":
             profile = custom_template(tag, models_root, cache_root)
         else:
@@ -138,7 +149,7 @@ class DeployManager:
                 lineterm="",
             )
         )
-        warnings = []
+        warnings = list(self._conflict_warnings(profile))
         if profile.downloads_weights:
             warnings.append(
                 "Erster Start laedt ~118 GiB Modellgewichte aus dem Internet "
@@ -284,6 +295,194 @@ class DeployManager:
             self.dashboard.models = discovered
         return {"ok": True, "models": sorted(discovered)}
 
+    # ------------------------------------------------- HF download & convert
+
+    def hf_status(self) -> dict:
+        return {
+            "installed": shutil.which("hf") is not None,
+            "default_repo": UNCENSORED_HF_REPO,
+        }
+
+    def job_status(self) -> dict:
+        if self.job is None:
+            return {"active": False}
+        return {
+            "active": True,
+            "kind": self.job["kind"],
+            "state": self.job["state"],
+            "lines": self.job["lines"][-25:],
+            "error": self.job.get("error"),
+            "elapsed": round(time.time() - self.job["started"], 1),
+        }
+
+    def hf_install(self) -> dict:
+        self._require_enabled()
+        if shutil.which("hf"):
+            raise DeployError("HF-CLI ist bereits installiert.")
+        return self._start_job(
+            "hf-install",
+            [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
+            timeout=900,
+        )
+
+    def hf_download(self, payload: dict) -> dict:
+        """Download a (gated) HuggingFace repo into a host directory.
+
+        The token is passed to the child process as HF_TOKEN only. It is
+        never written to disk, never rendered into a quadlet and redacted
+        from all captured output.
+        """
+        self._require_enabled()
+        repo = str(payload.get("repo", "")).strip()
+        if not REPO_ID_RE.match(repo):
+            raise DeployError("Repo muss 'org/name' sein")
+        filename = str(payload.get("file", "")).strip()
+        if filename and ("/" in filename or "\\" in filename or ".." in filename):
+            raise DeployError("Dateiname enthaelt ungueltige Zeichen")
+        dest = self._validate_host_path(str(payload.get("dest", "")))
+        token = str(payload.get("token", "")).strip()
+        if not token:
+            raise DeployError(
+                "HF-Token fehlt. Ein fine-graunes Token mit Read-Recht reicht."
+            )
+        cmd = ["hf", "download", repo]
+        if filename:
+            cmd.append(filename)
+        cmd += ["--local-dir", str(dest)]
+        return self._start_job(
+            "hf-download", cmd, {"HF_TOKEN": token}, timeout=21600
+        )
+
+    def convert(self, payload: dict) -> dict:
+        """Convert a GGUF into a complete .hgn checkpoint via the image's
+        convert mode (runs ~10 minutes, output beside the input).
+
+        Lossless repack: no requantization. The lookup table and the MTP
+        draft head are folded in so the engine loads the .hgn directly
+        instead of repacking the GGUF into RAM on every start.
+        """
+        self._require_enabled()
+        image = self._validated_image(str(payload.get("image", "")))
+        gguf = self._validate_host_path(str(payload.get("gguf", "")))
+        if not gguf.is_file():
+            raise DeployError(f"GGUF nicht gefunden: {gguf}")
+        if not gguf.name.lower().endswith(".gguf"):
+            raise DeployError("Eingabedatei muss auf .gguf enden")
+        out_name = str(payload.get("output", "")).strip() or (gguf.stem + ".hgn")
+        if not re.match(r"^[A-Za-z0-9._-]+\.hgn$", out_name):
+            raise DeployError("Ausgabename muss eine einfache Dateiendung .hgn sein")
+        cmd = [
+            "podman", "run", "--rm",
+            "--device", "/dev/kfd",
+            "--device", "/dev/dri",
+            "--group-add", "keep-groups",
+            "--ipc=host",
+            "--ulimit", "memlock=-1:-1",
+            "-v", f"{gguf.parent}:/models:Z",
+        ]
+        head = str(payload.get("mtp_head", "")).strip()
+        if head:
+            head_path = self._validate_host_path(head)
+            if not head_path.is_file():
+                raise DeployError(f"MTP-Head nicht gefunden: {head_path}")
+            cmd += [
+                "-e", f"HALOGEN_MTP_HEAD=/heads/{head_path.name}",
+                "-v", f"{head_path.parent}:/heads:ro,Z",
+            ]
+        elif payload.get("download_head", True):
+            cmd += ["-e", f"HALOGEN_DOWNLOAD={OFFICIAL_WEIGHTS_REPO}"]
+        cmd += [image, "convert", f"/models/{gguf.name}", f"/models/{out_name}"]
+        return self._start_job("convert", cmd, timeout=7200)
+
+    def verify(self, payload: dict) -> dict:
+        """Verify a .hgn checkpoint with the image's own verify mode."""
+        self._require_enabled()
+        image = self._validated_image(str(payload.get("image", "")))
+        hgn = self._validate_host_path(str(payload.get("hgn", "")))
+        if not hgn.is_file():
+            raise DeployError(f"HGN-Datei nicht gefunden: {hgn}")
+        if not hgn.name.lower().endswith(".hgn"):
+            raise DeployError("Datei muss auf .hgn enden")
+        cmd = [
+            "podman", "run", "--rm",
+            "-v", f"{hgn.parent}:/models:ro,Z",
+            image,
+            "verify", f"/models/{hgn.name}",
+        ]
+        return self._start_job("verify", cmd, timeout=1800)
+
+    def _validated_image(self, image: str) -> str:
+        parts = image.rsplit(":", 1)
+        if len(parts) != 2 or not parts[1] or ":" in parts[0]:
+            raise DeployError("Image muss 'repository:tag' sein")
+        from semver import normalize_version
+
+        if normalize_version(parts[1]) is None:
+            raise DeployError("Image-Tag muss eine stabile Version X.Y.Z sein")
+        return image
+
+    def _start_job(
+        self, kind: str, argv: list[str], env_extra: dict | None = None, timeout: float = 3600
+    ) -> dict:
+        if self.job is not None and self.job["state"] == "running":
+            raise DeployError("Es laeuft bereits ein Job. Bitte warten.")
+        self.job = {
+            "kind": kind,
+            "state": "running",
+            "lines": [],
+            "error": None,
+            "started": time.time(),
+        }
+        self._job_task = asyncio.create_task(
+            self._run_job(argv, env_extra, timeout)
+        )
+        return {"ok": True, "kind": kind}
+
+    async def _run_job(
+        self, argv: list[str], env_extra: dict | None, timeout: float
+    ) -> None:
+        env = dict(os.environ)
+        if env_extra:
+            env.update(env_extra)
+        token = (env_extra or {}).get("HF_TOKEN")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=env,
+            )
+        except FileNotFoundError:
+            self.job["state"] = "error"
+            self.job["error"] = f"Programm nicht gefunden: {argv[0]}"
+            return
+
+        async def pump() -> None:
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if token and token in text:
+                    text = text.replace(token, "[token]")
+                self.job["lines"].append(text)
+                if len(self.job["lines"]) > 200:
+                    del self.job["lines"][:-200]
+
+        try:
+            await asyncio.wait_for(pump(), timeout)
+            returncode = await process.wait()
+        except asyncio.TimeoutError:
+            process.kill()
+            self.job["state"] = "error"
+            self.job["error"] = "Zeitueberschreitung"
+            return
+        if returncode == 0:
+            self.job["state"] = "done"
+        else:
+            self.job["state"] = "error"
+            self.job["error"] = f"Exit {returncode}"
+
     # ------------------------------------------------------------ helpers
 
     def _require_enabled(self) -> None:
@@ -355,6 +554,7 @@ class DeployManager:
         return errors
 
     def _validate_conflicts(self, profile: Profile) -> list[str]:
+        """Hard conflicts: the same model id may not exist twice."""
         errors = []
         if not self.quadlet_dir.is_dir():
             return errors
@@ -370,12 +570,28 @@ class DeployManager:
                     f"Modell-ID '{profile.model_id}' wird schon von Profil "
                     f"'{other.profile_id}' verwendet"
                 )
-            if other.host_port == profile.host_port:
-                errors.append(
-                    f"Port {profile.host_port} wird schon von Profil "
-                    f"'{other.profile_id}' verwendet"
-                )
         return errors
+
+    def _conflict_warnings(self, profile: Profile) -> list[str]:
+        """Shared host ports are the intended design (one backend runs at a
+        time), so a collision is only a warning, never a blocker."""
+        warnings = []
+        if not self.quadlet_dir.is_dir():
+            return warnings
+        for path in self.quadlet_dir.glob("halogen-*.container"):
+            if path.name == f"{profile.container_name}.container":
+                continue
+            try:
+                other = parse_quadlet(path.read_text(encoding="utf-8"), path)
+            except ProfileError:
+                continue
+            if other.host_port == profile.host_port:
+                warnings.append(
+                    f"Port {profile.host_port} teilen sich Profil "
+                    f"'{other.profile_id}' und dieses Profil "
+                    "(in Ordnung, da immer nur ein Backend laeuft)."
+                )
+        return warnings
 
     def _suggested_tag(self) -> str:
         if self.updater is not None:
@@ -571,6 +787,40 @@ class DeployRoutes:
         except DeployError as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
+    async def api_job(self, _: web.Request) -> web.Response:
+        return web.json_response(self.manager.job_status())
+
+    async def api_hf(self, _: web.Request) -> web.Response:
+        return web.json_response(self.manager.hf_status())
+
+    async def api_hf_install(self, request: web.Request) -> web.Response:
+        self._guard(request)
+        try:
+            return web.json_response(self.manager.hf_install())
+        except DeployError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def api_hf_download(self, request: web.Request) -> web.Response:
+        self._guard(request)
+        try:
+            return web.json_response(self.manager.hf_download(self._payload(request)))
+        except DeployError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def api_convert(self, request: web.Request) -> web.Response:
+        self._guard(request)
+        try:
+            return web.json_response(self.manager.convert(self._payload(request)))
+        except DeployError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def api_verify(self, request: web.Request) -> web.Response:
+        self._guard(request)
+        try:
+            return web.json_response(self.manager.verify(self._payload(request)))
+        except DeployError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
     def register_routes(self, app: web.Application) -> None:
         app.router.add_get("/dashboard/api/deploy", self.api_status)
         app.router.add_get("/dashboard/api/deploy/template/{kind}", self.api_template)
@@ -583,3 +833,9 @@ class DeployRoutes:
         )
         app.router.add_post("/dashboard/api/deploy/{profile_id}/start", self.api_start)
         app.router.add_post("/dashboard/api/deploy/reload", self.api_reload)
+        app.router.add_get("/dashboard/api/deploy/job", self.api_job)
+        app.router.add_get("/dashboard/api/deploy/hf", self.api_hf)
+        app.router.add_post("/dashboard/api/deploy/hf/install", self.api_hf_install)
+        app.router.add_post("/dashboard/api/deploy/hf/download", self.api_hf_download)
+        app.router.add_post("/dashboard/api/deploy/convert", self.api_convert)
+        app.router.add_post("/dashboard/api/deploy/verify", self.api_verify)

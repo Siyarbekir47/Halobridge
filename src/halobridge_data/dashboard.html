@@ -123,6 +123,8 @@
   .deploy-new { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
   .badge { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 11px; color: var(--muted); }
   .badge.ok { color: var(--mint); border-color: var(--mint); }
+  .badge.err { color: var(--red); border-color: var(--red); }
+  .mount-ro-label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; }
   .warning { color: var(--amber); white-space: pre-line; }
   summary { color: var(--muted); font-size: 14px; width: fit-content; }
   details[open] > summary { color: var(--text); margin-bottom: 16px; }
@@ -279,7 +281,8 @@
       <div id="deployNew" class="deploy-new">
         <label for="deployTemplate" data-i18n="deploy_new_label">Neues Profil aus Vorlage:</label>
         <select id="deployTemplate">
-          <option value="official" data-i18n="deploy_tpl_official">Offizielles Modell (Gewichte-Auto-Download)</option>
+          <option value="official" data-i18n="deploy_tpl_official">Offiziell (vorkonfiguriert, Gewichte auf Platte)</option>
+          <option value="uncensored" data-i18n="deploy_tpl_uncensored">Uncensored (OrcaRouter IQ4_XS)</option>
           <option value="custom" data-i18n="deploy_tpl_custom">Eigenes Modell (GGUF- oder .hgn-Dateien)</option>
         </select>
         <button type="button" id="deployLoadTemplate" data-i18n="deploy_load_template">Vorlage bearbeiten</button>
@@ -287,6 +290,11 @@
       <div id="deployEditor" hidden>
         <h3 id="deployEditorTitle"></h3>
         <div id="deployFields" class="deploy-fields"></div>
+        <div class="deploy-advanced">
+          <p class="list-title" data-i18n="deploy_mounts">Zusätzliche Mounts (Host → Container)</p>
+          <div id="deployMountRows"></div>
+          <button type="button" id="deployAddMount" data-i18n="deploy_add_mount">+ Mount hinzufügen</button>
+        </div>
         <div class="deploy-advanced">
           <p class="list-title" data-i18n="deploy_advanced">Weitere Parameter (nur Allowlist)</p>
           <div id="deployEnvRows"></div>
@@ -299,6 +307,34 @@
           <button type="button" id="deployPreview" data-i18n="deploy_preview">Vorschau (Dry-Run)</button>
           <button type="button" id="deployApply" disabled data-i18n="deploy_apply">Anwenden</button>
           <button type="button" id="deployCancel" data-i18n="deploy_cancel">Abbrechen</button>
+        </div>
+      </div>
+      <div id="deployHf">
+        <p class="list-title" data-i18n="hf_title">Uncensored-Modell: herunterladen &amp; konvertieren</p>
+        <p id="hfStatusLine" class="muted">–</p>
+        <button type="button" id="hfInstallBtn" hidden data-i18n="hf_install">HF-CLI installieren</button>
+        <div class="deploy-fields">
+          <label><span data-i18n="hf_repo">HF-Repo</span><input id="hfRepo" type="text"></label>
+          <label><span data-i18n="hf_file">Datei (leer = ganzes Repo)</span><input id="hfFile" type="text"></label>
+          <label><span data-i18n="hf_dest">Zielverzeichnis (Host)</span><input id="hfDest" type="text"></label>
+          <label><span data-i18n="hf_token">HF-Token — nur READ benötigt</span><input id="hfToken" type="password" autocomplete="off" autocapitalize="off"></label>
+        </div>
+        <p class="muted" data-i18n="hf_token_note">Wird nicht gespeichert: nur als Umgebungsvariable an den Download übergeben und aus allen Ausgaben gefiltert.</p>
+        <button type="button" id="hfDownloadBtn" data-i18n="hf_download">Download starten</button>
+        <p class="list-title" data-i18n="conv_title">GGUF → HGN konvertieren (verlustfrei, ~10 Min)</p>
+        <div class="deploy-fields">
+          <label><span data-i18n="conv_image">Image</span><input id="convImage" type="text"></label>
+          <label><span data-i18n="conv_gguf">GGUF-Datei (Host)</span><input id="convGguf" type="text"></label>
+          <label><span data-i18n="conv_out">Ausgabedatei (.hgn)</span><input id="convOut" type="text" value="qwen3.8-flash-uncensored.hgn"></label>
+          <label class="chk"><input id="convHead" type="checkbox" checked><span data-i18n="conv_head">MTP-Head automatisch von Hugging Face laden</span></label>
+        </div>
+        <div class="deploy-actions">
+          <button type="button" id="convBtn" data-i18n="conv_start">Konvertieren</button>
+          <button type="button" id="verifyBtn" data-i18n="verify_start">HGN prüfen</button>
+        </div>
+        <div id="jobBox" hidden>
+          <p><strong id="jobKind"></strong> <span id="jobState" class="badge"></span> <span id="jobElapsed" class="muted"></span></p>
+          <pre id="jobLog" class="deploy-diff"></pre>
         </div>
       </div>
     </div></details>
@@ -746,6 +782,10 @@ $('resetConfirm').addEventListener('click', async () => {
 // ---------- Deployment ----------
 let deployData = null, deployBusy = false, deployPreviewOk = false, deployArm = null;
 const DEPLOY_ENV_FIELDS = [
+  ['HALOGEN_CHECKPOINT', 'text', 'deploy_f_checkpoint'],
+  ['HALOGEN_TOKENIZER', 'text', 'deploy_f_tokenizer'],
+  ['HALOGEN_VISION_TOWER', 'text', 'deploy_f_vision'],
+  ['HALOGEN_CACHE_DIR', 'text', 'deploy_f_cache_dir'],
   ['HALOGEN_KV_SLOTS', 'number', 'deploy_f_kv_slots'],
   ['HALOGEN_KV_POOL_POSITIONS', 'number', 'deploy_f_kv_pool'],
   ['HALOGEN_CTX', 'number', 'deploy_f_ctx'],
@@ -790,6 +830,16 @@ function renderDeployForm(profile) {
   for (const el of $('deployFields').querySelectorAll('input,select')) el.addEventListener('input', invalidateDeployPreview);
   $('deployEnvRows').innerHTML = '';
   for (const [k, v] of Object.entries(profile.env || {})) if (!DEPLOY_ENV_NAMES.has(k)) addEnvRow(k, v);
+  $('deployMountRows').innerHTML = '';
+  for (const v of profile.volumes || []) if (v[1] !== '/models' && v[1] !== '/cache') addMountRow(v[0], v[1], v[2].includes('ro'));
+}
+function addMountRow(host = '', container = '', ro = true) {
+  const row = document.createElement('div');
+  row.className = 'deploy-env-row';
+  row.innerHTML = `<input class="mount-host" value="${esc(host)}" placeholder="/host/pfad"><input class="mount-container" value="${esc(container)}" placeholder="/container/pfad"><label class="mount-ro-label"><input type="checkbox" class="mount-ro" ${ro ? 'checked' : ''}>ro</label><button type="button" class="mount-del" aria-label="remove">✕</button>`;
+  row.querySelector('.mount-del').addEventListener('click', () => { row.remove(); invalidateDeployPreview(); });
+  for (const el of row.querySelectorAll('input')) el.addEventListener('input', invalidateDeployPreview);
+  $('deployMountRows').appendChild(row);
 }
 function addEnvRow(key = '', value = '') {
   const row = document.createElement('div');
@@ -811,6 +861,12 @@ function collectDeploy() {
     const k = row.querySelector('.env-key').value.trim();
     if (k) env[k] = row.querySelector('.env-value').value.trim();
   }
+  const mounts = [];
+  for (const row of $('deployMountRows').children) {
+    const host = row.querySelector('.mount-host').value.trim();
+    const container = row.querySelector('.mount-container').value.trim();
+    if (host && container) mounts.push([host, container, row.querySelector('.mount-ro').checked ? 'ro,Z' : 'Z']);
+  }
   return {
     profile_id: $('df_profile_id').value.trim(),
     image: $('df_image').value.trim(),
@@ -818,6 +874,7 @@ function collectDeploy() {
     volumes: [
       [$('df_models_host').value.trim(), '/models', $('df_models_ro').checked ? 'ro,Z' : 'Z'],
       [$('df_cache_host').value.trim(), '/cache', 'Z'],
+      ...mounts,
     ],
     env,
   };
@@ -849,9 +906,12 @@ function renderDeploy() {
     $('deployHint').textContent = t('deploy_disabled');
     $('deployList').innerHTML = '';
     $('deployNew').hidden = true;
+    $('deployHf').hidden = true;
     return;
   }
   $('deployNew').hidden = false;
+  $('deployHf').hidden = false;
+  refreshHf();
   $('deployHint').textContent = t('deploy_hint', {dir: deployData.quadlet_dir});
   const rows = (deployData.profiles || []).map(p => {
     if (p.error) return `<div class="deploy-row"><strong>${esc(p.profile_id)}</strong> <span class="failure">${esc(p.error)}</span></div>`;
@@ -891,6 +951,7 @@ $('deployList').addEventListener('click', event => {
   runDeployAction(id, act);
 });
 $('deployAddEnv').addEventListener('click', () => { addEnvRow(); invalidateDeployPreview(); });
+$('deployAddMount').addEventListener('click', () => { addMountRow(); invalidateDeployPreview(); });
 $('deployLoadTemplate').addEventListener('click', async () => {
   if (deployBusy) return;
   try {
@@ -938,6 +999,66 @@ $('deployApply').addEventListener('click', () => {
     } catch (err) { showDeployError(err.message); }
     finally { deployBusy = false; resetDeployArm(); }
   });
+});
+// ---------- HF download & convert ----------
+let jobTimer = null;
+async function refreshHf() {
+  try {
+    const hf = await deployRequest('/dashboard/api/deploy/hf');
+    $('hfStatusLine').textContent = hf.installed ? t('hf_installed') : t('hf_not_installed');
+    $('hfInstallBtn').hidden = hf.installed;
+    if (!$('hfRepo').value) $('hfRepo').value = hf.default_repo || '';
+    if (!$('hfDest').value && deployData.allowed_roots && deployData.allowed_roots.length) {
+      $('hfDest').value = String(deployData.allowed_roots[0]).replace(/\/$/, '') + '/halogen/models/uncensored';
+    }
+    if (!$('convImage').value) {
+      const tag = (typeof updatesData !== 'undefined' && updatesData && updatesData.latest_version) || '';
+      if (tag) $('convImage').value = 'ghcr.io/peonist-ai/halogen-flash-server:' + tag;
+    }
+  } catch { /* offline */ }
+}
+function startJobPoll() { clearTimeout(jobTimer); pollJob(); }
+async function pollJob() {
+  try {
+    const job = await deployRequest('/dashboard/api/deploy/job');
+    if (!job.active) { $('jobBox').hidden = true; return; }
+    $('jobBox').hidden = false;
+    $('jobKind').textContent = t('job_' + job.kind.replace(/-/g, '_'));
+    const stateEl = $('jobState');
+    stateEl.textContent = t('job_state_' + job.state);
+    stateEl.className = 'badge' + (job.state === 'running' ? ' ok' : job.state === 'error' ? ' err' : '');
+    $('jobElapsed').textContent = Math.round(job.elapsed) + 's';
+    $('jobLog').textContent = (job.lines || []).join('\n') + (job.error ? '\nERROR: ' + job.error : '');
+    if (job.state === 'running') jobTimer = setTimeout(pollJob, 2000);
+  } catch { jobTimer = setTimeout(pollJob, 5000); }
+}
+$('hfInstallBtn').addEventListener('click', async () => {
+  try {
+    await deployRequest('/dashboard/api/deploy/hf/install', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
+    startJobPoll();
+  } catch (err) { showDeployError(err.message); }
+});
+$('hfDownloadBtn').addEventListener('click', async () => {
+  const token = $('hfToken').value;
+  $('hfToken').value = '';
+  try {
+    await deployRequest('/dashboard/api/deploy/hf/download', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({repo: $('hfRepo').value.trim(), file: $('hfFile').value.trim(), dest: $('hfDest').value.trim(), token})});
+    startJobPoll();
+  } catch (err) { showDeployError(err.message); }
+});
+$('convBtn').addEventListener('click', async () => {
+  try {
+    await deployRequest('/dashboard/api/deploy/convert', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({image: $('convImage').value.trim(), gguf: $('convGguf').value.trim(), output: $('convOut').value.trim(), download_head: $('convHead').checked})});
+    startJobPoll();
+  } catch (err) { showDeployError(err.message); }
+});
+$('verifyBtn').addEventListener('click', async () => {
+  const gguf = $('convGguf').value.trim();
+  const dir = gguf.slice(0, gguf.lastIndexOf('/') + 1);
+  try {
+    await deployRequest('/dashboard/api/deploy/verify', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({image: $('convImage').value.trim(), hgn: dir + $('convOut').value.trim()})});
+    startJobPoll();
+  } catch (err) { showDeployError(err.message); }
 });
 $('toDate').value = localInput(new Date());
 $('fromDate').value = localInput(new Date(Date.now() - 86400000));

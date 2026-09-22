@@ -309,34 +309,69 @@ def profile_to_dict(profile: Profile) -> dict:
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
+UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
+
+_COMMON_RUNTIME_ENV = {
+    "HALOGEN_KV_SLOTS": "2",
+    "HALOGEN_KV_POOL_POSITIONS": "524288",
+    "HALOGEN_MAX_TOK": "32768",
+    "HALOGEN_HOST_RESERVE_GIB": "18",
+    "HALOGEN_CACHE_DIR": "/cache",
+    "HALOGEN_CACHE_DISK_GIB": "750",
+    "HALOGEN_CACHE_PRUNE_OLD": "1",
+}
 
 
 def official_template(image_tag: str, models_root: Path, cache_root: Path) -> Profile:
-    """Template for the official model: downloads weights on first start.
+    """Template matching a provisioned official setup (weights on disk).
 
-    The models volume is read-write because HALOGEN_DOWNLOAD fetches into it
-    (~118 GiB on first start). After the weights are in place the user can
-    switch the volume to read-only in the profile editor.
+    The models volume is read-only. To install from scratch instead, fill the
+    download field (HALOGEN_DOWNLOAD); the volume must then be writable and
+    the first start fetches ~118 GiB.
     """
+    env = {
+        "HALOGEN_MODEL_ID": "qwen3.8-flash",
+        "HALOGEN_CHECKPOINT": "/models/qwen38-flash-next-w4b.hgn",
+        "HALOGEN_TOKENIZER": "/models/tokenizer",
+        "HALOGEN_VISION_TOWER": "/models/qwen38-flash-next-vision.hgn",
+        **_COMMON_RUNTIME_ENV,
+    }
     return Profile(
         profile_id="official",
         image=f"{OFFICIAL_IMAGE_REPO}:{image_tag}",
         volumes=[
-            (str(models_root / "official"), CONTAINER_MODELS_PATH, "Z"),
+            (str(models_root / "official"), CONTAINER_MODELS_PATH, "ro,Z"),
             (str(cache_root / "official"), CONTAINER_CACHE_PATH, "Z"),
         ],
         host_port=8831,
-        env={
-            "HALOGEN_MODEL_ID": "qwen3.8-flash",
-            "HALOGEN_DOWNLOAD": OFFICIAL_WEIGHTS_REPO,
-            "HALOGEN_VISION_TOWER": "1",
-            "HALOGEN_KV_SLOTS": "2",
-            "HALOGEN_KV_POOL_POSITIONS": "524288",
-            "HALOGEN_MAX_TOK": "32768",
-            "HALOGEN_HOST_RESERVE_GIB": "18",
-            "HALOGEN_CACHE_DISK_GIB": "750",
-            "HALOGEN_CACHE_PRUNE_OLD": "1",
-        },
+        env=env,
+    )
+
+
+def uncensored_template(image_tag: str, models_root: Path, cache_root: Path) -> Profile:
+    """Template for the OrcaRouter uncensored model converted to .hgn.
+
+    Mounts the official models directory read-only (shared tokenizer and
+    vision tower) and the uncensored directory at /uncensored. Shares the
+    host port with the official profile: only one backend runs at a time.
+    """
+    env = {
+        "HALOGEN_MODEL_ID": "qwen3.8-flash-uncensored",
+        "HALOGEN_CHECKPOINT": "/uncensored/qwen3.8-flash-uncensored.hgn",
+        "HALOGEN_TOKENIZER": "/models/tokenizer",
+        "HALOGEN_VISION_TOWER": "/models/qwen38-flash-next-vision.hgn",
+        **_COMMON_RUNTIME_ENV,
+    }
+    return Profile(
+        profile_id="uncensored",
+        image=f"{OFFICIAL_IMAGE_REPO}:{image_tag}",
+        volumes=[
+            (str(models_root / "official"), CONTAINER_MODELS_PATH, "ro,Z"),
+            (str(models_root / "uncensored"), "/uncensored", "ro,Z"),
+            (str(cache_root / "uncensored"), CONTAINER_CACHE_PATH, "Z"),
+        ],
+        host_port=8831,
+        env=env,
     )
 
 

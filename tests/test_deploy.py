@@ -80,7 +80,6 @@ class DryRunTests(PosixTestCase):
         self.assertIn("HALOGEN_MODEL_ID", result["quadlet"])
         self.assertIn("PublishPort=127.0.0.1:8831:8731", result["diff"])
         self.assertFalse(result["exists"])
-        self.assertTrue(result["warnings"])  # 118 GiB download warning
 
     def test_dry_run_rejects_path_outside_allowed_roots(self):
         payload = official_payload(self.tmp)
@@ -95,17 +94,18 @@ class DryRunTests(PosixTestCase):
         result = self.manager.dry_run(payload)
         self.assertFalse(result["ok"])
 
-    def test_dry_run_detects_port_conflict(self):
+    def test_shared_port_is_warning_not_error(self):
         self.manager.quadlet_dir.mkdir(parents=True, exist_ok=True)
         other = official_template("0.13.2", self.tmp / "models", self.tmp / "cache")
         other.profile_id = "other"
+        other.env["HALOGEN_MODEL_ID"] = "other-model"
         other.host_port = 8831
         (self.manager.quadlet_dir / "halogen-other.container").write_text(
             render_quadlet(other), encoding="utf-8"
         )
         result = self.manager.dry_run(official_payload(self.tmp))
-        self.assertFalse(result["ok"])
-        self.assertTrue(any("Port" in e for e in result["errors"]))
+        self.assertTrue(result["ok"])
+        self.assertTrue(any("Port" in w for w in result["warnings"]))
 
     def test_dry_run_detects_model_id_conflict(self):
         self.manager.quadlet_dir.mkdir(parents=True, exist_ok=True)
@@ -269,6 +269,122 @@ class RouteGuardTests(PosixTestCase):
             }
         )
         routes._guard(request)  # must not raise
+
+
+class ConvertVerifyJobTests(PosixTestCase):
+    def setUp(self):
+        super().setUp()
+        self._dir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+        self.manager = make_manager(self.tmp)
+        self.gguf = self.tmp / "models" / "uncensored" / "input-IQ4_XS.gguf"
+        self.gguf.parent.mkdir(parents=True, exist_ok=True)
+        self.gguf.write_bytes(b"fake gguf")
+        self.hgn = self.gguf.parent / "converted.hgn"
+        self.hgn.write_bytes(b"fake hgn")
+        self.head = self.tmp / "models" / "official" / "qwen38-flash-next-mtp.hgn"
+        self.head.parent.mkdir(parents=True, exist_ok=True)
+        self.head.write_bytes(b"head")
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def _capture_start(self):
+        captured = {}
+        def fake_start(kind, argv, env_extra=None, timeout=3600):
+            captured["kind"] = kind
+            captured["argv"] = argv
+            captured["env"] = env_extra
+            return {"ok": True, "kind": kind}
+        return captured, fake_start
+
+    def test_convert_builds_expected_argv(self):
+        captured, fake = self._capture_start()
+        with patch.object(self.manager, "_start_job", fake):
+            self.manager.convert({
+                "image": "ghcr.io/peonist-ai/halogen-flash-server:0.13.1",
+                "gguf": str(self.gguf),
+                "output": "qwen3.8-flash-uncensored.hgn",
+                "download_head": True,
+            })
+        argv = captured["argv"]
+        self.assertEqual(captured["kind"], "convert")
+        self.assertEqual(argv[:2], ["podman", "run"])
+        self.assertIn("convert", argv)
+        self.assertIn(f"/models/{self.gguf.name}", argv)
+        self.assertIn("/models/qwen3.8-flash-uncensored.hgn", argv)
+        self.assertIn(
+            "HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next", " ".join(argv)
+        )
+
+    def test_convert_rejects_missing_file(self):
+        with self.assertRaises(DeployError):
+            self.manager.convert({
+                "image": "ghcr.io/peonist-ai/halogen-flash-server:0.13.1",
+                "gguf": str(self.tmp / "nope.gguf"),
+            })
+
+    def test_convert_rejects_path_traversal_output(self):
+        with self.assertRaises(DeployError):
+            self.manager.convert({
+                "image": "ghcr.io/peonist-ai/halogen-flash-server:0.13.1",
+                "gguf": str(self.gguf),
+                "output": "../evil.hgn",
+            })
+
+    def test_convert_with_explicit_head_skips_download(self):
+        captured, fake = self._capture_start()
+        with patch.object(self.manager, "_start_job", fake):
+            self.manager.convert({
+                "image": "ghcr.io/peonist-ai/halogen-flash-server:0.13.1",
+                "gguf": str(self.gguf),
+                "mtp_head": str(self.head),
+            })
+        joined = " ".join(captured["argv"])
+        self.assertIn("HALOGEN_MTP_HEAD=/heads/qwen38-flash-next-mtp.hgn", joined)
+        self.assertNotIn("HALOGEN_DOWNLOAD", joined)
+
+    def test_verify_builds_argv(self):
+        captured, fake = self._capture_start()
+        with patch.object(self.manager, "_start_job", fake):
+            self.manager.verify({
+                "image": "ghcr.io/peonist-ai/halogen-flash-server:0.13.1",
+                "hgn": str(self.hgn),
+            })
+        self.assertEqual(captured["kind"], "verify")
+        self.assertIn("verify", captured["argv"])
+        self.assertIn("/models/converted.hgn", captured["argv"])
+
+    def test_hf_download_requires_token(self):
+        with self.assertRaises(DeployError):
+            self.manager.hf_download({"repo": "orcarouter/x", "dest": str(self.tmp / "d")})
+
+    def test_hf_download_rejects_bad_repo(self):
+        with self.assertRaises(DeployError):
+            self.manager.hf_download(
+                {"repo": "bad repo", "dest": str(self.tmp / "d"), "token": "t"}
+            )
+
+    def test_hf_download_token_never_in_argv(self):
+        captured, fake = self._capture_start()
+        with patch.object(self.manager, "_start_job", fake):
+            self.manager.hf_download({
+                "repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF",
+                "dest": str(self.tmp / "models" / "uncensored"),
+                "token": "hf_secret123",
+            })
+        self.assertEqual(captured["kind"], "hf-download")
+        self.assertEqual(
+            captured["argv"][:3],
+            ["hf", "download", "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"],
+        )
+        self.assertEqual(captured["env"]["HF_TOKEN"], "hf_secret123")
+        self.assertNotIn("hf_secret123", " ".join(captured["argv"]))
+
+    def test_uncensored_template_via_manager(self):
+        data = self.manager.template("uncensored")
+        self.assertEqual(data["profile"]["model_id"], "qwen3.8-flash-uncensored")
+        self.assertIn("/uncensored", data["quadlet"])
 
 
 if __name__ == "__main__":

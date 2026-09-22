@@ -13,6 +13,7 @@ from profiles import (
     official_template,
     parse_quadlet,
     render_quadlet,
+    uncensored_template,
     validate_profile,
 )
 
@@ -163,14 +164,41 @@ class RenderImportTests(unittest.TestCase):
 
 
 class TemplateTests(unittest.TestCase):
-    def test_official_template_valid_and_downloads(self):
+    def test_official_template_valid_and_matches_provisioned_setup(self):
         profile = official_template(
             "0.13.2", Path("/home/tester/halogen/models"), Path("/home/tester/halogen/cache")
         )
         self.assertEqual(validate_profile(profile), [])
-        self.assertTrue(profile.downloads_weights)
+        self.assertFalse(profile.downloads_weights)
+        self.assertEqual(profile.env["HALOGEN_CHECKPOINT"], "/models/qwen38-flash-next-w4b.hgn")
+        self.assertEqual(profile.env["HALOGEN_TOKENIZER"], "/models/tokenizer")
+        self.assertEqual(
+            profile.env["HALOGEN_VISION_TOWER"], "/models/qwen38-flash-next-vision.hgn"
+        )
+        self.assertEqual(profile.env["HALOGEN_CACHE_DIR"], "/cache")
         models = next(v for v in profile.volumes if v[1] == "/models")
-        self.assertNotIn("ro", models[2])
+        self.assertIn("ro", models[2])
+
+    def test_uncensored_template_valid(self):
+        profile = uncensored_template(
+            "0.13.2", Path("/home/tester/halogen/models"), Path("/home/tester/halogen/cache")
+        )
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(profile.model_id, "qwen3.8-flash-uncensored")
+        self.assertEqual(
+            profile.env["HALOGEN_CHECKPOINT"], "/uncensored/qwen3.8-flash-uncensored.hgn"
+        )
+        container_paths = [v[1] for v in profile.volumes]
+        self.assertEqual(container_paths, ["/models", "/uncensored", "/cache"])
+        uncensored = next(v for v in profile.volumes if v[1] == "/uncensored")
+        self.assertIn("ro", uncensored[2])
+
+    def test_uncensored_round_trip(self):
+        profile = uncensored_template(
+            "0.13.2", Path("/home/tester/halogen/models"), Path("/home/tester/halogen/cache")
+        )
+        imported = parse_quadlet(render_quadlet(profile))
+        self.assertEqual(render_quadlet(imported), render_quadlet(profile))
 
     def test_custom_template_valid_and_readonly(self):
         profile = custom_template(
