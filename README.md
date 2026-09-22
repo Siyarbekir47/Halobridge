@@ -195,6 +195,46 @@ You can keep the dashboard but disable installation:
 allow_install = false
 ```
 
+## Updating Halobridge itself
+
+The dashboard's one-click update handles the **halogen container**. To update
+the **Halobridge package itself**, use the command matching how you installed it:
+
+**Installed with pipx:**
+
+```bash
+pipx upgrade halobridge
+```
+
+**Installed from a git clone (`pip install -e .`):**
+
+```bash
+cd Halobridge
+git pull
+```
+
+Editable installs pick up the new code immediately — no reinstall needed.
+
+**Installed with plain pip from git:**
+
+```bash
+pip install -U git+https://github.com/Siyarbekir47/Halobridge.git
+```
+
+Then restart and verify:
+
+```bash
+systemctl --user restart halobridge.service   # only if you run it as a service
+halobridge --version
+halobridge doctor
+```
+
+`halobridge --version` reads the installed package metadata, so it always
+shows the version you actually have running.
+
+> **For maintainers:** when publishing a new release, bump `version` in
+> `pyproject.toml` and tag the commit `vX.Y.Z` on GitHub.
+
 ## Token gate
 
 If you expose the dashboard beyond localhost, configure a token:

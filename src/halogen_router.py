@@ -1016,6 +1016,20 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     return app
 
 
+def app_version() -> str:
+    """Single source of truth: the installed package metadata (pyproject.toml).
+
+    Falls back to '0+local' when running from a bare source checkout that was
+    never pip-installed, so --version never lies about a released number.
+    """
+    try:
+        from importlib.metadata import version
+
+        return version("halobridge")
+    except Exception:
+        return "0+local"
+
+
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog=settings.APP,
@@ -1030,7 +1044,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"{settings.APP} 0.1.0",
+        version=f"{settings.APP} {app_version()}",
     )
 
     sub = parser.add_subparsers(dest="command")
