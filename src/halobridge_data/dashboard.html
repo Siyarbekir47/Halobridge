@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b1419">
+<title>Halobridge · Übersicht</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230b1419'/%3E%3Cpath d='M17 43V21h7v8h16v-8h7v22h-7v-8H24v8z' fill='%235ee7c4'/%3E%3C/svg%3E">
+<style>
+  :root { color-scheme: dark; --bg: #0b1419; --surface: #101d24; --text: #e8f0ee; --muted: #9bafb6; --line: #293c43; --mint: #5ee7c4; --blue: #7daff3; --amber: #edc17e; --red: #ff909b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--text); background: radial-gradient(ellipse at 90% 0, #14312f66, transparent 45%), var(--bg); font: 15px/1.55 "Segoe UI", sans-serif; }
+  button, input, select { font: inherit; }
+  button, select, input { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); padding: 8px 12px; }
+  button, select, summary { cursor: pointer; }
+  button { transition: border-color .15s, background .15s; }
+  button:hover:not(:disabled) { border-color: var(--mint); background: #19332f; }
+  button:disabled { opacity: .45; cursor: default; }
+  :focus-visible { outline: 2px solid var(--mint); outline-offset: 4px; }
+  [hidden] { display: none !important; }
+  h1, h2, p { margin: 0; }
+  h1 { font-size: 28px; font-weight: 650; letter-spacing: -.055em; }
+  h2 { font-size: 19px; font-weight: 600; letter-spacing: -.025em; }
+  small, .muted { color: var(--muted); }
+  code { font-family: Consolas, "Liberation Mono", monospace; font-size: .9em; overflow-wrap: anywhere; }
+  .shell { max-width: 1240px; margin: auto; padding: 30px 36px 24px; }
+  .top, .section-head, .controls, .status, .pager, .endpoint { display: flex; align-items: center; gap: 12px; }
+  .top, .section-head { justify-content: space-between; }
+  .top { margin-bottom: 26px; }
+  .brand { display: flex; align-items: baseline; gap: 16px; }
+  .brand span { color: var(--muted); font-size: 13px; }
+  .status { color: var(--muted); font-size: 13px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .dot[data-state="ok"] { background: var(--mint); }
+  .dot[data-state="error"] { background: var(--red); }
+  .dot[data-state="switching"] { background: var(--amber); }
+  .live-strip { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 32px; align-items: center; border-block: 1px solid var(--line); padding: 18px 0; }
+  .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .04em; }
+  .model-name { display: block; font-size: 17px; font-weight: 550; overflow-wrap: anywhere; }
+  .live-number { font-variant-numeric: tabular-nums; font-size: 18px; }
+  .active-list { padding-top: 12px; color: var(--muted); font-size: 13px; }
+  .active-list div { display: flex; gap: 16px; justify-content: space-between; padding: 4px 0; }
+  .update-strip { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 14px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .update-strip p { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .update-strip .controls { flex-shrink: 0; }
+  .update-strip button { padding: 6px 10px; font-size: 12px; }
+  .update-strip a { color: var(--mint); }
+  .update-strip details { margin-top: 8px; }
+  .update-strip details[open] > summary { margin-bottom: 6px; }
+  .update-strip summary { font-size: 12px; }
+  .update-action { border-color: #367765; color: var(--mint); }
+  .danger { border-color: #7a3b41; color: var(--red); }
+  .danger:hover:not(:disabled) { border-color: var(--red); background: #2f1a1e; }
+  .usage { margin-top: 32px; }
+  .controls { flex-wrap: wrap; justify-content: flex-end; }
+  .controls label { font-size: 13px; color: var(--muted); }
+  .icon-button { padding: 7px 12px; font-size: 18px; }
+  .range-caption { color: var(--muted); font-size: 12px; margin: 8px 0 18px; }
+  .custom-range { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 16px 0; }
+  .custom-range label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  .notice { padding: 10px 14px; border-left: 2px solid var(--amber); background: #edc17e08; color: var(--amber); font-size: 13px; margin: 12px 0; }
+  .notice.error { color: var(--red); border-color: var(--red); }
+  .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 10px 0 26px; }
+  .metric { padding: 0 22px; border-left: 1px solid var(--line); min-width: 0; }
+  .metric:first-child { padding-left: 0; border: 0; }
+  .metric:last-child { padding-right: 0; }
+  .metric dt { color: var(--muted); font-size: 13px; }
+  .metric dd { margin: 5px 0; font-size: clamp(22px, 2.8vw, 35px); letter-spacing: -.045em; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .metric small { display: block; font-size: 12px; }
+  .metric.input dd { color: var(--blue); }
+  .metric.output dd { color: var(--mint); }
+  .chart-area { border-block: 1px solid var(--line); padding: 18px 0 14px; }
+  .chart-title { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+  .legend { display: flex; gap: 18px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; background: var(--blue); border-radius: 1px; }
+  .legend span:last-child::before { background: var(--mint); }
+  .chart { display: block; width: 100%; height: 200px; margin-top: 8px; overflow: visible; }
+  .chart text { fill: var(--muted); font: 12px "Segoe UI", sans-serif; }
+  .chart .gridline { stroke: var(--line); stroke-width: 1; }
+  .chart .axis { stroke: var(--line); stroke-width: 1.5; }
+  .chart .tick { fill: var(--muted); font-size: 11px; letter-spacing: .02em; }
+  .chart .bar { transition: opacity .12s ease; }
+  .chart g.bucket:hover .bar { opacity: .75; }
+  .chart-empty { display: grid; place-items: center; min-height: 200px; color: var(--muted); text-align: center; padding: 20px; }
+  .chart-note { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .activity { margin-top: 28px; }
+  .activity .section-head { margin-bottom: 14px; }
+  .scroll-hint { display: none; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+  th { font-weight: 400; color: var(--muted); text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  td { padding: 12px; border-bottom: 1px solid #203139; vertical-align: middle; }
+  th:first-child, td:first-child { padding-left: 0; }
+  th:last-child, td:last-child { padding-right: 0; }
+  th.number, td.number { text-align: right; font-variant-numeric: tabular-nums; }
+  .cell-sub { display: block; color: var(--muted); font-size: 11px; }
+  .row-toggle { border: 0; background: transparent; padding: 3px 6px; margin-left: -6px; font-size: 13px; color: var(--text); }
+  .row-toggle span { color: var(--muted); display: inline-block; width: 14px; }
+  .success { color: var(--mint); }
+  .failure { color: var(--red); }
+  .legacy { color: var(--amber); }
+  .request-detail td { padding: 12px 16px; background: #132129; white-space: normal; }
+  .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 8px 0; }
+  .detail-grid dt { color: var(--muted); font-size: 12px; }
+  .detail-grid dd { margin: 3px 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); text-align: center; padding: 36px !important; white-space: normal; }
+  .pager { justify-content: flex-end; padding: 14px 0; font-size: 12px; color: var(--muted); }
+  .pager button { padding: 5px 10px; }
+  .secondary { margin-top: 20px; border-top: 1px solid var(--line); }
+  .secondary > details { border-bottom: 1px solid var(--line); padding: 16px 0; }
+  summary { color: var(--muted); font-size: 14px; width: fit-content; }
+  details[open] > summary { color: var(--text); margin-bottom: 16px; }
+  .detail-body { animation: reveal .18s ease-out; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; }
+  .list-title { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .breakdown-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #203139; font-size: 13px; overflow-wrap: anywhere; }
+  .breakdown-row span:last-child { text-align: right; flex-shrink: 0; color: var(--muted); }
+  .endpoint { margin: 18px 0 8px; flex-wrap: wrap; }
+  .endpoint code { color: var(--mint); }
+  .endpoint button { font-size: 12px; padding: 5px 10px; }
+  .explanation { color: var(--muted); font-size: 13px; max-width: 85ch; }
+  .explanation p + p { margin-top: 10px; }
+  footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 28px; color: var(--muted); font-size: 11px; }
+  #analytics[aria-busy="true"] .metrics { opacity: .45; }
+  .metrics { transition: opacity .18s; }
+  @keyframes reveal { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+  @media (max-width: 760px) {
+    .shell { padding: 22px 20px; }
+    .brand { gap: 10px; } .brand > span { display: none; }
+    .live-strip { gap: 16px; grid-template-columns: 1fr auto; }
+    .live-strip > :first-child { grid-column: 1 / -1; }
+    .live-strip > :last-child { text-align: right; }
+    .metrics { grid-template-columns: 1fr 1fr; row-gap: 24px; }
+    .metric:nth-child(3) { padding-left: 0; border: 0; }
+    .metric:nth-child(2) { padding-right: 0; }
+    .metric dd { font-size: 28px; }
+    .split { grid-template-columns: 1fr; gap: 24px; }
+    .detail-grid { grid-template-columns: 1fr 1fr; }
+    .controls label { display: none; }
+    .chart { height: 170px; }
+    .scroll-hint { display: block; }
+    .update-strip { align-items: flex-start; flex-direction: column; gap: 10px; }
+    .pager { justify-content: space-between; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<main class="shell">
+  <header class="top">
+    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen</span></div>
+    <div class="controls">
+      <label for="langSelect" class="muted" data-i18n="lang_label">Sprache</label>
+      <select id="langSelect" data-i18n-attr="aria-label:lang_label"><option value="de">Deutsch</option><option value="en">English</option></select>
+      <div class="status" role="status"><i class="dot" id="statusDot"></i><span id="connection" data-i18n="conn_connecting">Verbinde …</span></div>
+    </div>
+  </header>
+  <section data-i18n-attr="aria-label:live_section">
+    <div class="live-strip">
+      <div><span class="eyebrow" data-i18n="active_model">Aktives Modell</span><strong class="model-name" id="activeModel">–</strong><small id="switchState" hidden></small></div>
+      <div><span class="live-number" id="activeCount">–</span> <span class="muted" data-i18n="running">laufend</span></div>
+      <div><span class="live-number" id="queueCount">–</span> <span class="muted" data-i18n="waiting">wartend</span></div>
+    </div>
+    <div class="active-list" id="activeRequests" hidden></div>
+  </section>
+
+  <section class="update-strip" data-i18n-attr="aria-label:updates_section">
+    <div>
+      <span id="updateTitle" role="status" data-i18n="update_checking">Serverversion wird geprüft …</span>
+      <p id="updateMessage" data-i18n="update_msg_default">Automatische Prüfung alle 6 Stunden · Installation per Klick</p>
+      <details id="updateDetails"><summary data-i18n="update_details_summary">Update-Details</summary><div class="detail-body">
+        <p id="updateVersions">–</p><p id="updateChecked" data-i18n="not_checked">Noch nicht geprüft</p>
+        <p data-i18n="update_warning">Aktualisiert beide Quadlets. Laufende Anfragen werden beendet; neue Anfragen erhalten während des Neustarts HTTP 503.</p>
+        <p id="updateBackup" hidden></p>
+        <a id="updateChangelog" target="_blank" rel="noopener noreferrer" hidden data-i18n="update_changelog">Änderungen auf GitHub ↗</a>
+      </div></details>
+      <p id="updateError" class="failure" role="alert" hidden></p>
+    </div>
+    <div class="controls">
+      <button id="checkUpdate" data-i18n="btn_check">Prüfen</button>
+      <button id="installUpdate" class="update-action" hidden data-i18n="btn_install">Jetzt aktualisieren</button>
+      <button id="recoverUpdate" class="update-action" hidden data-i18n="btn_recover">Wiederherstellen</button>
+    </div>
+  </section>
+
+  <section class="usage" id="analytics" aria-labelledby="usageTitle" aria-busy="true">
+    <div class="section-head">
+      <h2 id="usageTitle" data-i18n="usage_title">Nutzung</h2>
+      <div class="controls">
+        <label for="period" data-i18n="period_label">Zeitraum</label>
+        <select id="period" data-i18n-attr="aria-label:period_aria">
+          <option value="24h" data-i18n="period_24h">24 Stunden</option><option value="7d" data-i18n="period_7d">Woche</option>
+          <option value="30d" data-i18n="period_30d">Monat</option><option value="1y" data-i18n="period_1y">Jahr</option>
+          <option value="custom" data-i18n="period_custom">Eigener Zeitraum</option>
+        </select>
+        <button class="icon-button" id="refresh" data-i18n-attr="aria-label:refresh_aria;title:refresh_title">↻</button>
+      </div>
+    </div>
+    <form class="custom-range" id="customRange" hidden>
+      <label for="fromDate"><span data-i18n="from_label">Von (Ortszeit)</span><input type="datetime-local" id="fromDate" required></label>
+      <label for="toDate"><span data-i18n="to_label">Bis (Ortszeit)</span><input type="datetime-local" id="toDate" required></label>
+      <button type="submit" data-i18n="apply">Anwenden</button><span class="muted" id="rangeHint" data-i18n="range_hint">Mit „Anwenden“ übernehmen.</span>
+    </form>
+    <p class="range-caption" id="rangeCaption" data-i18n="range_loading">Zeitraum wird geladen …</p>
+    <div class="notice error" id="analyticsError" role="alert" hidden></div>
+    <div class="notice" id="coverageNotice" hidden></div>
+    <dl class="metrics">
+      <div class="metric"><dt data-i18n="metric_requests">Anfragen</dt><dd id="requestCount">–</dd><small id="requestNote" data-i18n="metric_requests_note">Abgeschlossene Router-Anfragen</small></div>
+      <div class="metric input"><dt data-i18n="metric_input">Input-Token</dt><dd id="inputTokens">–</dd><small id="inputNote" data-i18n="metric_input_note">Inklusive Cache</small></div>
+      <div class="metric output"><dt data-i18n="metric_output">Output-Token</dt><dd id="outputTokens">–</dd><small id="outputNote" data-i18n="metric_output_note">Inklusive Reasoning</small></div>
+      <div class="metric"><dt data-i18n="metric_cache">Cache-Anteil</dt><dd id="cacheRatio">–</dd><small id="cacheNote" data-i18n="metric_cache_note">An gemeldeten Input-Token</small></div>
+    </dl>
+    <div class="chart-area">
+      <div class="chart-title"><span data-i18n="chart_title">Erfasste Token im Zeitverlauf</span><div class="legend"><span>Input</span><span>Output</span></div></div>
+      <svg class="chart" id="tokenChart" viewBox="0 0 1080 200" role="img" data-i18n-attr="aria-label:chart_svg_title" hidden></svg>
+      <div class="chart-empty" id="chartEmpty" data-i18n="chart_loading">Nutzungsdaten werden geladen …</div>
+      <p class="chart-note" id="chartNote" data-i18n="chart_note_static">Cache ist Teil des Inputs, Reasoning ist Teil des Outputs.</p>
+    </div>
+  </section>
+
+  <section class="activity" aria-labelledby="activityTitle">
+    <div class="section-head"><h2 id="activityTitle" data-i18n="activity_title">Anfragen</h2><small id="historyCount">–</small></div>
+    <p class="scroll-hint" data-i18n="scroll_hint">Tabelle seitlich scrollen · Zeit anklicken für Details</p>
+    <div class="table-wrap" tabindex="0" role="region" data-i18n-attr="aria-label:table_aria">
+      <table><thead><tr><th scope="col" data-i18n="th_time">Zeit / Details</th><th scope="col" data-i18n="th_client">Client / Modell</th><th scope="col" class="number" data-i18n="th_input">Input</th><th scope="col" class="number" data-i18n="th_output">Output</th><th scope="col" class="number" data-i18n="th_duration">Dauer</th><th scope="col" class="number" data-i18n="th_status">Status</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="6" class="empty" data-i18n="requests_loading">Anfragen werden geladen …</td></tr></tbody></table>
+    </div>
+    <div class="pager"><span id="pageInfo">Seite 1 von 1</span><button id="prevPage" disabled data-i18n="btn_prev">← Zurück</button><button id="nextPage" disabled data-i18n="btn_next">Weiter →</button></div>
+  </section>
+
+  <section class="secondary" data-i18n-attr="aria-label:secondary_section">
+    <details><summary data-i18n="breakdown_summary">Nutzung nach Client und Modell</summary><div class="split detail-body"><div><p class="list-title" data-i18n="clients_title">Clients · Anfragen / erfasste Output-Token</p><div id="clients">–</div></div><div><p class="list-title" data-i18n="models_title">Modelle · Anfragen / erfasste Output-Token</p><div id="models">–</div></div></div></details>
+    <details><summary data-i18n="system_summary">System &amp; Engine</summary><div class="detail-body">
+      <p class="list-title" data-i18n="system_title">System · aktueller Zustand</p>
+      <dl class="detail-grid"><div><dt data-i18n="label_ram">RAM</dt><dd id="ram">–</dd></div><div><dt data-i18n="label_gpu">GPU</dt><dd id="gpu">–</dd></div><div><dt data-i18n="label_pool">KV-Pool</dt><dd id="pool">–</dd></div><div><dt data-i18n="label_disk">Datenträger</dt><dd id="disk">–</dd></div></dl>
+      <dl class="detail-grid"><div><dt data-i18n="label_context">Kontext / Slots</dt><dd id="context">–</dd></div><div><dt data-i18n="label_max_tokens">Output Standard / Limit</dt><dd id="maxTokens">–</dd></div><div><dt data-i18n="label_reasoning">Reasoning Standard</dt><dd id="reasoning">–</dd></div><div><dt data-i18n="label_version">Version</dt><dd id="version">–</dd></div></dl>
+      <p class="list-title" id="engineCaption" data-i18n="engine_caption_static">Engine · gewählter Zeitraum</p>
+      <dl class="detail-grid"><div><dt data-i18n="label_engine_tps">Generation, gewichtet</dt><dd id="engineTps">–</dd></div><div><dt data-i18n="label_prefill">Prefill, gewichtet</dt><dd id="prefillTps">–</dd></div><div><dt data-i18n="label_mtp">MTP Commit / Runde</dt><dd id="mtp">–</dd></div><div><dt data-i18n="label_pld">PLD Akzeptanz / Runde</dt><dd id="pld">–</dd></div></dl>
+      <p class="explanation" data-i18n="engine_explanation">Engine-Messungen stammen aus lokalen Abschluss-Logs. Sie können auch direkte Backend-Aufrufe enthalten und sind unabhängig von den Router-Anfragen oben.</p>
+      <div class="endpoint"><span class="muted" data-i18n="api_label">API</span><code id="endpoint">–</code><button id="copy" data-i18n="copy_btn">Kopieren</button><span id="copyStatus" class="muted" role="status"></span></div>
+      <div id="storage" class="explanation"></div>
+    </div></details>
+    <details><summary data-i18n="faq_summary">Wie werden die Zahlen erfasst?</summary><div class="explanation detail-body">
+      <p data-i18n-html="faq_p1">Die Nutzung zeigt abgeschlossene Inferenzanfragen über diesen Router. Tokenzahlen stammen ausschließlich aus dem <code>usage</code>-Objekt der API. Bei fehlenden Werten steht „–“; Teilsummen sind als unvollständig gekennzeichnet. Laufende Anfragen werden erst nach Abschluss gezählt.</p>
+      <p data-i18n="faq_p2">Input enthält Cache-Token. Output enthält Reasoning-Token. Diese Teilmengen werden nicht noch einmal addiert. Der Cache-Anteil berücksichtigt nur Anfragen, die sowohl Input als auch Cache melden. „0“ bedeutet einen tatsächlich gemeldeten Nullwert.</p>
+      <p data-i18n="faq_p3">Altbestände bleiben in der Historie, fließen aber wegen der früheren uneinheitlichen Erfassung nicht in die verifizierten Tokensummen ein. Zeitlich ähnliche Engine-Logs werden keiner Anfrage automatisch zugeordnet.</p>
+      <p data-i18n="faq_p4">Die Dauer reicht vom Start der Weiterleitung bis zum Ende der Antwort. TTFB ist die Zeit bis zum ersten Antwort-Byte, nicht bis zum ersten Token. TPS werden nur bei einer direkten Zeitmessung angezeigt. Streaming-Abbrüche können ohne abschließende Usage-Meldung bleiben.</p>
+      <p data-i18n="faq_p5">Gespeichert werden technische Metadaten für 365 Tage. Prompts, Antworten, Bilder, Tool-Inhalte und Schlüssel werden nicht gespeichert.</p>
+    </div></details>
+    <details><summary data-i18n="db_summary">Datenbank</summary><div class="detail-body">
+      <p class="explanation" data-i18n="db_explanation">Löscht alle gespeicherten Telemetriedaten (Anfragen und Engine-Logs) aus der lokalen Datenbank. Diese Aktion kann nicht rückgängig gemacht werden. Laufende Anfragen werden dabei nicht beendet.</p>
+      <div class="controls" style="justify-content:flex-start">
+        <button id="resetDb" class="danger" data-i18n="reset_btn">Datenbank zurücksetzen</button>
+        <button id="resetConfirm" class="danger" hidden>Ja, alles löschen</button>
+        <button id="resetCancel" hidden data-i18n="reset_no">Abbrechen</button>
+        <span id="resetStatus" class="muted" role="status"></span>
+      </div>
+    </div></details>
+  </section>
+  <footer><span id="updated" data-i18n="footer_not_updated">Noch nicht aktualisiert</span><span data-i18n="footer_note">Lokal erfasst · 365 Tage Aufbewahrung</span></footer>
+  <noscript><p class="notice" data-i18n="noscript">Für die Live-Anzeige bitte JavaScript aktivieren.</p></noscript>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let L = {}, NUM = 'de-DE', currentLang = 'de';
+const t = (key, params) => {
+  let s = L[key];
+  if (typeof s !== 'string') return key;
+  if (params) for (const [k, v] of Object.entries(params)) s = s.replaceAll(`{${k}}`, String(v));
+  return s;
+};
+const valid = n => typeof n === 'number' && Number.isFinite(n);
+const integer = n => valid(n) ? n.toLocaleString(NUM) : '–';
+const decimal = (n, digits = 1) => valid(n) ? n.toLocaleString(NUM, {minimumFractionDigits: digits, maximumFractionDigits: digits}) : '–';
+const percent = n => valid(n) ? `${decimal(n * 100)} %` : '–';
+const seconds = n => valid(n) ? `${decimal(n / 1000, 2)} s` : '–';
+const rate = n => valid(n) ? `${decimal(n)} Token/s` : '–';
+const esc = s => String(s ?? '–').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+const dateTime = n => new Date(n * 1000).toLocaleString(NUM, {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
+const compact = n => n.toLocaleString(NUM, {notation:'compact', maximumFractionDigits:1});
+function bytes(n) {
+  if (!valid(n)) return '–';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${decimal(n, 1)} ${units[i]}`;
+}
+const state = {period:'24h', from:null, to:null, page:1, pages:1, range:null, pinned:null};
+let analyticsController, analyticsSequence = 0, liveBusy = false, liveTimer, analyticsTimer, currentAnalytics;
+let updatesData, updatesTimer, updatesBusy = false, updateActionBusy = false, updateSequence = 0;
+const expanded = new Set();
+
+function handleUnauthorized(response) {
+  if (response.status === 401) {
+    location.assign('/dashboard/login');
+    return true;
+  }
+  return false;
+}
+
+function renderLive(data) {
+  const api = data.api || {}, backend = data.backend || {}, system = data.system || {};
+  const online = backend.status === 'ok';
+  const switching = api.status === 'switching';
+  const maintenance = api.status === 'maintenance';
+  $('connection').textContent = maintenance ? t('status_maintenance') : switching ? t('status_switching') : online ? t('status_ready') : t('status_backend_down');
+  $('statusDot').dataset.state = maintenance || switching ? 'switching' : online ? 'ok' : 'error';
+  $('activeModel').textContent = api.active_model || t('no_active_model');
+  $('switchState').hidden = !api.switch_target;
+  $('switchState').textContent = api.switch_target ? t('switch_to', {target: api.switch_target}) : '';
+  $('activeCount').textContent = integer(backend.in_flight);
+  $('queueCount').textContent = integer(backend.queued);
+  const active = data.active_requests || [];
+  $('activeRequests').hidden = active.length === 0;
+  $('activeRequests').innerHTML = active.map(r => `<div><span>${esc(r.client)} · ${esc(r.model)}</span><span>${seconds(r.elapsed_ms)}</span></div>`).join('');
+  const memory = system.memory || {};
+  $('ram').textContent = `${bytes(memory.used_bytes)} / ${bytes(memory.total_bytes)}`;
+  $('gpu').textContent = valid(system.gpu_busy_percent) ? `${integer(system.gpu_busy_percent)} %` : '–';
+  $('pool').textContent = percent(data.cache?.pool?.usage_ratio);
+  $('disk').textContent = `${bytes(system.disk_used_bytes)} / ${bytes(system.disk_total_bytes)}`;
+  $('context').textContent = `${integer(backend.context)} / ${integer(backend.slots)}`;
+  $('maxTokens').textContent = `${integer(backend.max_tokens_default)} / ${integer(backend.max_tokens_cap)}`;
+  $('reasoning').textContent = backend.reasoning_effort_default || '–';
+  $('version').textContent = typeof backend.version === 'string' ? backend.version : backend.version?.api || '–';
+  $('storage').textContent = Object.entries(data.cache?.model_bytes || {}).map(([name, size]) => `${name}: ${bytes(size)} Cache`).join(' · ');
+  $('updated').textContent = t('live_updated', {time: new Date(data.generated_at * 1000).toLocaleTimeString(NUM)});
+}
+
+const bucketLabel = (ts, unit, period) => {
+  const d = new Date(ts * 1000);
+  if (period === '7d') return d.toLocaleDateString(NUM, {weekday: 'short'});
+  if (unit === 'month') return d.toLocaleDateString(NUM, {month: 'short'});
+  if (unit === 'day' || unit === 'week') return String(d.getDate()).padStart(2, '0');
+  return String(d.getHours()).padStart(2, '0');
+};
+
+function renderChart(data) {
+  const timeline = data.timeline || [];
+  const unit = data.bucket_unit || 'hour';
+  const period = data.period || '';
+  const hasUsage = data.summary.input_reported > 0 || data.summary.output_reported > 0;
+  $('tokenChart').toggleAttribute('hidden', !hasUsage);
+  $('chartEmpty').hidden = hasUsage;
+  $('chartEmpty').textContent = data.summary.requests ? t('chart_no_verified') : t('chart_no_requests');
+  $('chartNote').textContent = t('chart_note', {interval: t(`bucket_${unit}`)});
+  if (!hasUsage) { $('tokenChart').innerHTML = ''; return; }
+  const max = Math.max(1, ...timeline.flatMap(x => [x.input_tokens || 0, x.output_tokens || 0]));
+  const chartWidth = Math.max(260, $('tokenChart').clientWidth || 1080);
+  const chartHeight = $('tokenChart').clientHeight || 200;
+  $('tokenChart').setAttribute('viewBox', `0 0 ${chartWidth} ${chartHeight}`);
+  const left = 52, width = chartWidth - 60, top = 12, axisY = chartHeight - 30;
+  const height = axisY - top;
+  let svg = `<title>${esc(t('chart_svg_title'))}</title>`;
+  for (const ratio of [0, .5, 1]) {
+    const y = top + height * (1 - ratio);
+    svg += `<path class="gridline" d="M${left} ${y}H${left + width}"/><text x="${left - 10}" y="${y + 4}" text-anchor="end">${esc(compact(max * ratio))}</text>`;
+  }
+  svg += `<path class="axis" d="M${left} ${axisY}H${left + width}"/>`;
+  const step = width / Math.max(1, timeline.length);
+  const minLabelPx = unit === 'month' ? 36 : period === '7d' ? 34 : 22;
+  const labelEvery = Math.max(1, Math.ceil(minLabelPx / step));
+  timeline.forEach((item, i) => {
+    const bucketFrom = Math.max(item.bucket_start, data.from);
+    const bucketTo = Math.min(item.bucket_end ?? item.bucket_start + data.bucket_seconds, data.to);
+    const x = left + (bucketFrom - data.from) / (data.to - data.from) * width;
+    const w = (bucketTo - bucketFrom) / (data.to - data.from) * width;
+    if (w <= 0) return;
+    const label = t('chart_tooltip', {from: dateTime(Math.max(item.bucket_start, data.from)), to: dateTime(Math.min(item.bucket_end ?? item.bucket_start + data.bucket_seconds, data.to)), input: integer(item.input_tokens), output: integer(item.output_tokens), requests: integer(item.requests)}) + (item.partial ? t('chart_tooltip_partial') : '');
+    svg += `<g class="bucket"><title>${esc(label)}</title>`;
+    for (const [j, key, color] of [[0, 'input_tokens', '#7daff3'], [1, 'output_tokens', '#5ee7c4']]) {
+      if (!valid(item[key])) continue;
+      const h = item[key] / max * height;
+      svg += `<rect class="bar" x="${x + w * (.1 + j * .42)}" y="${axisY - h}" width="${Math.max(.5, w * .36)}" height="${h}" rx="2" fill="${color}"/>`;
+    }
+    if (item.partial) svg += `<circle cx="${x + w / 2}" cy="${axisY + 7}" r="2" fill="#edc17e"/>`;
+    if (i % labelEvery === 0) {
+      svg += `<text class="tick" x="${x + w / 2}" y="${chartHeight - 9}" text-anchor="middle">${esc(bucketLabel(item.bucket_start, unit, period))}</text>`;
+    }
+    svg += `<rect x="${x}" y="${top}" width="${w}" height="${height}" fill="transparent"/></g>`;
+  });
+  $('tokenChart').innerHTML = svg;
+}
+
+function renderHistory(history) {
+  state.page = history.page;
+  state.pages = history.pages;
+  $('historyCount').textContent = t('history_count', {total: integer(history.total)});
+  $('pageInfo').textContent = t('page_of', {page: history.page, pages: history.pages}) + (state.pinned ? t('pinned_suffix') : '');
+  $('prevPage').disabled = state.page <= 1;
+  $('nextPage').disabled = state.page >= state.pages;
+  const items = history.items || [];
+  $('rows').innerHTML = items.length ? items.map((r, i) => {
+    const legacy = r.telemetry_version < 2;
+    const count = n => `${integer(n)}${legacy && valid(n) ? '*' : ''}`;
+    const open = expanded.has(r.request_id);
+    const details = [
+      [t('detail_cache'), count(r.cached_tokens)], [t('detail_reasoning'), count(r.reasoning_tokens)],
+      [t('detail_ttfb'), seconds(r.ttfb_ms)], [t('detail_generation'), legacy ? '–' : rate(r.tps)],
+      [t('detail_reasoning_requested'), r.reasoning_effort], [t('detail_response_format'), r.stream ? 'Streaming' : 'JSON'],
+      [t('detail_endpoint'), r.endpoint], [t('detail_capture'), legacy ? t('capture_legacy') : t('capture_api')],
+    ];
+    return `<tr><td><button class="row-toggle" data-request="${esc(r.request_id)}" aria-expanded="${open}" aria-controls="detail-${i}"><span aria-hidden="true">${open ? '−' : '+'}</span>${esc(dateTime(r.completed_at))}</button></td>
+      <td>${esc(r.client)}<span class="cell-sub">${esc(r.model)}</span></td><td class="number ${legacy ? 'legacy' : ''}">${count(r.input_tokens)}</td><td class="number ${legacy ? 'legacy' : ''}">${count(r.output_tokens)}</td>
+      <td class="number">${seconds(r.duration_ms)}</td><td class="number ${r.status >= 400 ? 'failure' : 'success'}">${integer(r.status)}<span class="cell-sub">${r.status === 499 ? t('status_aborted') : r.status >= 400 ? t('status_error') : t('status_ok')}</span></td></tr>
+      <tr class="request-detail" id="detail-${i}" ${open ? '' : 'hidden'}><td colspan="6"><dl class="detail-grid">${details.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${r.error ? `<p class="failure">${esc(r.error)}</p>` : ''}${legacy ? `<small class="legacy">${esc(t('legacy_note'))}</small>` : ''}</td></tr>`;
+  }).join('') : `<tr><td colspan="6" class="empty">${esc(t('history_empty'))}</td></tr>`;
+}
+
+function renderBreakdown(id, rows) {
+  $(id).innerHTML = rows.length ? rows.map(r => `<div class="breakdown-row"><span>${esc(r.name)}</span><span>${integer(r.requests)} / ${integer(r.output_tokens)}${r.output_reported < r.requests ? esc(t('partial_suffix')) : ''}</span></div>`).join('') : `<p class="muted">${esc(t('no_requests'))}</p>`;
+}
+
+function renderAnalytics(data) {
+  currentAnalytics = data;
+  const s = data.summary, e = data.engine;
+  state.range = {from:data.from, to:data.to};
+  $('rangeCaption').textContent = t('range_caption', {from: dateTime(data.from), to: dateTime(data.to), time: new Date(data.generated_at * 1000).toLocaleTimeString(NUM)});
+  $('requestCount').textContent = integer(s.requests);
+  $('requestNote').textContent = t('request_note', {success: integer(s.successes), errors: integer(s.errors)});
+  $('inputTokens').textContent = integer(s.input_tokens);
+  $('outputTokens').textContent = integer(s.output_tokens);
+  $('inputNote').textContent = t('input_note', {reported: integer(s.input_reported), total: integer(s.requests)});
+  $('outputNote').textContent = t('output_note', {reported: integer(s.output_reported), total: integer(s.requests)});
+  $('cacheRatio').textContent = percent(s.cache_ratio);
+  $('cacheNote').textContent = t('cache_note', {cached: integer(s.cached_tokens), reported: integer(s.cache_reported), total: integer(s.requests)});
+  const missing = s.requests - s.usage_reported;
+  const messages = [];
+  if (missing > 0) messages.push(t('coverage_missing', {reported: integer(s.usage_reported), total: integer(s.requests)}));
+  if (s.legacy_requests > 0) messages.push(t('coverage_legacy', {count: integer(s.legacy_requests)}));
+  $('coverageNotice').hidden = messages.length === 0;
+  $('coverageNotice').textContent = messages.join(' ');
+  renderChart(data);
+  renderHistory(data.history);
+  renderBreakdown('clients', data.by_client);
+  renderBreakdown('models', data.by_model);
+  $('engineCaption').textContent = t('engine_caption', {count: integer(e.requests)});
+  $('engineTps').textContent = rate(e.weighted_tps);
+  $('prefillTps').textContent = rate(e.weighted_prefill_tps);
+  $('mtp').textContent = decimal(e.avg_commit_per_round, 2);
+  $('pld').textContent = decimal(e.avg_pld_accept_per_round, 2);
+}
+
+function analyticsUrl() {
+  const range = state.pinned || (state.period === 'custom' ? {from:state.from, to:state.to} : null);
+  const params = new URLSearchParams({period:range ? 'custom' : state.period, page:String(state.page)});
+  if (range) { params.set('from', range.from); params.set('to', range.to); }
+  return `/dashboard/api/analytics?${params}`;
+}
+
+async function refreshLive() {
+  if (liveBusy || document.hidden) return;
+  clearTimeout(liveTimer);
+  liveBusy = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch('/dashboard/api/snapshot', {cache:'no-store', signal:controller.signal});
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) throw new Error();
+    renderLive(await response.json());
+  } catch {
+    $('connection').textContent = t('conn_broken');
+    $('statusDot').dataset.state = 'error';
+    $('updated').textContent = t('live_stale');
+  } finally {
+    clearTimeout(timeout);
+    liveBusy = false;
+    if (!document.hidden) liveTimer = setTimeout(refreshLive, 5000);
+  }
+}
+
+async function refreshAnalytics(clear = false) {
+  clearTimeout(analyticsTimer);
+  analyticsController?.abort();
+  const sequence = ++analyticsSequence;
+  const controller = analyticsController = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  $('analytics').setAttribute('aria-busy', 'true');
+  $('prevPage').disabled = $('nextPage').disabled = true;
+  if (clear) {
+    currentAnalytics = null;
+    for (const id of ['requestCount', 'inputTokens', 'outputTokens', 'cacheRatio']) $(id).textContent = '–';
+    for (const id of ['requestNote', 'inputNote', 'outputNote', 'cacheNote']) $(id).textContent = t('loading');
+    $('rangeCaption').textContent = t('range_loading');
+    $('coverageNotice').hidden = true;
+    $('tokenChart').setAttribute('hidden', '');
+    $('chartEmpty').hidden = false;
+    $('chartEmpty').textContent = t('loading');
+    $('rows').innerHTML = `<tr><td colspan="6" class="empty">${esc(t('requests_loading'))}</td></tr>`;
+  }
+  try {
+    const response = await fetch(analyticsUrl(), {cache:'no-store', signal:controller.signal});
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) throw new Error();
+    const data = await response.json();
+    if (sequence !== analyticsSequence) return;
+    renderAnalytics(data);
+    $('analyticsError').hidden = true;
+  } catch {
+    if (sequence !== analyticsSequence) return;
+    $('analyticsError').hidden = false;
+    $('analyticsError').textContent = t('analytics_error');
+    if (clear) {
+      $('chartEmpty').textContent = t('analytics_unavailable');
+      $('rows').innerHTML = `<tr><td colspan="6" class="empty">${esc(t('requests_failed'))}</td></tr>`;
+    }
+    $('prevPage').disabled = state.page <= 1;
+    $('nextPage').disabled = state.page >= state.pages;
+  } finally {
+    clearTimeout(timeout);
+    if (sequence === analyticsSequence) {
+      $('analytics').setAttribute('aria-busy', 'false');
+      if (!document.hidden) analyticsTimer = setTimeout(() => refreshAnalytics(), 30000);
+    }
+  }
+}
+
+function changeRange(period, from = null, to = null) {
+  Object.assign(state, {period, from, to, page:1, pages:1, pinned:null});
+  expanded.clear();
+  refreshAnalytics(true);
+}
+$('period').addEventListener('change', event => {
+  $('customRange').hidden = event.target.value !== 'custom';
+  if (event.target.value !== 'custom') changeRange(event.target.value);
+});
+$('customRange').addEventListener('submit', event => {
+  event.preventDefault();
+  const from = new Date($('fromDate').value).getTime() / 1000;
+  const to = new Date($('toDate').value).getTime() / 1000;
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to || from >= Date.now() / 1000) {
+    $('rangeHint').textContent = t('range_invalid');
+    return;
+  }
+  $('rangeHint').textContent = t('range_applied');
+  changeRange('custom', from, to);
+});
+function changePage(delta) {
+  if (!state.range) return;
+  state.page = Math.max(1, Math.min(state.pages, state.page + delta));
+  state.pinned = state.page > 1 ? state.pinned || {...state.range} : null;
+  expanded.clear();
+  refreshAnalytics();
+}
+$('prevPage').addEventListener('click', () => changePage(-1));
+$('nextPage').addEventListener('click', () => changePage(1));
+$('rows').addEventListener('click', event => {
+  const button = event.target.closest('button[data-request]');
+  if (!button) return;
+  const open = button.getAttribute('aria-expanded') !== 'true';
+  button.setAttribute('aria-expanded', String(open));
+  button.querySelector('span').textContent = open ? '−' : '+';
+  $(button.getAttribute('aria-controls')).hidden = !open;
+  if (open) expanded.add(button.dataset.request); else expanded.delete(button.dataset.request);
+});
+$('refresh').addEventListener('click', () => { refreshLive(); refreshAnalytics(); });
+$('endpoint').textContent = `${location.origin}/v1`;
+$('copy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText($('endpoint').textContent);
+    $('copyStatus').textContent = t('copied');
+  } catch {
+    const selection = window.getSelection(), range = document.createRange();
+    range.selectNodeContents($('endpoint'));
+    selection.removeAllRanges(); selection.addRange(range);
+    $('copyStatus').textContent = t('copy_hint');
+  }
+});
+function localInput(date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+function renderUpdates(data) {
+  updatesData = data;
+  const job = data.job;
+  let title = data.current_version ? t('update_server_title', {version: data.current_version}) : t('update_default_title');
+  if (data.recovery_required) title += t('update_suffix_recovery');
+  else if (data.running) title += t('update_suffix_running');
+  else if (data.update_available) title += t('update_suffix_available', {version: data.latest_version});
+  else if (data.up_to_date && !data.check_error) title += t('update_suffix_current');
+  if ($('updateTitle').textContent !== title) $('updateTitle').textContent = title;
+  $('updateMessage').textContent = data.running || data.recovery_required || job?.phase === 'failed' || job?.phase === 'rolled_back' || job?.phase === 'succeeded'
+    ? job?.message || t('update_msg_recovery')
+    : data.check_error || data.support_error || data.blocked_reason || t('update_msg_default');
+  $('updateVersions').textContent = Object.entries(data.configured_versions || {}).map(([model, version]) => `${model}: ${version}`).join(' · ') || t('update_no_quadlets');
+  $('updateChecked').textContent = data.checked_at ? t('update_checked_at', {time: dateTime(data.checked_at), tag: data.latest_version}) : t('not_checked');
+  $('updateBackup').hidden = !job?.backup_dir;
+  $('updateBackup').textContent = job?.backup_dir ? t('update_backup', {dir: job.backup_dir}) : '';
+  $('updateChangelog').hidden = !data.release_url;
+  if (data.release_url) $('updateChangelog').href = data.release_url;
+  $('checkUpdate').disabled = updateActionBusy || data.running || data.recovery_required;
+  $('installUpdate').hidden = !data.update_available || data.recovery_required;
+  $('installUpdate').disabled = updateActionBusy || !data.can_install;
+  $('installUpdate').textContent = data.running ? t('update_running_btn') : t('update_install_btn', {version: data.latest_version});
+  $('recoverUpdate').hidden = !data.recovery_required;
+  $('recoverUpdate').disabled = updateActionBusy || !data.can_recover;
+}
+function scheduleUpdates() {
+  clearTimeout(updatesTimer);
+  if (!document.hidden) updatesTimer = setTimeout(refreshUpdates, updatesData?.running ? 3000 : updatesData?.checked_at ? 60000 : 10000);
+}
+async function refreshUpdates() {
+  if (updatesBusy || updateActionBusy || document.hidden) return;
+  updatesBusy = true;
+  const sequence = ++updateSequence;
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch('/dashboard/api/updates', {cache:'no-store', signal:controller.signal});
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) throw new Error(t('update_unavailable'));
+    const data = await response.json();
+    if (sequence === updateSequence) { renderUpdates(data); $('updateError').hidden = true; }
+  } catch (error) {
+    if (sequence === updateSequence) {
+      $('updateError').hidden = false;
+      $('updateError').textContent = error.name === 'AbortError' ? t('update_timeout') : error.message;
+      $('installUpdate').disabled = true;
+      $('recoverUpdate').disabled = true;
+    }
+  } finally { clearTimeout(timeout); updatesBusy = false; scheduleUpdates(); }
+}
+async function updateAction(action) {
+  if (updateActionBusy) return;
+  updateActionBusy = true;
+  ++updateSequence;
+  clearTimeout(updatesTimer);
+  for (const id of ['checkUpdate', 'installUpdate', 'recoverUpdate']) $(id).disabled = true;
+  $('updateError').hidden = true;
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 180000);
+  try {
+    const response = await fetch(`/dashboard/api/updates/${action}`, {
+      method:'POST', headers:{'Content-Type':'application/json', 'X-Halogen-Action':'update'},
+      body:JSON.stringify(action === 'install' ? {version:updatesData?.latest_version} : {}), signal:controller.signal,
+    });
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) throw new Error((await response.text()) || t('update_action_failed'));
+    updatesData = await response.json();
+    refreshLive();
+  } catch (error) {
+    $('updateError').hidden = false;
+    $('updateError').textContent = error.name === 'AbortError' ? t('update_action_timeout') : error.message;
+  } finally {
+    clearTimeout(timeout);
+    updateActionBusy = false;
+    if (updatesData) renderUpdates(updatesData); else $('checkUpdate').disabled = false;
+    scheduleUpdates();
+  }
+}
+$('checkUpdate').addEventListener('click', () => updateAction('check'));
+$('installUpdate').addEventListener('click', () => updateAction('install'));
+$('recoverUpdate').addEventListener('click', () => updateAction('recover'));
+let resetArmed = false, resetBusy = false, resetRevertTimer;
+function setResetUi() {
+  $('resetDb').hidden = resetArmed;
+  $('resetConfirm').hidden = !resetArmed;
+  $('resetCancel').hidden = !resetArmed || resetBusy;
+  $('resetConfirm').disabled = resetBusy;
+  $('resetConfirm').textContent = resetBusy ? t('reset_running') : t('reset_confirm');
+}
+function disarmReset() {
+  resetArmed = false;
+  clearTimeout(resetRevertTimer);
+  setResetUi();
+}
+$('resetDb').addEventListener('click', () => {
+  resetArmed = true;
+  $('resetStatus').textContent = t('reset_arm');
+  clearTimeout(resetRevertTimer);
+  resetRevertTimer = setTimeout(disarmReset, 15000);
+  setResetUi();
+});
+$('resetCancel').addEventListener('click', () => {
+  disarmReset();
+  $('resetStatus').textContent = '';
+});
+$('resetConfirm').addEventListener('click', async () => {
+  if (!resetArmed || resetBusy) return;
+  resetBusy = true;
+  setResetUi();
+  try {
+    const response = await fetch('/dashboard/api/reset', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'reset'},
+      body: JSON.stringify({confirm: true}),
+    });
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) throw new Error((await response.text()) || t('reset_failed'));
+    const data = await response.json();
+    const count = Object.values(data.deleted || {}).reduce((total, value) => total + value, 0);
+    $('resetStatus').textContent = t('reset_done', {count: integer(count)});
+    refreshAnalytics(true);
+    refreshLive();
+  } catch (error) {
+    $('resetStatus').textContent = error.message || t('reset_failed');
+  } finally {
+    resetBusy = false;
+    disarmReset();
+  }
+});
+$('toDate').value = localInput(new Date());
+$('fromDate').value = localInput(new Date(Date.now() - 86400000));
+new ResizeObserver(() => {
+  if (currentAnalytics) renderChart(currentAnalytics);
+}).observe(document.querySelector('.chart-area'));
+document.addEventListener('visibilitychange', () => {
+  clearTimeout(liveTimer); clearTimeout(analyticsTimer); clearTimeout(updatesTimer);
+  if (!document.hidden) { refreshLive(); refreshAnalytics(); refreshUpdates(); }
+});
+function applyLocale() {
+  document.documentElement.lang = currentLang;
+  document.title = t('page_title');
+  for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
+  for (const el of document.querySelectorAll('[data-i18n-html]')) el.innerHTML = t(el.dataset.i18nHtml);
+  for (const el of document.querySelectorAll('[data-i18n-attr]')) {
+    for (const pair of el.dataset.i18nAttr.split(';')) {
+      const [attr, key] = pair.split(':');
+      if (attr && key) el.setAttribute(attr, t(key));
+    }
+  }
+}
+async function loadLocale(lang) {
+  const response = await fetch(`/dashboard/api/locale/${encodeURIComponent(lang)}`, {cache: 'no-store'});
+  if (!response.ok) throw new Error('locale unavailable');
+  L = await response.json();
+  NUM = L.__locale || (lang === 'de' ? 'de-DE' : 'en-US');
+  currentLang = lang;
+}
+async function switchLanguage(lang) {
+  try {
+    await loadLocale(lang);
+  } catch {
+    try { await loadLocale('de'); } catch { L = {}; currentLang = lang; NUM = lang === 'de' ? 'de-DE' : 'en-US'; }
+  }
+  try { localStorage.setItem('halobridge_lang', currentLang); } catch {}
+  applyLocale();
+  setResetUi();
+  refreshLive();
+  refreshAnalytics(true);
+  refreshUpdates();
+}
+const initialLang = (() => {
+  try {
+    const stored = localStorage.getItem('halobridge_lang');
+    if (stored === 'de' || stored === 'en') return stored;
+  } catch {}
+  return (navigator.language || 'de').toLowerCase().startsWith('de') ? 'de' : 'en';
+})();
+$('langSelect').value = initialLang;
+$('langSelect').addEventListener('change', event => switchLanguage(event.target.value));
+switchLanguage(initialLang);
+</script>
+</body>
+</html>

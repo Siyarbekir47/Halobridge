@@ -1,0 +1,44 @@
+# Beispiel-Quadlet für ein eigenes Halogen-Setup. Pfade anpassen (%h = Home-Verzeichnis
+# des ausführenden Benutzers). Discovery erkennt dieses File über Image + HALOGEN_MODEL_ID.
+[Unit]
+Description=Halogen Uncensored Qwen3.8 Flash Backend
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=ghcr.io/peonist-ai/halogen-flash-server:0.12.3
+ContainerName=halogen-uncensored
+Exec=all
+
+Volume=%h/halogen/models/official:/models:ro,Z
+Volume=%h/halogen/models/uncensored:/uncensored:ro,Z
+Volume=%h/halogen/cache/uncensored:/cache:Z
+
+AddDevice=/dev/kfd
+AddDevice=/dev/dri
+
+PublishPort=127.0.0.1:8831:8731
+
+Environment=HALOGEN_CHECKPOINT=/uncensored/qwen3.8-flash-uncensored.hgn
+Environment=HALOGEN_TOKENIZER=/models/tokenizer
+Environment=HALOGEN_MODEL_ID=qwen3.8-flash-uncensored
+Environment=HALOGEN_VISION_TOWER=/models/qwen38-flash-next-vision.hgn
+
+Environment=HALOGEN_KV_SLOTS=2
+Environment=HALOGEN_KV_POOL_POSITIONS=524288
+Environment=HALOGEN_MAX_TOK=32768
+Environment=HALOGEN_HOST_RESERVE_GIB=18
+
+Environment=HALOGEN_CACHE_DIR=/cache
+Environment=HALOGEN_CACHE_DISK_GIB=750
+Environment=HALOGEN_CACHE_PRUNE_OLD=1
+
+Ulimit=memlock=-1:-1
+PodmanArgs=--ipc=host
+PodmanArgs=--group-add=keep-groups
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+TimeoutStopSec=120

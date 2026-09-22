@@ -1,0 +1,23 @@
+[Unit]
+Description=Halobridge router and dashboard for halogen
+Documentation=https://github.com/Siyarbekir47/Halobridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# If installed with pipx, the command is usually here:
+ExecStart=%h/.local/bin/halobridge router --config %h/.config/halobridge/halobridge.toml
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+# Optional alternative to --config:
+# Environment=HALOBRIDGE_CONFIG=%h/.config/halobridge/halobridge.toml
+
+# Keep the service in the user's systemd login session.
+# Ensure lingering is enabled:
+#   systemctl --user enable --now halobridge.service
+#   loginctl enable-linger "$USER"
+
+[Install]
+WantedBy=default.target

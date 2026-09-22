@@ -1,0 +1,82 @@
+# Halobridge example configuration
+#
+# Copy to:
+#   ~/.config/halobridge/halobridge.toml
+#
+# Every value is optional. Defaults are safe for a local single-host setup.
+
+[router]
+# Default: localhost only.
+bind = ["127.0.0.1"]
+
+# Public port for the OpenAI-compatible API and dashboard.
+port = 8731
+
+# Local Halogen backend.
+backend_url = "http://127.0.0.1:8831"
+
+# Timeouts for model switching and update coordination.
+drain_timeout_s = 7200
+start_timeout_s = 600
+stop_timeout_s = 180
+
+# GPU GTT release check. Adjust for your GPU/driver.
+gtt_path = "/sys/class/drm/card0/device/mem_info_gtt_used"
+gtt_limit_bytes = 1073741824
+
+[models]
+# Discover models from Podman Quadlet files.
+auto_discover = true
+quadlet_dir = "~/.config/containers/systemd"
+
+# Explicit overrides. These are merged on top of discovery.
+# Use this when you do not use Quadlets or need to override a service.
+[models.explicit]
+# "qwen3.8-flash" = "halogen-official.service"
+# "qwen3.8-flash-uncensored" = "halogen-uncensored.service"
+
+[updates]
+# Set false to disable all update functionality.
+enabled = true
+
+# Official Halogen image repository.
+image_repo = "ghcr.io/peonist-ai/halogen-flash-server"
+
+# github is recommended because upstream currently publishes stable tags.
+# registry is experimental and uses `podman search --list-tags`.
+tag_source = "github"
+github_repo = "peonist-ai/halogen-flash-server"
+
+# How often the dashboard checks for a newer stable version.
+check_interval_h = 6
+
+# Where Quadlet backups are written before an update.
+backup_dir = "~/halogen/backups"
+
+# Keep this many update backup directories after a successful update.
+# 0 disables pruning.
+backup_keep = 5
+
+[dashboard]
+# Telemetry database and update journal location.
+state_dir = "~/.local/state/halobridge"
+
+# How long completed request telemetry is retained.
+retention_days = 365
+
+# GPU card for dashboard metrics.
+# Use "auto" or a concrete card such as "card0" or "card1".
+gpu_card = "auto"
+
+# Optional externally reachable API base shown in docs/UI.
+# Example: "https://halo.example.net"
+public_endpoint = ""
+
+[security]
+# Empty means no token gate. Strongly recommended if not localhost-only.
+# Generate with: openssl rand -hex 32
+auth_token = ""
+
+# Allow one-click installation from the dashboard.
+# Set false for a read-only dashboard.
+allow_install = true

@@ -1,0 +1,13 @@
+Halobridge
+Copyright 2026 The Halobridge Authors
+
+This product is an independent community tool for routing, observing, and
+updating local halogen-flash-server deployments.
+
+This project is not affiliated with, sponsored, or endorsed by Peonist, LLC.
+"halogen" and "Peonist" are trademarks of Peonist, LLC. Use of these names is
+only for descriptive compatibility references.
+
+This product does not contain, modify, or redistribute halogen-flash-server
+engine code. It communicates with the official container image over HTTP and
+manages local Podman Quadlet configuration files.

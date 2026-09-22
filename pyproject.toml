@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "halobridge"
+version = "0.1.0"
+description = "Router and dashboard for halogen-flash-server"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "The Halobridge Authors" }
+]
+keywords = ["halogen", "router", "dashboard", "podman", "quadlet", "llm"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: No Input/Output (Daemon)",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Systems Administration",
+]
+dependencies = [
+  "aiohttp>=3.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/Siyarbekir47/Halobridge"
+Issues = "https://github.com/Siyarbekir47/Halobridge/issues"
+
+[project.scripts]
+halobridge = "halogen_router:cli"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = [
+  "halogen_router",
+  "halogen_dashboard",
+  "halogen_updates",
+  "settings",
+  "discovery",
+  "semver",
+  "doctor",
+]
+packages = ["halobridge_data"]
+
+[tool.setuptools.package-data]
+halobridge_data = ["dashboard.html", "locales/*.json"]
