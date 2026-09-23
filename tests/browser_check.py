@@ -22,15 +22,18 @@ async def main(args):
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
     dashboard = database()
     now = time.time()
+    local = time.localtime(now)
+    midnight = time.mktime(local[:3] + (0, 0, 0) + local[6:])
+    span = min(900, now - midnight)
     for i in range(32):
         insert(
-            dashboard, completed_at=now - 7200 - i * 2200,
+            dashboard, request_id=f'browser-{i}', completed_at=now - (i + 1) * span / 40,
             client="OpenCode" if i % 3 else "Open WebUI", input_tokens=1000 + i * 90,
             output_tokens=100 + i * 10, cached_tokens=800 if i % 2 else 0,
             status=200 if i % 9 else 499, duration_ms=3200 + i * 50,
             telemetry_version=2 if i else 0,
         )
-    insert(dashboard, completed_at=now - 8000, input_tokens=None, output_tokens=None, cached_tokens=None, reasoning_tokens=None)
+    insert(dashboard, completed_at=now - span * .9, input_tokens=None, output_tokens=None, cached_tokens=None, reasoning_tokens=None)
     updates = {
         "current_version": "0.13.1", "latest_version": "0.13.1", "checked_at": now,
         "configured_versions": {"qwen3.8-flash": "0.13.1", "qwen3.8-flash-uncensored": "0.13.1"},
@@ -77,6 +80,9 @@ async def main(args):
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         await page.goto(str(server.make_url("/dashboard")))
+        await expect(page.locator('#connection')).to_have_text('Ready')
+        await expect(page.locator('html')).to_have_attribute('lang', 'en')
+        await page.locator('#langSelect').select_option('de')
         await expect(page.locator("#analytics")).to_have_attribute("aria-busy", "false")
         await expect(page.locator("#requestCount")).to_have_text("33")
         await expect(page.locator("#connection")).to_have_text("Bereit")
@@ -88,13 +94,16 @@ async def main(args):
         await expect(page.locator("#tokenChart")).to_be_visible()
         assert (await page.locator("#tokenChart").bounding_box())["height"] >= 150
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        await page.get_by_role('link', name='Anfragen', exact=True).click()
         await page.locator(".row-toggle").first.click()
         await expect(page.locator(".request-detail").first).to_be_visible()
         await expect(page.locator(".request-detail").first).to_contain_text("Altbestand")
         await page.locator(".row-toggle").first.click()
 
         if args.screenshots:
+            await page.get_by_role('link', name='Übersicht', exact=True).click()
             await page.screenshot(path=str(args.screenshots / "dashboard-desktop.png"), full_page=True)
+            await page.get_by_role('link', name='Anfragen', exact=True).click()
 
         # Pagination pins the range so incoming requests do not shift older pages.
         await page.locator("#nextPage").click()
@@ -165,7 +174,7 @@ async def main(args):
         await expect(page.locator("#chartNote")).to_contain_text("Stündlich")
         await page.unroute("**/dashboard/api/analytics?period=7d*")
 
-        await page.get_by_text("System & Engine", exact=True).click()
+        await page.get_by_role('link', name='System', exact=True).click()
         # One click starts the server-side job; status survives a page reload.
         updates.update(latest_version="0.13.2", update_available=True, can_install=True)
         await page.locator("#checkUpdate").click()
@@ -204,13 +213,15 @@ async def main(args):
         await expect(page.locator("#updateError")).to_be_hidden()
         await expect(page.locator("#analytics")).to_have_attribute("aria-busy", "false")
         await expect(page.locator("#context")).to_have_text("262.144 / 4")
-        await page.get_by_text("System & Engine", exact=True).click()
+        await page.get_by_role('link', name='Übersicht', exact=True).click()
         for width in (768, 390, 320):
             await page.set_viewport_size({"width": width, "height": 844})
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"Page overflows at {width}px"
             await expect(page.locator("#period")).to_be_visible()
             await expect(page.locator("#tokenChart")).to_be_visible()
+            await page.get_by_role('link', name='Anfragen', exact=True).click()
             await expect(page.locator("#nextPage")).to_be_visible()
+            await page.get_by_role('link', name='Übersicht', exact=True).click()
             if args.screenshots and width == 390:
                 await page.screenshot(path=str(args.screenshots / "dashboard-mobile.png"), full_page=True)
         assert not errors, errors

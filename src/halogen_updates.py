@@ -60,10 +60,10 @@ def quadlet_image(
             if replacement:
                 lines[index] = match[1] + replacement + match[3] + (match[4] or "")
     if len(found) != 1:
-        raise UpdateError("Jedes Quadlet muss genau eine Image-Zeile in [Container] enthalten.")
+        raise UpdateError("Each Quadlet must contain exactly one Image line in [Container].")
     prefix = (image_repo or IMAGE_REPOSITORY) + ":"
     if not found[0].startswith(prefix) or version_tuple(found[0][len(prefix):]) is None:
-        raise UpdateError("Das konfigurierte Image ist kein versioniertes Halogen-Image.")
+        raise UpdateError("The configured image is not a versioned Halogen image.")
     return found[0], "".join(lines).encode("utf-8")
 
 
@@ -186,7 +186,7 @@ class ContainerUpdater:
         result = {}
         for model, path in self._paths().items():
             if path.is_symlink() or not path.is_file():
-                raise UpdateError(f"Lokales Quadlet fehlt oder ist ein Symlink: {path.name}")
+                raise UpdateError(f"Local Quadlet is missing or is a symlink: {path.name}")
             content = path.read_bytes()
             image, _ = quadlet_image(content, image_repo=self.image_repo)
             result[model] = {"image": image, "version": normalize_version(image.rsplit(":", 1)[1]), "content": content}
@@ -194,9 +194,9 @@ class ContainerUpdater:
 
     def _support_error(self) -> str | None:
         if not self.enabled:
-            return "Updates sind deaktiviert."
+            return "Updates are disabled."
         if os.name != "posix" or not shutil.which("podman") or not shutil.which("systemctl"):
-            return "Updates benötigen den Linux-Host mit Podman und systemd im Router-Benutzerkonto."
+            return "Updates require a Linux host with Podman and systemd under the router's user account."
         try:
             self._configuration()
         except (OSError, UnicodeError, UpdateError) as error:
@@ -220,14 +220,14 @@ class ContainerUpdater:
                     await process.wait()
             raise
         if process.returncode:
-            raise UpdateError(f"{' '.join(args[:2])} fehlgeschlagen (Exit {process.returncode}).")
+            raise UpdateError(f"{' '.join(args[:2])} failed (exit {process.returncode}).")
         return stdout.decode("utf-8", errors="replace")
 
     async def _inspect_image(self, image: str) -> str:
         data = json.loads(await self._run("podman", "image", "inspect", image))
         image_id = data[0].get("Id")
         if not isinstance(image_id, str) or not image_id:
-            raise UpdateError("Image-ID konnte nicht geprüft werden.")
+            raise UpdateError("Could not verify the image ID.")
         return image_id.removeprefix("sha256:")
 
     async def _container_image(self, model: str) -> str:
@@ -235,7 +235,7 @@ class ContainerUpdater:
         data = json.loads(await self._run("podman", "container", "inspect", name))
         image_id = data[0].get("Image")
         if not isinstance(image_id, str) or not image_id:
-            raise UpdateError("Laufendes Container-Image konnte nicht geprüft werden.")
+            raise UpdateError("Could not verify the running container image.")
         return image_id.removeprefix("sha256:")
 
     async def _fetch_latest(self) -> str:
@@ -255,20 +255,20 @@ class ContainerUpdater:
                 headers=headers, timeout=ClientTimeout(total=15),
             ) as response:
                 if response.status in {403, 429}:
-                    raise UpdateError("GitHub-Abfragelimit erreicht. Später erneut prüfen.")
+                    raise UpdateError("GitHub rate limit reached. Try again later.")
                 if response.status != 200:
-                    raise UpdateError(f"GitHub-Versionen nicht erreichbar (HTTP {response.status}).")
+                    raise UpdateError(f"GitHub releases unavailable (HTTP {response.status}).")
                 tags = await response.json()
             if not isinstance(tags, list):
-                raise UpdateError("Ungültige Versionsantwort von GitHub.")
+                raise UpdateError("Invalid release response from GitHub.")
             versions.extend(parsed for tag in tags if isinstance(tag, dict)
                             if (parsed := version_tuple(tag.get("name"))) is not None)
             if len(tags) < 100:
                 break
         else:
-            raise UpdateError("Tagliste zu groß für eine vollständige Versionsprüfung.")
+            raise UpdateError("Tag list is too large for a complete version check.")
         if not versions:
-            raise UpdateError("Keine stabile Halogen-Version gefunden.")
+            raise UpdateError("No stable Halogen version found.")
         return ".".join(map(str, max(versions)))
 
     async def _fetch_latest_registry(self) -> str:
@@ -278,14 +278,14 @@ class ContainerUpdater:
                 "--format", "{{.Tag}}", self.image_repo, timeout=120,
             )
         except UpdateError as error:
-            raise UpdateError(f"Registry-Versionen nicht erreichbar: {error}") from error
+            raise UpdateError(f"Registry versions unavailable: {error}") from error
         versions = []
         for line in output.splitlines():
             parsed = version_tuple(line.strip())
             if parsed is not None:
                 versions.append(parsed)
         if not versions:
-            raise UpdateError("Keine stabile Halogen-Version in der Registry gefunden.")
+            raise UpdateError("No stable Halogen version found in the registry.")
         return ".".join(map(str, max(versions)))
 
     async def check(self, force: bool = False) -> dict[str, Any]:
@@ -309,7 +309,7 @@ class ContainerUpdater:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                self.check_error = str(error) if isinstance(error, UpdateError) else "Versionsprüfung fehlgeschlagen. Netzwerkverbindung prüfen."
+                self.check_error = str(error) if isinstance(error, UpdateError) else "Version check failed. Check your network connection."
             return self.status()
 
     def status(self) -> dict[str, Any]:
@@ -329,7 +329,7 @@ class ContainerUpdater:
                           and all(value is not None and value >= latest for value in versions))
         blocked_reason = None
         if latest and any(value < latest for value in versions if value is not None) and any(value > latest for value in versions if value is not None):
-            blocked_reason = "Unterschiedliche Versionsstände: Eine Konfiguration ist neuer als der GitHub-Tag. Kein automatischer Downgrade."
+            blocked_reason = "Version mismatch: a configuration is newer than the GitHub tag. Automatic downgrade is disabled."
         fresh = self.checked_at is not None and time.time() - self.checked_at < self.check_interval
         return {
             "latest_version": self.latest_version, "current_version": self.current_version,
@@ -381,16 +381,16 @@ class ContainerUpdater:
     async def start(self, version: str) -> None:
         async with self.start_lock:
             if not self.enabled:
-                raise web.HTTPForbidden(text="Updates sind deaktiviert.")
+                raise web.HTTPForbidden(text="Updates are disabled.")
             if not self.allow_install:
-                raise web.HTTPForbidden(text="Installation ist deaktiviert.")
+                raise web.HTTPForbidden(text="Installation is disabled.")
             if self.running or self.recovery_required:
-                raise web.HTTPConflict(text="Ein Update oder eine Wiederherstellung läuft bereits.")
+                raise web.HTTPConflict(text="An update or recovery is already running.")
             await self.check()
             status = self.status()
             if version != self.latest_version or not status["can_install"]:
-                raise web.HTTPConflict(text=status["support_error"] or status["check_error"] or "Bitte Versionsstand erneut prüfen; diese Version kann nicht installiert werden.")
-            self.job = {"version": version, "phase": "starting", "message": "Update wird vorbereitet.",
+                raise web.HTTPConflict(text=status["support_error"] or status["check_error"] or "Check versions again; this version cannot be installed.")
+            self.job = {"version": version, "phase": "starting", "message": "Preparing update.",
                         "started_at": time.time(), "changed": False, "backup_dir": None}
             self._save_job()
             self.task = asyncio.create_task(self._update(version))
@@ -399,7 +399,7 @@ class ContainerUpdater:
         for service in self.models.values():
             command = await self._run("systemctl", "--user", "show", service, "--property=ExecStart", "--value")
             if image not in command.split():
-                raise UpdateError(f"Generierter Dienst {service} verwendet nicht das erwartete Image.")
+                raise UpdateError(f"Generated service {service} does not use the expected image.")
 
     async def _ready(self, model: str, version: str, image_id: str) -> None:
         deadline = time.monotonic() + self.start_timeout
@@ -413,10 +413,10 @@ class ContainerUpdater:
                 probe_ok = health.get("capability_probe") == "ok" if version_tuple(version) >= (0, 13, 1) else True
                 if api == version and engine == version and probe_ok:
                     if await self._container_image(model) != image_id:
-                        raise UpdateError("Der gestartete Container verwendet eine unerwartete Image-ID.")
+                        raise UpdateError("The started container uses an unexpected image ID.")
                     return
             await asyncio.sleep(2)
-        raise UpdateError("Backend wurde nicht mit erwarteter API-/Engine-Version und Capability-Probe bereit.")
+        raise UpdateError("Backend did not become ready with the expected API/engine version and capability probe.")
 
     async def _restart(self, model: str) -> None:
         # Stop + wait for GTT release avoids starting a second model over memory
@@ -429,66 +429,66 @@ class ContainerUpdater:
         maintenance = False
         try:
             image = f"{self.image_repo}:{version}"
-            self._save_job(phase="pulling", message=f"Image {version} wird geladen. Anfragen laufen weiter.")
+            self._save_job(phase="pulling", message=f"Downloading image {version}. Requests continue to run.")
             await self._run("podman", "pull", image, timeout=1800)
             image_id = await self._inspect_image(image)
-            self._save_job(phase="draining", message="Warte auf Modellwechsel und laufende Anfragen.")
+            self._save_job(phase="draining", message="Waiting for model switches and active requests.")
             await asyncio.wait_for(self.manager.begin_maintenance(), self.drain_timeout)
             maintenance = True
             await asyncio.wait_for(self.manager.drain_maintenance(), self.drain_timeout)
             model = self.manager.current_model
             if model not in self.models:
-                raise UpdateError("Aktives Modell ist nicht bekannt.")
+                raise UpdateError("Active model is unknown.")
             configurations = self._configuration()
             if any(version_tuple(value["version"]) > version_tuple(version) for value in configurations.values()):
-                raise UpdateError("Konfiguration wurde inzwischen aktualisiert; Downgrade abgebrochen.")
+                raise UpdateError("Configuration has changed; downgrade cancelled.")
             health = await self.manager.backend_health()
             if not health or health.get("status") != "ok" or health.get("model") != model:
-                raise UpdateError("Aktives Backend konnte vor dem Update nicht eindeutig geprüft werden.")
+                raise UpdateError("Could not verify the active backend before updating.")
             for other, service in self.models.items():
                 if other != model:
                     active = await self._run("systemctl", "--user", "show", service, "--property=ActiveState", "--value")
                     if active.strip() not in {"inactive", "failed"}:
-                        raise UpdateError("Ein zweiter Modelldienst ist aktiv; Update abgebrochen.")
+                        raise UpdateError("A second model service is active; update cancelled.")
             old_version = normalize_version(((health or {}).get("version") or {}).get("api"))
             if not old_version or version_tuple(old_version) > version_tuple(version):
-                raise UpdateError("Laufende Version ist unbekannt oder neuer als das Update.")
+                raise UpdateError("Running version is unknown or newer than the update.")
             old_image_id = await self._container_image(model)
             if await self._inspect_image(configurations[model]["image"]) != old_image_id:
-                raise UpdateError("Laufendes Image und aktives Quadlet stimmen nicht überein.")
+                raise UpdateError("Running image does not match the active Quadlet.")
             backup = self.backup_root / f"dashboard-update-{version}-{time.time_ns()}"
             backup.mkdir(parents=True, mode=0o700)
             modes = {}
             for name, path in self._paths().items():
                 modes[name] = stat.S_IMODE(path.stat().st_mode)
                 atomic_write(backup / path.name, configurations[name]["content"], modes[name])
-            self._save_job(phase="configuring", message="Quadlets gesichert; beide Image-Versionen werden aktualisiert.",
+            self._save_job(phase="configuring", message="Quadlets backed up; updating both image versions.",
                            backup_dir=str(backup), model=model, old_version=old_version,
                            old_image_id=old_image_id, modes=modes, changed=True)
             # changed is durable BEFORE the first write (including partial failure).
             for name, path in self._paths().items():
                 if path.read_bytes() != configurations[name]["content"]:
-                    raise UpdateError("Quadlet wurde während des Updates extern verändert.")
+                    raise UpdateError("Quadlet was changed externally during the update.")
                 _, content = quadlet_image(configurations[name]["content"], image, image_repo=self.image_repo)
                 atomic_write(path, content, modes[name])
             await self._run("systemctl", "--user", "daemon-reload")
             await self._verify_units(image)
-            self._save_job(phase="restarting", message=f"{model} wird mit {version} gestartet.")
+            self._save_job(phase="restarting", message=f"Starting {model} with {version}.")
             await self._restart(model)
-            self._save_job(phase="verifying", message="Prüfe API, Engine, Modell, Capability-Probe und Container-Image.")
+            self._save_job(phase="verifying", message="Verifying API, engine, model, capability probe, and container image.")
             await self._ready(model, version, image_id)
             self.current_version = version
-            self._save_job(phase="succeeded", message=f"{version} aktiv. Beide Quadlets aktualisiert; das inaktive Modell folgt beim nächsten Wechsel.", changed=False)
+            self._save_job(phase="succeeded", message=f"{version} is active. Both Quadlets updated; the inactive model will update on its next switch.", changed=False)
             self._prune_backups()
         except (Exception, asyncio.CancelledError) as error:
-            LOG.warning("Container-Update fehlgeschlagen: %s", type(error).__name__)
-            reason = str(error) if isinstance(error, UpdateError) else "Update abgebrochen oder Zeitlimit überschritten."
+            LOG.warning("Container update failed: %s", type(error).__name__)
+            reason = str(error) if isinstance(error, UpdateError) else "Update cancelled or timed out."
             if self.job and self.job.get("changed"):
                 try:
                     await self._rollback(reason)
                 except (Exception, asyncio.CancelledError):
                     self.recovery_required = True
-                    self._save_job(phase="recovery_required", message="Rollback nicht abgeschlossen. Wiederherstellung erneut starten; Router bleibt im Wartungsmodus.")
+                    self._save_job(phase="recovery_required", message="Rollback incomplete. Retry recovery; the router remains in maintenance mode.")
             elif self.job:
                 self._save_job(phase="failed", message=reason, changed=False)
         finally:
@@ -497,11 +497,11 @@ class ContainerUpdater:
 
     async def _rollback(self, reason: str) -> None:
         assert self.job is not None
-        self._save_job(phase="rolling_back", message=f"{reason} Vorherige Konfiguration wird wiederhergestellt.")
+        self._save_job(phase="rolling_back", message=f"{reason} Restoring the previous configuration.")
         model = self.job["model"]
         backup = Path(self.job["backup_dir"])
         if model not in self.models or backup.resolve().parent != self.backup_root.resolve():
-            raise UpdateError("Ungültiger Wiederherstellungsdatensatz.")
+            raise UpdateError("Invalid recovery record.")
         # Read and validate BOTH backups before restoring either file.
         originals = {name: (backup / path.name).read_bytes() for name, path in self._paths().items()}
         for content in originals.values():
@@ -519,7 +519,7 @@ class ContainerUpdater:
         self.manager.current_model = model
         self.current_version = self.job["old_version"]
         self.recovery_required = False
-        self._save_job(phase="rolled_back", message=f"{reason} Vorherige Version {self.current_version} ist wieder aktiv.", changed=False)
+        self._save_job(phase="rolled_back", message=f"{reason} Previous version {self.current_version} is active again.", changed=False)
 
     async def recover_on_startup(self) -> None:
         if not self.journal_path.exists():
@@ -531,7 +531,7 @@ class ContainerUpdater:
             if self.job["phase"] in TERMINAL_PHASES and not self.job["changed"]:
                 return
             if not self.job.get("changed"):
-                self._save_job(phase="failed", message="Update durch Router-Neustart unterbrochen; Quadlets wurden noch nicht geändert.")
+                self._save_job(phase="failed", message="Update interrupted by a router restart; Quadlets were not changed.")
                 return
             await self.manager.begin_maintenance()
             await self._rollback("Unterbrochenes Update erkannt.")
@@ -542,7 +542,7 @@ class ContainerUpdater:
             # Keep a damaged journal intact for diagnosis rather than overwrite it.
             if not isinstance(self.job, dict):
                 self.job = None
-            LOG.error("Automatische Update-Wiederherstellung fehlgeschlagen; Wartungsmodus aktiv.")
+            LOG.error("Automatic update recovery failed; maintenance mode is active.")
 
     async def _retry_recovery(self) -> None:
         try:
@@ -551,7 +551,7 @@ class ContainerUpdater:
         except (Exception, asyncio.CancelledError):
             self.recovery_required = True
             if self.job:
-                self._save_job(phase="recovery_required", message="Wiederherstellung fehlgeschlagen. Backup und Routerjournal prüfen.")
+                self._save_job(phase="recovery_required", message="Recovery failed. Check the backup and router journal.")
 
     def start_checks(self) -> None:
         if self.enabled and self._support_error() is None:
@@ -576,7 +576,7 @@ class ContainerUpdater:
         # actions are intended for the existing trusted local/NetBird interface.
         expected = f"{request.scheme}://{request.host}"
         if request.headers.get("Origin") != expected or request.content_type != "application/json" or request.headers.get("X-Halogen-Action") != "update":
-            raise web.HTTPForbidden(text="Updateaktionen nur aus dem lokalen Dashboard mit JSON zulässig.")
+            raise web.HTTPForbidden(text="Update actions require JSON from the local dashboard.")
 
     async def api_status(self, _: web.Request) -> web.Response:
         return web.json_response(self.status(), headers={"Cache-Control": "no-store"})
@@ -590,9 +590,9 @@ class ContainerUpdater:
         try:
             body = await request.json()
         except (ValueError, UnicodeError):
-            raise web.HTTPBadRequest(text="Ungültiges JSON")
+            raise web.HTTPBadRequest(text="Invalid JSON")
         if not isinstance(body, dict) or normalize_version(body.get("version")) != body.get("version") or not body.get("version"):
-            raise web.HTTPBadRequest(text="Eine geprüfte stabile Version muss angegeben werden.")
+            raise web.HTTPBadRequest(text="Specify a verified stable version.")
         await self.start(body["version"])
         return web.json_response(self.status(), status=202, headers={"Cache-Control": "no-store"})
 
@@ -600,7 +600,7 @@ class ContainerUpdater:
         self._require_same_origin(request)
         async with self.start_lock:
             if self.running or not self.recovery_required or not self.job or not self.job.get("backup_dir"):
-                raise web.HTTPConflict(text="Keine automatisch wiederherstellbare Aktualisierung vorhanden.")
+                raise web.HTTPConflict(text="No automatically recoverable update is available.")
             self.task = asyncio.create_task(self._retry_recovery())
         return web.json_response(self.status(), status=202, headers={"Cache-Control": "no-store"})
 

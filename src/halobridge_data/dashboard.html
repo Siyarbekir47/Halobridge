@@ -1,1196 +1,203 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0b1419">
-<title>Halobridge · Übersicht</title>
+<meta name="theme-color" content="#f5f6f8">
+<title>Halobridge · Overview</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230b1419'/%3E%3Cpath d='M17 43V21h7v8h16v-8h7v22h-7v-8H24v8z' fill='%235ee7c4'/%3E%3C/svg%3E">
-<style>
-  :root { color-scheme: dark; --bg: #0b1419; --surface: #101d24; --text: #e8f0ee; --muted: #9bafb6; --line: #293c43; --mint: #5ee7c4; --blue: #7daff3; --amber: #edc17e; --red: #ff909b; }
-  * { box-sizing: border-box; }
-  body { margin: 0; color: var(--text); background: radial-gradient(ellipse at 90% 0, #14312f66, transparent 45%), var(--bg); font: 15px/1.55 "Segoe UI", sans-serif; }
-  button, input, select { font: inherit; }
-  button, select, input { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); padding: 8px 12px; }
-  button, select, summary { cursor: pointer; }
-  button { transition: border-color .15s, background .15s; }
-  button:hover:not(:disabled) { border-color: var(--mint); background: #19332f; }
-  button:disabled { opacity: .45; cursor: default; }
-  :focus-visible { outline: 2px solid var(--mint); outline-offset: 4px; }
-  [hidden] { display: none !important; }
-  h1, h2, p { margin: 0; }
-  h1 { font-size: 28px; font-weight: 650; letter-spacing: -.055em; }
-  h2 { font-size: 19px; font-weight: 600; letter-spacing: -.025em; }
-  small, .muted { color: var(--muted); }
-  code { font-family: Consolas, "Liberation Mono", monospace; font-size: .9em; overflow-wrap: anywhere; }
-  .shell { max-width: 1240px; margin: auto; padding: 30px 36px 24px; }
-  .top, .section-head, .controls, .status, .pager, .endpoint { display: flex; align-items: center; gap: 12px; }
-  .top, .section-head { justify-content: space-between; }
-  .top { margin-bottom: 26px; }
-  .brand { display: flex; align-items: baseline; gap: 16px; }
-  .brand span { color: var(--muted); font-size: 13px; }
-  .status { color: var(--muted); font-size: 13px; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
-  .dot[data-state="ok"] { background: var(--mint); }
-  .dot[data-state="error"] { background: var(--red); }
-  .dot[data-state="switching"] { background: var(--amber); }
-  .live-strip { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 32px; align-items: center; border-block: 1px solid var(--line); padding: 18px 0; }
-  .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .04em; }
-  .model-name { display: block; font-size: 17px; font-weight: 550; overflow-wrap: anywhere; }
-  .live-number { font-variant-numeric: tabular-nums; font-size: 18px; }
-  .active-list { padding-top: 12px; color: var(--muted); font-size: 13px; }
-  .active-list div { display: flex; gap: 16px; justify-content: space-between; padding: 4px 0; }
-  .update-strip { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 14px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
-  .update-strip p { color: var(--muted); font-size: 12px; margin-top: 3px; }
-  .update-strip .controls { flex-shrink: 0; }
-  .update-strip button { padding: 6px 10px; font-size: 12px; }
-  .update-strip a { color: var(--mint); }
-  .update-strip details { margin-top: 8px; }
-  .update-strip details[open] > summary { margin-bottom: 6px; }
-  .update-strip summary { font-size: 12px; }
-  .update-action { border-color: #367765; color: var(--mint); }
-  .danger { border-color: #7a3b41; color: var(--red); }
-  .danger:hover:not(:disabled) { border-color: var(--red); background: #2f1a1e; }
-  .usage { margin-top: 32px; }
-  .controls { flex-wrap: wrap; justify-content: flex-end; }
-  .controls label { font-size: 13px; color: var(--muted); }
-  .icon-button { padding: 7px 12px; font-size: 18px; }
-  .range-caption { color: var(--muted); font-size: 12px; margin: 8px 0 18px; }
-  .custom-range { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 16px 0; }
-  .custom-range label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
-  .notice { padding: 10px 14px; border-left: 2px solid var(--amber); background: #edc17e08; color: var(--amber); font-size: 13px; margin: 12px 0; }
-  .notice.error { color: var(--red); border-color: var(--red); }
-  .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 10px 0 26px; }
-  .metric { padding: 0 22px; border-left: 1px solid var(--line); min-width: 0; }
-  .metric:first-child { padding-left: 0; border: 0; }
-  .metric:last-child { padding-right: 0; }
-  .metric dt { color: var(--muted); font-size: 13px; }
-  .metric dd { margin: 5px 0; font-size: clamp(22px, 2.8vw, 35px); letter-spacing: -.045em; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-  .metric small { display: block; font-size: 12px; }
-  .metric.input dd { color: var(--blue); }
-  .metric.output dd { color: var(--mint); }
-  .chart-area { border-block: 1px solid var(--line); padding: 18px 0 14px; }
-  .chart-title { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 13px; }
-  .legend { display: flex; gap: 18px; color: var(--muted); }
-  .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; background: var(--blue); border-radius: 1px; }
-  .legend span:last-child::before { background: var(--mint); }
-  .chart { display: block; width: 100%; height: 200px; margin-top: 8px; overflow: visible; }
-  .chart text { fill: var(--muted); font: 12px "Segoe UI", sans-serif; }
-  .chart .gridline { stroke: var(--line); stroke-width: 1; }
-  .chart .axis { stroke: var(--line); stroke-width: 1.5; }
-  .chart .tick { fill: var(--muted); font-size: 11px; letter-spacing: .02em; }
-  .chart .bar { transition: opacity .12s ease; }
-  .chart g.bucket:hover .bar { opacity: .75; }
-  .chart-empty { display: grid; place-items: center; min-height: 200px; color: var(--muted); text-align: center; padding: 20px; }
-  .chart-note { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  .activity { margin-top: 28px; }
-  .activity .section-head { margin-bottom: 14px; }
-  .scroll-hint { display: none; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
-  th { font-weight: 400; color: var(--muted); text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-  td { padding: 12px; border-bottom: 1px solid #203139; vertical-align: middle; }
-  th:first-child, td:first-child { padding-left: 0; }
-  th:last-child, td:last-child { padding-right: 0; }
-  th.number, td.number { text-align: right; font-variant-numeric: tabular-nums; }
-  .cell-sub { display: block; color: var(--muted); font-size: 11px; }
-  .row-toggle { border: 0; background: transparent; padding: 3px 6px; margin-left: -6px; font-size: 13px; color: var(--text); }
-  .row-toggle span { color: var(--muted); display: inline-block; width: 14px; }
-  .success { color: var(--mint); }
-  .failure { color: var(--red); }
-  .legacy { color: var(--amber); }
-  .request-detail td { padding: 12px 16px; background: #132129; white-space: normal; }
-  .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 8px 0; }
-  .detail-grid dt { color: var(--muted); font-size: 12px; }
-  .detail-grid dd { margin: 3px 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-  .empty { color: var(--muted); text-align: center; padding: 36px !important; white-space: normal; }
-  .pager { justify-content: flex-end; padding: 14px 0; font-size: 12px; color: var(--muted); }
-  .pager button { padding: 5px 10px; }
-  .secondary { margin-top: 20px; border-top: 1px solid var(--line); }
-  .secondary > details { border-bottom: 1px solid var(--line); padding: 16px 0; }
-  .deploy-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  .deploy-row:last-child { border-bottom: 0; }
-  .deploy-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-  .deploy-row button { padding: 5px 10px; font-size: 12px; }
-  .deploy-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px 18px; margin: 14px 0; }
-  .deploy-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-  .deploy-fields input, .deploy-fields select { padding: 7px 9px; font-size: 13px; min-width: 0; }
-  .deploy-fields label.chk { flex-direction: row; align-items: center; gap: 8px; }
-  .deploy-env-row { display: flex; gap: 8px; margin-bottom: 6px; }
-  .deploy-env-row input { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px; }
-  .deploy-diff { background: #0a1218; border: 1px solid var(--line); color: #c9d1d9; padding: 12px; border-radius: 8px; overflow: auto; font: 12px/1.5 Consolas, "Liberation Mono", monospace; white-space: pre-wrap; margin: 12px 0; max-height: 420px; }
-  .deploy-actions { display: flex; gap: 8px; margin-top: 10px; }
-  .deploy-new { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-  .badge { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 11px; color: var(--muted); }
-  .badge.ok { color: var(--mint); border-color: var(--mint); }
-  .badge.err { color: var(--red); border-color: var(--red); }
-  .mount-ro-label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; }
-  .warning { color: var(--amber); white-space: pre-line; }
-  summary { color: var(--muted); font-size: 14px; width: fit-content; }
-  details[open] > summary { color: var(--text); margin-bottom: 16px; }
-  .detail-body { animation: reveal .18s ease-out; }
-  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; }
-  .list-title { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
-  .breakdown-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #203139; font-size: 13px; overflow-wrap: anywhere; }
-  .breakdown-row span:last-child { text-align: right; flex-shrink: 0; color: var(--muted); }
-  .endpoint { margin: 18px 0 8px; flex-wrap: wrap; }
-  .endpoint code { color: var(--mint); }
-  .endpoint button { font-size: 12px; padding: 5px 10px; }
-  .explanation { color: var(--muted); font-size: 13px; max-width: 85ch; }
-  .explanation p + p { margin-top: 10px; }
-  footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 28px; color: var(--muted); font-size: 11px; }
-  #analytics[aria-busy="true"] .metrics { opacity: .45; }
-  .metrics { transition: opacity .18s; }
-  @keyframes reveal { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
-  @media (max-width: 760px) {
-    .shell { padding: 22px 20px; }
-    .brand { gap: 10px; } .brand > span { display: none; }
-    .live-strip { gap: 16px; grid-template-columns: 1fr auto; }
-    .live-strip > :first-child { grid-column: 1 / -1; }
-    .live-strip > :last-child { text-align: right; }
-    .metrics { grid-template-columns: 1fr 1fr; row-gap: 24px; }
-    .metric:nth-child(3) { padding-left: 0; border: 0; }
-    .metric:nth-child(2) { padding-right: 0; }
-    .metric dd { font-size: 28px; }
-    .split { grid-template-columns: 1fr; gap: 24px; }
-    .detail-grid { grid-template-columns: 1fr 1fr; }
-    .controls label { display: none; }
-    .chart { height: 170px; }
-    .scroll-hint { display: block; }
-    .update-strip { align-items: flex-start; flex-direction: column; gap: 10px; }
-    .pager { justify-content: space-between; }
-  }
-  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
-</style>
+<link rel="stylesheet" href="/dashboard/assets/dashboard.css">
 </head>
 <body>
-<main class="shell">
-  <header class="top">
-    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.7</span></span></div>
-    <div class="controls">
-      <label for="langSelect" class="muted" data-i18n="lang_label">Sprache</label>
-      <select id="langSelect" data-i18n-attr="aria-label:lang_label"><option value="de">Deutsch</option><option value="en">English</option></select>
-      <div class="status" role="status"><i class="dot" id="statusDot"></i><span id="connection" data-i18n="conn_connecting">Verbinde …</span></div>
-    </div>
-  </header>
+<a class="skip-link" href="#mainContent" data-i18n="skip_content">Skip to content</a>
+<aside class="sidebar">
+  <a class="brand" href="#overview" aria-label="Halobridge"><span class="brand-mark" aria-hidden="true">H</span><span>Halobridge<small data-i18n="workspace_label">LOCAL INFERENCE</small></span></a>
+  <nav aria-label="Main navigation" data-i18n-attr="aria-label:main_navigation">
+    <a href="#overview" data-view="overview"><span aria-hidden="true">◫</span><span data-i18n="nav_overview">Overview</span></a>
+    <a href="#requests" data-view="requests"><span aria-hidden="true">≡</span><span data-i18n="nav_requests">Requests</span></a>
+    <a href="#models" data-view="models"><span aria-hidden="true">▱</span><span data-i18n="nav_models">Models</span></a>
+    <a href="#system" data-view="system"><span aria-hidden="true">⚙</span><span data-i18n="nav_system">System</span><span id="systemAttention" class="attention" hidden>!</span></a>
+  </nav>
+  <div class="sidebar-bottom"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect"><option value="en">English</option><option value="de">Deutsch</option></select><small>Halobridge <span id="appVersion">v0.1.8</span></small></div>
+</aside>
+<main class="shell" id="mainContent" tabindex="-1">
+  <header class="page-header"><div><p class="eyebrow" data-i18n="workspace_label">LOCAL INFERENCE</p><h1 id="viewTitle" tabindex="-1">Overview</h1><p id="viewDescription" class="muted"></p></div><div class="status" role="status"><i class="dot" id="statusDot"></i><span id="connection" data-i18n="conn_connecting">Connecting …</span></div></header>
   <section data-i18n-attr="aria-label:live_section">
     <div class="live-strip">
-      <div><span class="eyebrow" data-i18n="active_model">Aktives Modell</span><strong class="model-name" id="activeModel">–</strong><small id="switchState" hidden></small></div>
-      <div><span class="live-number" id="activeCount">–</span> <span class="muted" data-i18n="running">laufend</span></div>
-      <div><span class="live-number" id="queueCount">–</span> <span class="muted" data-i18n="waiting">wartend</span></div>
+      <div><span class="eyebrow" data-i18n="active_model">Active model</span><strong class="model-name" id="activeModel">–</strong><small id="switchState" hidden></small></div>
+      <div><span class="live-number" id="activeCount">–</span> <span class="muted" data-i18n="running">running</span></div>
+      <div><span class="live-number" id="queueCount">–</span> <span class="muted" data-i18n="waiting">queued</span></div>
     </div>
     <div class="active-list" id="activeRequests" hidden></div>
   </section>
 
-  <section class="update-strip" data-i18n-attr="aria-label:updates_section">
-    <div>
-      <span id="updateTitle" role="status" data-i18n="update_checking">Serverversion wird geprüft …</span>
-      <p id="updateMessage" data-i18n="update_msg_default">Automatische Prüfung alle 6 Stunden · Installation per Klick</p>
-      <details id="updateDetails"><summary data-i18n="update_details_summary">Update-Details</summary><div class="detail-body">
-        <p id="updateVersions">–</p><p id="updateChecked" data-i18n="not_checked">Noch nicht geprüft</p>
-        <p data-i18n="update_warning">Aktualisiert beide Quadlets. Laufende Anfragen werden beendet; neue Anfragen erhalten während des Neustarts HTTP 503.</p>
-        <p id="updateBackup" hidden></p>
-        <a id="updateChangelog" target="_blank" rel="noopener noreferrer" hidden data-i18n="update_changelog">Änderungen auf GitHub ↗</a>
-      </div></details>
-      <p id="updateError" class="failure" role="alert" hidden></p>
-    </div>
-    <div class="controls">
-      <button id="checkUpdate" data-i18n="btn_check">Prüfen</button>
-      <button id="installUpdate" class="update-action" hidden data-i18n="btn_install">Jetzt aktualisieren</button>
-      <button id="recoverUpdate" class="update-action" hidden data-i18n="btn_recover">Wiederherstellen</button>
-    </div>
-  </section>
 
-  <section class="usage" id="analytics" aria-labelledby="usageTitle" aria-busy="true">
-    <div class="section-head">
-      <h2 id="usageTitle" data-i18n="usage_title">Nutzung</h2>
+  <div id="operationNotice" class="notice" role="status" hidden><span id="operationText"></span> <a href="#system" data-i18n="view_system">View system</a></div>
+  <div id="analytics" aria-busy="true">    <div class="section-head">
+      <span class="eyebrow" data-i18n="reporting_period">Reporting period</span>
       <div class="controls">
-        <label for="period" data-i18n="period_label">Zeitraum</label>
+        <label for="period" data-i18n="period_label">Period</label>
         <select id="period" data-i18n-attr="aria-label:period_aria">
-          <option value="24h" data-i18n="period_24h">24 Stunden</option><option value="7d" data-i18n="period_7d">Woche</option>
-          <option value="30d" data-i18n="period_30d">Monat</option><option value="1y" data-i18n="period_1y">Jahr</option>
-          <option value="custom" data-i18n="period_custom">Eigener Zeitraum</option>
+          <option value="24h" data-i18n="period_24h">Today</option><option value="7d" data-i18n="period_7d">This week</option>
+          <option value="30d" data-i18n="period_30d">This month</option><option value="1y" data-i18n="period_1y">This year</option>
+          <option value="custom" data-i18n="period_custom">Custom range</option>
         </select>
         <button class="icon-button" id="refresh" data-i18n-attr="aria-label:refresh_aria;title:refresh_title">↻</button>
       </div>
     </div>
     <form class="custom-range" id="customRange" hidden>
-      <label for="fromDate"><span data-i18n="from_label">Von (Ortszeit)</span><input type="datetime-local" id="fromDate" required></label>
-      <label for="toDate"><span data-i18n="to_label">Bis (Ortszeit)</span><input type="datetime-local" id="toDate" required></label>
-      <button type="submit" data-i18n="apply">Anwenden</button><span class="muted" id="rangeHint" data-i18n="range_hint">Mit „Anwenden“ übernehmen.</span>
+      <label for="fromDate"><span data-i18n="from_label">From (local time)</span><input type="datetime-local" id="fromDate" required></label>
+      <label for="toDate"><span data-i18n="to_label">To (local time)</span><input type="datetime-local" id="toDate" required></label>
+      <button type="submit" data-i18n="apply">Apply</button><span class="muted" id="rangeHint" data-i18n="range_hint">Press “Apply” to confirm.</span>
     </form>
-    <p class="range-caption" id="rangeCaption" data-i18n="range_loading">Zeitraum wird geladen …</p>
+    <p class="range-caption" id="rangeCaption" data-i18n="range_loading">Loading period …</p>
     <div class="notice error" id="analyticsError" role="alert" hidden></div>
     <div class="notice" id="coverageNotice" hidden></div>
-    <dl class="metrics">
-      <div class="metric"><dt data-i18n="metric_requests">Anfragen</dt><dd id="requestCount">–</dd><small id="requestNote" data-i18n="metric_requests_note">Abgeschlossene Router-Anfragen</small></div>
-      <div class="metric input"><dt data-i18n="metric_input">Input-Token</dt><dd id="inputTokens">–</dd><small id="inputNote" data-i18n="metric_input_note">Inklusive Cache</small></div>
-      <div class="metric output"><dt data-i18n="metric_output">Output-Token</dt><dd id="outputTokens">–</dd><small id="outputNote" data-i18n="metric_output_note">Inklusive Reasoning</small></div>
-      <div class="metric"><dt data-i18n="metric_cache">Cache-Anteil</dt><dd id="cacheRatio">–</dd><small id="cacheNote" data-i18n="metric_cache_note">An gemeldeten Input-Token</small></div>
+</div>
+<div id="view-overview" class="view"><section class="usage" aria-labelledby="usageTitle"><h2 id="usageTitle" data-i18n="usage_title">Usage</h2>    <dl class="metrics">
+      <div class="metric"><dt data-i18n="metric_requests">Requests</dt><dd id="requestCount">–</dd><small id="requestNote" data-i18n="metric_requests_note">Completed router requests</small></div>
+      <div class="metric input"><dt data-i18n="metric_input">Input tokens</dt><dd id="inputTokens">–</dd><small id="inputNote" data-i18n="metric_input_note">Including cache</small></div>
+      <div class="metric output"><dt data-i18n="metric_output">Output tokens</dt><dd id="outputTokens">–</dd><small id="outputNote" data-i18n="metric_output_note">Including reasoning</small></div>
+      <div class="metric"><dt data-i18n="metric_cache">Cache ratio</dt><dd id="cacheRatio">–</dd><small id="cacheNote" data-i18n="metric_cache_note">Of reported input tokens</small></div>
     </dl>
     <div class="chart-area">
-      <div class="chart-title"><span data-i18n="chart_title">Erfasste Token im Zeitverlauf</span><div class="legend"><span>Input</span><span>Output</span></div></div>
+      <div class="chart-title"><span data-i18n="chart_title">Recorded tokens over time</span><div class="legend"><span>Input</span><span>Output</span></div></div>
       <svg class="chart" id="tokenChart" viewBox="0 0 1080 200" role="img" data-i18n-attr="aria-label:chart_svg_title" hidden></svg>
-      <div class="chart-empty" id="chartEmpty" data-i18n="chart_loading">Nutzungsdaten werden geladen …</div>
-      <p class="chart-note" id="chartNote" data-i18n="chart_note_static">Cache ist Teil des Inputs, Reasoning ist Teil des Outputs.</p>
+      <div class="chart-empty" id="chartEmpty" data-i18n="chart_loading">Loading usage data …</div>
+      <p class="chart-note" id="chartNote" data-i18n="chart_note_static">Cache is part of input, reasoning is part of output.</p>
     </div>
   </section>
 
-  <section class="activity" aria-labelledby="activityTitle">
-    <div class="section-head"><h2 id="activityTitle" data-i18n="activity_title">Anfragen</h2><small id="historyCount">–</small></div>
-    <p class="scroll-hint" data-i18n="scroll_hint">Tabelle seitlich scrollen · Zeit anklicken für Details</p>
+<section class="breakdowns"><h2 data-i18n="breakdown_summary">Usage by client and model</h2><div class="split detail-body"><div><p class="list-title" data-i18n="clients_title">Clients · requests / recorded output tokens</p><div id="clients">–</div></div><div><p class="list-title" data-i18n="models_title">Models · requests / recorded output tokens</p><div id="models">–</div></div></div></section><details><summary data-i18n="faq_summary">How are the numbers captured?</summary><div class="explanation detail-body">
+      <p data-i18n-html="faq_p1">Usage shows completed inference requests through this router. Token counts come exclusively from the API's <code>usage</code> object. Missing values show as “–”; partial sums are marked as incomplete. In-flight requests are only counted after completion.</p>
+      <p data-i18n="faq_p2">Input includes cache tokens. Output includes reasoning tokens. These subsets are not added again. The cache ratio only considers requests that report both input and cache. “0” means an actually reported zero value.</p>
+      <p data-i18n="faq_p3">Legacy records remain in the history but are not included in verified token totals due to earlier inconsistent capture. Engine logs with similar timing are never automatically matched to a request.</p>
+      <p data-i18n="faq_p4">Duration spans from the start of forwarding to the end of the response. TTFB is the time to the first response byte, not the first token. TPS is only shown when a direct time measurement exists. Streaming aborts may remain without a final usage report.</p>
+      <p data-i18n="faq_p5">Technical metadata is stored for 365 days. Prompts, responses, images, tool contents, and keys are not stored.</p>
+    </div></details></div><div id="view-requests" class="view" hidden>  <section class="activity" aria-labelledby="activityTitle">
+    <div class="section-head"><h2 id="activityTitle" data-i18n="activity_title">Requests</h2><small id="historyCount">–</small></div>
+    <p class="scroll-hint" data-i18n="scroll_hint">Scroll the table sideways · click the time for details</p>
     <div class="table-wrap" tabindex="0" role="region" data-i18n-attr="aria-label:table_aria">
-      <table><thead><tr><th scope="col" data-i18n="th_time">Zeit / Details</th><th scope="col" data-i18n="th_client">Client / Modell</th><th scope="col" class="number" data-i18n="th_input">Input</th><th scope="col" class="number" data-i18n="th_output">Output</th><th scope="col" class="number" data-i18n="th_duration">Dauer</th><th scope="col" class="number" data-i18n="th_status">Status</th></tr></thead>
-      <tbody id="rows"><tr><td colspan="6" class="empty" data-i18n="requests_loading">Anfragen werden geladen …</td></tr></tbody></table>
+      <table><thead><tr><th scope="col" data-i18n="th_time">Time / Details</th><th scope="col" data-i18n="th_client">Client / Model</th><th scope="col" class="number" data-i18n="th_input">Input</th><th scope="col" class="number" data-i18n="th_output">Output</th><th scope="col" class="number" data-i18n="th_duration">Duration</th><th scope="col" class="number" data-i18n="th_status">Status</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="6" class="empty" data-i18n="requests_loading">Loading requests …</td></tr></tbody></table>
     </div>
-    <div class="pager"><span id="pageInfo">Seite 1 von 1</span><button id="prevPage" disabled data-i18n="btn_prev">← Zurück</button><button id="nextPage" disabled data-i18n="btn_next">Weiter →</button></div>
+    <div class="pager"><span id="pageInfo">Page 1 of 1</span><button id="prevPage" disabled data-i18n="btn_prev">← Back</button><button id="nextPage" disabled data-i18n="btn_next">Next →</button></div>
   </section>
 
-  <section class="secondary" data-i18n-attr="aria-label:secondary_section">
-    <details><summary data-i18n="breakdown_summary">Nutzung nach Client und Modell</summary><div class="split detail-body"><div><p class="list-title" data-i18n="clients_title">Clients · Anfragen / erfasste Output-Token</p><div id="clients">–</div></div><div><p class="list-title" data-i18n="models_title">Modelle · Anfragen / erfasste Output-Token</p><div id="models">–</div></div></div></details>
-    <details><summary data-i18n="system_summary">System &amp; Engine</summary><div class="detail-body">
-      <p class="list-title" data-i18n="system_title">System · aktueller Zustand</p>
-      <dl class="detail-grid"><div><dt data-i18n="label_ram">RAM</dt><dd id="ram">–</dd></div><div><dt data-i18n="label_gpu">GPU</dt><dd id="gpu">–</dd></div><div><dt data-i18n="label_pool">KV-Pool</dt><dd id="pool">–</dd></div><div><dt data-i18n="label_disk">Datenträger</dt><dd id="disk">–</dd></div></dl>
-      <dl class="detail-grid"><div><dt data-i18n="label_context">Kontext / Slots</dt><dd id="context">–</dd></div><div><dt data-i18n="label_max_tokens">Output Standard / Limit</dt><dd id="maxTokens">–</dd></div><div><dt data-i18n="label_reasoning">Reasoning Standard</dt><dd id="reasoning">–</dd></div><div><dt data-i18n="label_version">Version</dt><dd id="version">–</dd></div></dl>
-      <p class="list-title" id="engineCaption" data-i18n="engine_caption_static">Engine · gewählter Zeitraum</p>
-      <dl class="detail-grid"><div><dt data-i18n="label_engine_tps">Generation, gewichtet</dt><dd id="engineTps">–</dd></div><div><dt data-i18n="label_prefill">Prefill, gewichtet</dt><dd id="prefillTps">–</dd></div><div><dt data-i18n="label_mtp">MTP Commit / Runde</dt><dd id="mtp">–</dd></div><div><dt data-i18n="label_pld">PLD Akzeptanz / Runde</dt><dd id="pld">–</dd></div></dl>
-      <p class="explanation" data-i18n="engine_explanation">Engine-Messungen stammen aus lokalen Abschluss-Logs. Sie können auch direkte Backend-Aufrufe enthalten und sind unabhängig von den Router-Anfragen oben.</p>
-      <div class="endpoint"><span class="muted" data-i18n="api_label">API</span><code id="endpoint">–</code><button id="copy" data-i18n="copy_btn">Kopieren</button><span id="copyStatus" class="muted" role="status"></span></div>
-      <div id="storage" class="explanation"></div>
-    </div></details>
-    <details><summary data-i18n="faq_summary">Wie werden die Zahlen erfasst?</summary><div class="explanation detail-body">
-      <p data-i18n-html="faq_p1">Die Nutzung zeigt abgeschlossene Inferenzanfragen über diesen Router. Tokenzahlen stammen ausschließlich aus dem <code>usage</code>-Objekt der API. Bei fehlenden Werten steht „–“; Teilsummen sind als unvollständig gekennzeichnet. Laufende Anfragen werden erst nach Abschluss gezählt.</p>
-      <p data-i18n="faq_p2">Input enthält Cache-Token. Output enthält Reasoning-Token. Diese Teilmengen werden nicht noch einmal addiert. Der Cache-Anteil berücksichtigt nur Anfragen, die sowohl Input als auch Cache melden. „0“ bedeutet einen tatsächlich gemeldeten Nullwert.</p>
-      <p data-i18n="faq_p3">Altbestände bleiben in der Historie, fließen aber wegen der früheren uneinheitlichen Erfassung nicht in die verifizierten Tokensummen ein. Zeitlich ähnliche Engine-Logs werden keiner Anfrage automatisch zugeordnet.</p>
-      <p data-i18n="faq_p4">Die Dauer reicht vom Start der Weiterleitung bis zum Ende der Antwort. TTFB ist die Zeit bis zum ersten Antwort-Byte, nicht bis zum ersten Token. TPS werden nur bei einer direkten Zeitmessung angezeigt. Streaming-Abbrüche können ohne abschließende Usage-Meldung bleiben.</p>
-      <p data-i18n="faq_p5">Gespeichert werden technische Metadaten für 365 Tage. Prompts, Antworten, Bilder, Tool-Inhalte und Schlüssel werden nicht gespeichert.</p>
-    </div></details>
-    <details><summary data-i18n="db_summary">Datenbank</summary><div class="detail-body">
-      <p class="explanation" data-i18n="db_explanation">Löscht alle gespeicherten Telemetriedaten (Anfragen und Engine-Logs) aus der lokalen Datenbank. Diese Aktion kann nicht rückgängig gemacht werden. Laufende Anfragen werden dabei nicht beendet.</p>
-      <div class="controls" style="justify-content:flex-start">
-        <button id="resetDb" class="danger" data-i18n="reset_btn">Datenbank zurücksetzen</button>
-        <button id="resetConfirm" class="danger" hidden>Ja, alles löschen</button>
-        <button id="resetCancel" hidden data-i18n="reset_no">Abbrechen</button>
-        <span id="resetStatus" class="muted" role="status"></span>
-      </div>
-    </div></details>
-    <details id="deploySection"><summary data-i18n="deploy_summary">Profile &amp; Deployment</summary><div class="detail-body">
-      <p id="deployHint" class="muted">–</p>
-      <p id="deployError" class="failure" role="alert" hidden></p>
+</div><div id="view-models" class="view" hidden>
+  <div class="subnav" role="group" data-i18n-attr="aria-label:model_tools"><button id="profilesTab" aria-pressed="true" aria-controls="profilesPanel" data-i18n="profiles_tab">Profiles &amp; installation</button><button id="assetsTab" aria-pressed="false" aria-controls="assetsPanel" data-i18n="assets_tab">Model files</button></div>
+  <p id="deployHint" class="muted">–</p>
+  <p id="deployError" class="failure" role="alert" hidden></p>
+  <p id="deployProgress" role="status" class="muted" hidden></p>
+  <p id="deployNotice" role="status" class="success" hidden></p>
+  <div id="profilesPanel"><div id="deploySection">
+
+<div class="section-head"><h2 data-i18n="installed_models">Installed models</h2><button id="deployRefresh" data-i18n="refresh_models">Refresh</button></div>      <div id="deployList"><p>–</p></div>
       <div id="quickDeploy" class="quick-deploy" hidden>
-        <p class="list-title" data-i18n="quick_title">1-Klick-Installation</p>
+        <h2 data-i18n="quick_title">Install a model</h2><label for="quickModel" class="muted" data-i18n="choose_model">Model to install</label><select id="quickModel"><option value="official" data-i18n="model_official">Official model</option><option value="uncensored" data-i18n="model_uncensored">Uncensored model</option></select>
         <div class="deploy-fields">
-          <label><span data-i18n="hf_token">HF-Token — nur READ benötigt</span><input id="quickHfToken" type="password" autocomplete="off" autocapitalize="off"></label>
+          <label id="quickTokenField" hidden><span data-i18n="hf_token">HF token — READ only required</span><input id="quickHfToken" type="password" autocomplete="off" autocapitalize="off"></label>
         </div>
         <div class="deploy-actions">
-          <button type="button" id="quickOfficialBtn" data-i18n="quick_official">Offizielles Modell installieren</button>
-          <button type="button" id="quickUncensoredBtn" data-i18n="quick_uncensored">Uncensored installieren</button>
+          <button type="button" id="quickOfficialBtn" class="primary" data-i18n="quick_official">Install official model</button>
+          <button type="button" id="quickUncensoredBtn" hidden data-i18n="quick_uncensored">Install uncensored model</button>
         </div>
-        <p class="muted" data-i18n="quick_note">Official lädt beim ersten Start ca. 118 GiB. Uncensored lädt das GGUF, konvertiert es und startet danach.</p>
+        <p class="muted" data-i18n="quick_note">Official downloads about 118 GiB on first start. Uncensored downloads the GGUF, converts it, then starts. Halobridge serves one backend at a time: installing pauses the currently active model and starts the new one afterwards. On failure it rolls back to the previous model automatically.</p>
       </div>
-      <div id="deployList"><p>–</p></div>
-      <div id="deployNew" class="deploy-new">
-        <label for="deployTemplate" data-i18n="deploy_new_label">Neues Profil aus Vorlage:</label>
+
+      <details id="deployNew"><summary data-i18n="custom_profile">Configure a profile manually</summary><div class="deploy-new">
+        <label for="deployTemplate" data-i18n="deploy_new_label">New profile from template:</label>
         <select id="deployTemplate">
-          <option value="official" data-i18n="deploy_tpl_official">Offiziell (vorkonfiguriert, Gewichte auf Platte)</option>
+          <option value="official" data-i18n="deploy_tpl_official">Official (preconfigured, weights on disk)</option>
           <option value="uncensored" data-i18n="deploy_tpl_uncensored">Uncensored (OrcaRouter IQ4_XS)</option>
-          <option value="custom" data-i18n="deploy_tpl_custom">Eigenes Modell (GGUF- oder .hgn-Dateien)</option>
+          <option value="custom" data-i18n="deploy_tpl_custom">Custom model (GGUF or .hgn files)</option>
         </select>
-        <button type="button" id="deployLoadTemplate" data-i18n="deploy_load_template">Vorlage bearbeiten</button>
-      </div>
+        <button type="button" id="deployLoadTemplate" data-i18n="deploy_load_template">Edit template</button>
+      </div></details>
       <div id="deployEditor" hidden>
-        <h3 id="deployEditorTitle"></h3>
-        <div id="deployFields" class="deploy-fields"></div>
-        <div class="deploy-advanced">
-          <p class="list-title" data-i18n="deploy_mounts">Zusätzliche Mounts (Host → Container)</p>
+        <h3 id="deployEditorTitle" tabindex="-1"></h3><p class="muted" data-i18n="editor_hint">Configure the profile, preview the changes, then apply.</p>
+        <div id="deployFields"></div>
+        <details class="deploy-advanced"><summary data-i18n="deploy_mounts">Additional mounts (host → container)</summary>
           <div id="deployMountRows"></div>
-          <button type="button" id="deployAddMount" data-i18n="deploy_add_mount">+ Mount hinzufügen</button>
-        </div>
-        <div class="deploy-advanced">
-          <p class="list-title" data-i18n="deploy_advanced">Weitere Parameter (nur Allowlist)</p>
+          <button type="button" id="deployAddMount" data-i18n="deploy_add_mount">+ Add mount</button>
+        </details>
+        <details class="deploy-advanced"><summary data-i18n="deploy_advanced">Additional parameters (allowlist only)</summary>
           <div id="deployEnvRows"></div>
-          <button type="button" id="deployAddEnv" data-i18n="deploy_add_env">+ Parameter hinzufügen</button>
+          <button type="button" id="deployAddEnv" data-i18n="deploy_add_env">+ Add parameter</button>
           <datalist id="deployEnvKeys"></datalist>
-        </div>
-        <pre id="deployDiff" class="deploy-diff" hidden></pre>
+        </details>
+        <p id="previewStatus" role="status" class="muted"></p><pre id="deployDiff" class="deploy-diff" hidden></pre>
         <p id="deployWarnings" class="warning" hidden></p>
         <div class="deploy-actions">
-          <button type="button" id="deployPreview" data-i18n="deploy_preview">Vorschau (Dry-Run)</button>
-          <button type="button" id="deployApply" disabled data-i18n="deploy_apply">Anwenden</button>
-          <button type="button" id="deployCancel" data-i18n="deploy_cancel">Abbrechen</button>
+          <button type="button" id="deployPreview" data-i18n="deploy_preview">Preview (dry-run)</button>
+          <button type="button" id="deployApply" class="primary" disabled data-i18n="deploy_apply">Apply</button>
+          <button type="button" id="deployCancel" data-i18n="deploy_cancel">Cancel</button>
         </div>
       </div>
-      <div id="deployHf">
-        <p class="list-title" data-i18n="hf_title">Uncensored-Modell: herunterladen &amp; konvertieren</p>
+
+    </div></div><div id="assetsPanel" hidden>      <div id="deployHf"><p class="explanation" data-i18n="assets_hint">Download weights, convert GGUF files, and verify HGN files before using them in a profile.</p>
+        <p class="list-title" data-i18n="hf_title">Uncensored model: download & convert</p>
         <p id="hfStatusLine" class="muted">–</p>
-        <button type="button" id="hfInstallBtn" hidden data-i18n="hf_install">HF-CLI installieren</button>
+        <button type="button" id="hfInstallBtn" hidden data-i18n="hf_install">Install HF CLI</button>
         <div class="deploy-fields">
-          <label><span data-i18n="hf_repo">HF-Repo</span><input id="hfRepo" type="text"></label>
-          <label><span data-i18n="hf_file">Datei (leer = ganzes Repo)</span><input id="hfFile" type="text"></label>
-          <label><span data-i18n="hf_dest">Zielverzeichnis (Host)</span><input id="hfDest" type="text"></label>
-          <label><span data-i18n="hf_token">HF-Token — nur READ benötigt</span><input id="hfToken" type="password" autocomplete="off" autocapitalize="off"></label>
+          <label><span data-i18n="hf_repo">HF repo</span><input id="hfRepo" type="text"></label>
+          <label><span data-i18n="hf_file">File (empty = whole repo)</span><input id="hfFile" type="text"></label>
+          <label><span data-i18n="hf_dest">Destination directory (host)</span><input id="hfDest" type="text"></label>
+          <label><span data-i18n="hf_token">HF token — READ only required</span><input id="hfToken" type="password" autocomplete="off" autocapitalize="off"></label>
         </div>
-        <p class="muted" data-i18n="hf_token_note">Wird nicht gespeichert: nur als Umgebungsvariable an den Download übergeben und aus allen Ausgaben gefiltert.</p>
-        <button type="button" id="hfDownloadBtn" data-i18n="hf_download">Download starten</button>
-        <p class="list-title" data-i18n="conv_title">GGUF → HGN konvertieren (verlustfrei, ~10 Min)</p>
+        <p class="muted" data-i18n="hf_token_note">Never stored: passed to the download only as an environment variable and filtered from all output.</p>
+        <button type="button" id="hfDownloadBtn" data-i18n="hf_download">Start download</button>
+        <p class="list-title" data-i18n="conv_title">GGUF → HGN convert (lossless, ~10 min)</p>
         <div class="deploy-fields">
           <label><span data-i18n="conv_image">Image</span><input id="convImage" type="text"></label>
-          <label><span data-i18n="conv_gguf">GGUF-Datei (Host)</span><input id="convGguf" type="text"></label>
-          <label><span data-i18n="conv_out">Ausgabedatei (.hgn)</span><input id="convOut" type="text" value="qwen3.8-flash-uncensored.hgn"></label>
-          <label class="chk"><input id="convHead" type="checkbox" checked><span data-i18n="conv_head">MTP-Head automatisch von Hugging Face laden</span></label>
+          <label><span data-i18n="conv_gguf">GGUF file (host)</span><input id="convGguf" type="text"></label>
+          <label><span data-i18n="conv_out">Output file (.hgn)</span><input id="convOut" type="text" value="qwen3.8-flash-uncensored.hgn"></label>
+          <label class="chk"><input id="convHead" type="checkbox" checked><span data-i18n="conv_head">Load MTP head automatically from Hugging Face</span></label>
         </div>
         <div class="deploy-actions">
-          <button type="button" id="convBtn" data-i18n="conv_start">Konvertieren</button>
-          <button type="button" id="verifyBtn" data-i18n="verify_start">HGN prüfen</button>
+          <button type="button" id="convBtn" data-i18n="conv_start">Convert</button>
+          <button type="button" id="verifyBtn" data-i18n="verify_start">Verify HGN</button>
         </div>
-        <div id="jobBox" hidden>
-          <p><strong id="jobKind"></strong> <span id="jobState" class="badge"></span> <span id="jobElapsed" class="muted"></span> <button type="button" id="jobCancelBtn" class="ghost" data-i18n="job_cancel">Abbrechen</button></p>
+
+      </div></div>        <div id="jobBox" hidden>
+          <p><strong id="jobKind"></strong> <span id="jobState" class="badge"></span> <span id="jobElapsed" class="muted"></span> <button type="button" id="jobCancelBtn" class="ghost" data-i18n="job_cancel">Cancel</button></p>
           <pre id="jobLog" class="deploy-diff"></pre>
-        </div>
-      </div>
-    </div></details>
+        </div></div><div id="view-system" class="view" hidden><section class="system-section"><h2 data-i18n="system_summary">System & Engine</h2><div class="detail-body">
+      <p class="list-title" data-i18n="system_title">System · current state</p>
+      <dl class="detail-grid"><div><dt data-i18n="label_ram">RAM</dt><dd id="ram">–</dd></div><div><dt data-i18n="label_gpu">GPU</dt><dd id="gpu">–</dd></div><div><dt data-i18n="label_pool">KV pool</dt><dd id="pool">–</dd></div><div><dt data-i18n="label_disk">Disk</dt><dd id="disk">–</dd></div></dl>
+      <dl class="detail-grid"><div><dt data-i18n="label_context">Context / Slots</dt><dd id="context">–</dd></div><div><dt data-i18n="label_max_tokens">Output default / cap</dt><dd id="maxTokens">–</dd></div><div><dt data-i18n="label_reasoning">Reasoning default</dt><dd id="reasoning">–</dd></div><div><dt data-i18n="label_version">Version</dt><dd id="version">–</dd></div></dl>
+      <p class="list-title" id="engineCaption" data-i18n="engine_caption_static">Engine · selected period</p>
+      <dl class="detail-grid"><div><dt data-i18n="label_engine_tps">Generation, weighted</dt><dd id="engineTps">–</dd></div><div><dt data-i18n="label_prefill">Prefill, weighted</dt><dd id="prefillTps">–</dd></div><div><dt data-i18n="label_mtp">MTP commit / round</dt><dd id="mtp">–</dd></div><div><dt data-i18n="label_pld">PLD acceptance / round</dt><dd id="pld">–</dd></div></dl>
+      <p class="explanation" data-i18n="engine_explanation">Engine measurements come from local completion logs. They may also include direct backend calls and are independent of the router requests above.</p>
+      <div class="endpoint"><span class="muted" data-i18n="api_label">API</span><code id="endpoint">–</code><button id="copy" data-i18n="copy_btn">Copy</button><span id="copyStatus" class="muted" role="status"></span></div>
+      <div id="storage" class="explanation"></div>
+    </div></section><section class="updates-section"><h2 data-i18n="updates_section">Container updates</h2>  <section class="update-strip" data-i18n-attr="aria-label:updates_section">
+    <div>
+      <span id="updateTitle" role="status" data-i18n="update_checking">Checking server version …</span>
+      <p id="updateMessage" data-i18n="update_msg_default">Automatic check every 6 hours · one-click install</p>
+      <details id="updateDetails"><summary data-i18n="update_details_summary">Update details</summary><div class="detail-body">
+        <p id="updateVersions">–</p><p id="updateChecked" data-i18n="not_checked">Not checked yet</p>
+        <p data-i18n="update_warning">Updates both quadlets. Running requests are terminated; new requests receive HTTP 503 during the restart.</p>
+        <p id="updateBackup" hidden></p>
+        <a id="updateChangelog" target="_blank" rel="noopener noreferrer" hidden data-i18n="update_changelog">Changes on GitHub ↗</a>
+      </div></details>
+      <p id="updateError" class="failure" role="alert" hidden></p>
+    </div>
+    <div class="controls">
+      <button id="checkUpdate" data-i18n="btn_check">Check</button>
+      <button id="installUpdate" class="update-action" hidden data-i18n="btn_install">Update now</button>
+      <button id="recoverUpdate" class="update-action" hidden data-i18n="btn_recover">Recover</button>
+    </div>
   </section>
-  <footer><span id="updated" data-i18n="footer_not_updated">Noch nicht aktualisiert</span><span data-i18n="footer_note">Lokal erfasst · 365 Tage Aufbewahrung</span></footer>
-  <noscript><p class="notice" data-i18n="noscript">Für die Live-Anzeige bitte JavaScript aktivieren.</p></noscript>
-</main>
-<script>
-'use strict';
-const $ = id => document.getElementById(id);
-let L = {}, NUM = 'de-DE', currentLang = 'de';
-const t = (key, params) => {
-  let s = L[key];
-  if (typeof s !== 'string') return key;
-  if (params) for (const [k, v] of Object.entries(params)) s = s.replaceAll(`{${k}}`, String(v));
-  return s;
-};
-const valid = n => typeof n === 'number' && Number.isFinite(n);
-const integer = n => valid(n) ? n.toLocaleString(NUM) : '–';
-const decimal = (n, digits = 1) => valid(n) ? n.toLocaleString(NUM, {minimumFractionDigits: digits, maximumFractionDigits: digits}) : '–';
-const percent = n => valid(n) ? `${decimal(n * 100)} %` : '–';
-const seconds = n => valid(n) ? `${decimal(n / 1000, 2)} s` : '–';
-const rate = n => valid(n) ? `${decimal(n)} Token/s` : '–';
-const esc = s => String(s ?? '–').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
-const dateTime = n => new Date(n * 1000).toLocaleString(NUM, {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
-const compact = n => n.toLocaleString(NUM, {notation:'compact', maximumFractionDigits:1});
-function bytes(n) {
-  if (!valid(n)) return '–';
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-  return `${decimal(n, 1)} ${units[i]}`;
-}
-const state = {period:'24h', from:null, to:null, page:1, pages:1, range:null, pinned:null};
-let analyticsController, analyticsSequence = 0, liveBusy = false, liveTimer, analyticsTimer, currentAnalytics;
-let updatesData, updatesTimer, updatesBusy = false, updateActionBusy = false, updateSequence = 0;
-const expanded = new Set();
 
-function handleUnauthorized(response) {
-  if (response.status === 401) {
-    location.assign('/dashboard/login');
-    return true;
-  }
-  return false;
-}
-
-function renderLive(data) {
-  const api = data.api || {}, backend = data.backend || {}, system = data.system || {}, app = data.app || {};
-  $('appVersion').textContent = app.version ? `v${app.version}` : 'v0+local';
-  const online = backend.status === 'ok';
-  const switching = api.status === 'switching';
-  const maintenance = api.status === 'maintenance';
-  $('connection').textContent = maintenance ? t('status_maintenance') : switching ? t('status_switching') : online ? t('status_ready') : t('status_backend_down');
-  $('statusDot').dataset.state = maintenance || switching ? 'switching' : online ? 'ok' : 'error';
-  $('activeModel').textContent = api.active_model || t('no_active_model');
-  $('switchState').hidden = !api.switch_target;
-  $('switchState').textContent = api.switch_target ? t('switch_to', {target: api.switch_target}) : '';
-  $('activeCount').textContent = integer(backend.in_flight);
-  $('queueCount').textContent = integer(backend.queued);
-  const active = data.active_requests || [];
-  $('activeRequests').hidden = active.length === 0;
-  $('activeRequests').innerHTML = active.map(r => `<div><span>${esc(r.client)} · ${esc(r.model)}</span><span>${seconds(r.elapsed_ms)}</span></div>`).join('');
-  const memory = system.memory || {};
-  $('ram').textContent = `${bytes(memory.used_bytes)} / ${bytes(memory.total_bytes)}`;
-  $('gpu').textContent = valid(system.gpu_busy_percent) ? `${integer(system.gpu_busy_percent)} %` : '–';
-  $('pool').textContent = percent(data.cache?.pool?.usage_ratio);
-  $('disk').textContent = `${bytes(system.disk_used_bytes)} / ${bytes(system.disk_total_bytes)}`;
-  $('context').textContent = `${integer(backend.context)} / ${integer(backend.slots)}`;
-  $('maxTokens').textContent = `${integer(backend.max_tokens_default)} / ${integer(backend.max_tokens_cap)}`;
-  $('reasoning').textContent = backend.reasoning_effort_default || '–';
-  $('version').textContent = typeof backend.version === 'string' ? backend.version : backend.version?.api || '–';
-  $('storage').textContent = Object.entries(data.cache?.model_bytes || {}).map(([name, size]) => `${name}: ${bytes(size)} Cache`).join(' · ');
-  $('updated').textContent = t('live_updated', {time: new Date(data.generated_at * 1000).toLocaleTimeString(NUM)});
-}
-
-const bucketLabel = (ts, unit, period) => {
-  const d = new Date(ts * 1000);
-  if (period === '7d') return d.toLocaleDateString(NUM, {weekday: 'short'});
-  if (unit === 'month') return d.toLocaleDateString(NUM, {month: 'short'});
-  if (unit === 'day' || unit === 'week') return String(d.getDate()).padStart(2, '0');
-  return String(d.getHours()).padStart(2, '0');
-};
-
-function renderChart(data) {
-  const timeline = data.timeline || [];
-  const unit = data.bucket_unit || 'hour';
-  const period = data.period || '';
-  const hasUsage = data.summary.input_reported > 0 || data.summary.output_reported > 0;
-  $('tokenChart').toggleAttribute('hidden', !hasUsage);
-  $('chartEmpty').hidden = hasUsage;
-  $('chartEmpty').textContent = data.summary.requests ? t('chart_no_verified') : t('chart_no_requests');
-  $('chartNote').textContent = t('chart_note', {interval: t(`bucket_${unit}`)});
-  if (!hasUsage) { $('tokenChart').innerHTML = ''; return; }
-  const max = Math.max(1, ...timeline.flatMap(x => [x.input_tokens || 0, x.output_tokens || 0]));
-  const chartWidth = Math.max(260, $('tokenChart').clientWidth || 1080);
-  const chartHeight = $('tokenChart').clientHeight || 200;
-  $('tokenChart').setAttribute('viewBox', `0 0 ${chartWidth} ${chartHeight}`);
-  const left = 52, width = chartWidth - 60, top = 12, axisY = chartHeight - 30;
-  const height = axisY - top;
-  let svg = `<title>${esc(t('chart_svg_title'))}</title>`;
-  for (const ratio of [0, .5, 1]) {
-    const y = top + height * (1 - ratio);
-    svg += `<path class="gridline" d="M${left} ${y}H${left + width}"/><text x="${left - 10}" y="${y + 4}" text-anchor="end">${esc(compact(max * ratio))}</text>`;
-  }
-  svg += `<path class="axis" d="M${left} ${axisY}H${left + width}"/>`;
-  const step = width / Math.max(1, timeline.length);
-  const minLabelPx = unit === 'month' ? 36 : period === '7d' ? 34 : 22;
-  const labelEvery = Math.max(1, Math.ceil(minLabelPx / step));
-  timeline.forEach((item, i) => {
-    const bucketFrom = Math.max(item.bucket_start, data.from);
-    const bucketTo = Math.min(item.bucket_end ?? item.bucket_start + data.bucket_seconds, data.to);
-    const x = left + (bucketFrom - data.from) / (data.to - data.from) * width;
-    const w = (bucketTo - bucketFrom) / (data.to - data.from) * width;
-    if (w <= 0) return;
-    const label = t('chart_tooltip', {from: dateTime(Math.max(item.bucket_start, data.from)), to: dateTime(Math.min(item.bucket_end ?? item.bucket_start + data.bucket_seconds, data.to)), input: integer(item.input_tokens), output: integer(item.output_tokens), requests: integer(item.requests)}) + (item.partial ? t('chart_tooltip_partial') : '');
-    svg += `<g class="bucket"><title>${esc(label)}</title>`;
-    for (const [j, key, color] of [[0, 'input_tokens', '#7daff3'], [1, 'output_tokens', '#5ee7c4']]) {
-      if (!valid(item[key])) continue;
-      const h = item[key] / max * height;
-      svg += `<rect class="bar" x="${x + w * (.1 + j * .42)}" y="${axisY - h}" width="${Math.max(.5, w * .36)}" height="${h}" rx="2" fill="${color}"/>`;
-    }
-    if (item.partial) svg += `<circle cx="${x + w / 2}" cy="${axisY + 7}" r="2" fill="#edc17e"/>`;
-    if (i % labelEvery === 0) {
-      svg += `<text class="tick" x="${x + w / 2}" y="${chartHeight - 9}" text-anchor="middle">${esc(bucketLabel(item.bucket_start, unit, period))}</text>`;
-    }
-    svg += `<rect x="${x}" y="${top}" width="${w}" height="${height}" fill="transparent"/></g>`;
-  });
-  $('tokenChart').innerHTML = svg;
-}
-
-function renderHistory(history) {
-  state.page = history.page;
-  state.pages = history.pages;
-  $('historyCount').textContent = t('history_count', {total: integer(history.total)});
-  $('pageInfo').textContent = t('page_of', {page: history.page, pages: history.pages}) + (state.pinned ? t('pinned_suffix') : '');
-  $('prevPage').disabled = state.page <= 1;
-  $('nextPage').disabled = state.page >= state.pages;
-  const items = history.items || [];
-  $('rows').innerHTML = items.length ? items.map((r, i) => {
-    const legacy = r.telemetry_version < 2;
-    const count = n => `${integer(n)}${legacy && valid(n) ? '*' : ''}`;
-    const open = expanded.has(r.request_id);
-    const details = [
-      [t('detail_cache'), count(r.cached_tokens)], [t('detail_reasoning'), count(r.reasoning_tokens)],
-      [t('detail_ttfb'), seconds(r.ttfb_ms)], [t('detail_generation'), legacy ? '–' : rate(r.tps)],
-      [t('detail_reasoning_requested'), r.reasoning_effort], [t('detail_response_format'), r.stream ? 'Streaming' : 'JSON'],
-      [t('detail_endpoint'), r.endpoint], [t('detail_capture'), legacy ? t('capture_legacy') : t('capture_api')],
-    ];
-    return `<tr><td><button class="row-toggle" data-request="${esc(r.request_id)}" aria-expanded="${open}" aria-controls="detail-${i}"><span aria-hidden="true">${open ? '−' : '+'}</span>${esc(dateTime(r.completed_at))}</button></td>
-      <td>${esc(r.client)}<span class="cell-sub">${esc(r.model)}</span></td><td class="number ${legacy ? 'legacy' : ''}">${count(r.input_tokens)}</td><td class="number ${legacy ? 'legacy' : ''}">${count(r.output_tokens)}</td>
-      <td class="number">${seconds(r.duration_ms)}</td><td class="number ${r.status >= 400 ? 'failure' : 'success'}">${integer(r.status)}<span class="cell-sub">${r.status === 499 ? t('status_aborted') : r.status >= 400 ? t('status_error') : t('status_ok')}</span></td></tr>
-      <tr class="request-detail" id="detail-${i}" ${open ? '' : 'hidden'}><td colspan="6"><dl class="detail-grid">${details.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${r.error ? `<p class="failure">${esc(r.error)}</p>` : ''}${legacy ? `<small class="legacy">${esc(t('legacy_note'))}</small>` : ''}</td></tr>`;
-  }).join('') : `<tr><td colspan="6" class="empty">${esc(t('history_empty'))}</td></tr>`;
-}
-
-function renderBreakdown(id, rows) {
-  $(id).innerHTML = rows.length ? rows.map(r => `<div class="breakdown-row"><span>${esc(r.name)}</span><span>${integer(r.requests)} / ${integer(r.output_tokens)}${r.output_reported < r.requests ? esc(t('partial_suffix')) : ''}</span></div>`).join('') : `<p class="muted">${esc(t('no_requests'))}</p>`;
-}
-
-function renderAnalytics(data) {
-  currentAnalytics = data;
-  const s = data.summary, e = data.engine;
-  state.range = {from:data.from, to:data.to};
-  $('rangeCaption').textContent = t('range_caption', {from: dateTime(data.from), to: dateTime(data.to), time: new Date(data.generated_at * 1000).toLocaleTimeString(NUM)});
-  $('requestCount').textContent = integer(s.requests);
-  $('requestNote').textContent = t('request_note', {success: integer(s.successes), errors: integer(s.errors)});
-  $('inputTokens').textContent = integer(s.input_tokens);
-  $('outputTokens').textContent = integer(s.output_tokens);
-  $('inputNote').textContent = t('input_note', {reported: integer(s.input_reported), total: integer(s.requests)});
-  $('outputNote').textContent = t('output_note', {reported: integer(s.output_reported), total: integer(s.requests)});
-  $('cacheRatio').textContent = percent(s.cache_ratio);
-  $('cacheNote').textContent = t('cache_note', {cached: integer(s.cached_tokens), reported: integer(s.cache_reported), total: integer(s.requests)});
-  const missing = s.requests - s.usage_reported;
-  const messages = [];
-  if (missing > 0) messages.push(t('coverage_missing', {reported: integer(s.usage_reported), total: integer(s.requests)}));
-  if (s.legacy_requests > 0) messages.push(t('coverage_legacy', {count: integer(s.legacy_requests)}));
-  $('coverageNotice').hidden = messages.length === 0;
-  $('coverageNotice').textContent = messages.join(' ');
-  renderChart(data);
-  renderHistory(data.history);
-  renderBreakdown('clients', data.by_client);
-  renderBreakdown('models', data.by_model);
-  $('engineCaption').textContent = t('engine_caption', {count: integer(e.requests)});
-  $('engineTps').textContent = rate(e.weighted_tps);
-  $('prefillTps').textContent = rate(e.weighted_prefill_tps);
-  $('mtp').textContent = decimal(e.avg_commit_per_round, 2);
-  $('pld').textContent = decimal(e.avg_pld_accept_per_round, 2);
-}
-
-function analyticsUrl() {
-  const range = state.pinned || (state.period === 'custom' ? {from:state.from, to:state.to} : null);
-  const params = new URLSearchParams({period:range ? 'custom' : state.period, page:String(state.page)});
-  if (range) { params.set('from', range.from); params.set('to', range.to); }
-  return `/dashboard/api/analytics?${params}`;
-}
-
-async function refreshLive() {
-  if (liveBusy || document.hidden) return;
-  clearTimeout(liveTimer);
-  liveBusy = true;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
-  try {
-    const response = await fetch('/dashboard/api/snapshot', {cache:'no-store', signal:controller.signal});
-    if (handleUnauthorized(response)) return;
-    if (!response.ok) throw new Error();
-    renderLive(await response.json());
-  } catch {
-    $('connection').textContent = t('conn_broken');
-    $('statusDot').dataset.state = 'error';
-    $('updated').textContent = t('live_stale');
-  } finally {
-    clearTimeout(timeout);
-    liveBusy = false;
-    if (!document.hidden) liveTimer = setTimeout(refreshLive, 5000);
-  }
-}
-
-async function refreshAnalytics(clear = false) {
-  clearTimeout(analyticsTimer);
-  analyticsController?.abort();
-  const sequence = ++analyticsSequence;
-  const controller = analyticsController = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  $('analytics').setAttribute('aria-busy', 'true');
-  $('prevPage').disabled = $('nextPage').disabled = true;
-  if (clear) {
-    currentAnalytics = null;
-    for (const id of ['requestCount', 'inputTokens', 'outputTokens', 'cacheRatio']) $(id).textContent = '–';
-    for (const id of ['requestNote', 'inputNote', 'outputNote', 'cacheNote']) $(id).textContent = t('loading');
-    $('rangeCaption').textContent = t('range_loading');
-    $('coverageNotice').hidden = true;
-    $('tokenChart').setAttribute('hidden', '');
-    $('chartEmpty').hidden = false;
-    $('chartEmpty').textContent = t('loading');
-    $('rows').innerHTML = `<tr><td colspan="6" class="empty">${esc(t('requests_loading'))}</td></tr>`;
-  }
-  try {
-    const response = await fetch(analyticsUrl(), {cache:'no-store', signal:controller.signal});
-    if (handleUnauthorized(response)) return;
-    if (!response.ok) throw new Error();
-    const data = await response.json();
-    if (sequence !== analyticsSequence) return;
-    renderAnalytics(data);
-    $('analyticsError').hidden = true;
-  } catch {
-    if (sequence !== analyticsSequence) return;
-    $('analyticsError').hidden = false;
-    $('analyticsError').textContent = t('analytics_error');
-    if (clear) {
-      $('chartEmpty').textContent = t('analytics_unavailable');
-      $('rows').innerHTML = `<tr><td colspan="6" class="empty">${esc(t('requests_failed'))}</td></tr>`;
-    }
-    $('prevPage').disabled = state.page <= 1;
-    $('nextPage').disabled = state.page >= state.pages;
-  } finally {
-    clearTimeout(timeout);
-    if (sequence === analyticsSequence) {
-      $('analytics').setAttribute('aria-busy', 'false');
-      if (!document.hidden) analyticsTimer = setTimeout(() => refreshAnalytics(), 30000);
-    }
-  }
-}
-
-function changeRange(period, from = null, to = null) {
-  Object.assign(state, {period, from, to, page:1, pages:1, pinned:null});
-  expanded.clear();
-  refreshAnalytics(true);
-}
-$('period').addEventListener('change', event => {
-  $('customRange').hidden = event.target.value !== 'custom';
-  if (event.target.value !== 'custom') changeRange(event.target.value);
-});
-$('customRange').addEventListener('submit', event => {
-  event.preventDefault();
-  const from = new Date($('fromDate').value).getTime() / 1000;
-  const to = new Date($('toDate').value).getTime() / 1000;
-  if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to || from >= Date.now() / 1000) {
-    $('rangeHint').textContent = t('range_invalid');
-    return;
-  }
-  $('rangeHint').textContent = t('range_applied');
-  changeRange('custom', from, to);
-});
-function changePage(delta) {
-  if (!state.range) return;
-  state.page = Math.max(1, Math.min(state.pages, state.page + delta));
-  state.pinned = state.page > 1 ? state.pinned || {...state.range} : null;
-  expanded.clear();
-  refreshAnalytics();
-}
-$('prevPage').addEventListener('click', () => changePage(-1));
-$('nextPage').addEventListener('click', () => changePage(1));
-$('rows').addEventListener('click', event => {
-  const button = event.target.closest('button[data-request]');
-  if (!button) return;
-  const open = button.getAttribute('aria-expanded') !== 'true';
-  button.setAttribute('aria-expanded', String(open));
-  button.querySelector('span').textContent = open ? '−' : '+';
-  $(button.getAttribute('aria-controls')).hidden = !open;
-  if (open) expanded.add(button.dataset.request); else expanded.delete(button.dataset.request);
-});
-$('refresh').addEventListener('click', () => { refreshLive(); refreshAnalytics(); });
-$('endpoint').textContent = `${location.origin}/v1`;
-$('copy').addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText($('endpoint').textContent);
-    $('copyStatus').textContent = t('copied');
-  } catch {
-    const selection = window.getSelection(), range = document.createRange();
-    range.selectNodeContents($('endpoint'));
-    selection.removeAllRanges(); selection.addRange(range);
-    $('copyStatus').textContent = t('copy_hint');
-  }
-});
-function localInput(date) {
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-}
-function renderUpdates(data) {
-  updatesData = data;
-  const job = data.job;
-  let title = data.current_version ? t('update_server_title', {version: data.current_version}) : t('update_default_title');
-  if (data.recovery_required) title += t('update_suffix_recovery');
-  else if (data.running) title += t('update_suffix_running');
-  else if (data.update_available) title += t('update_suffix_available', {version: data.latest_version});
-  else if (data.up_to_date && !data.check_error) title += t('update_suffix_current');
-  if ($('updateTitle').textContent !== title) $('updateTitle').textContent = title;
-  $('updateMessage').textContent = data.running || data.recovery_required || job?.phase === 'failed' || job?.phase === 'rolled_back' || job?.phase === 'succeeded'
-    ? job?.message || t('update_msg_recovery')
-    : data.check_error || data.support_error || data.blocked_reason || t('update_msg_default');
-  $('updateVersions').textContent = Object.entries(data.configured_versions || {}).map(([model, version]) => `${model}: ${version}`).join(' · ') || t('update_no_quadlets');
-  $('updateChecked').textContent = data.checked_at ? t('update_checked_at', {time: dateTime(data.checked_at), tag: data.latest_version}) : t('not_checked');
-  $('updateBackup').hidden = !job?.backup_dir;
-  $('updateBackup').textContent = job?.backup_dir ? t('update_backup', {dir: job.backup_dir}) : '';
-  $('updateChangelog').hidden = !data.release_url;
-  if (data.release_url) $('updateChangelog').href = data.release_url;
-  $('checkUpdate').disabled = updateActionBusy || data.running || data.recovery_required;
-  $('installUpdate').hidden = !data.update_available || data.recovery_required;
-  $('installUpdate').disabled = updateActionBusy || !data.can_install;
-  $('installUpdate').textContent = data.running ? t('update_running_btn') : t('update_install_btn', {version: data.latest_version});
-  $('recoverUpdate').hidden = !data.recovery_required;
-  $('recoverUpdate').disabled = updateActionBusy || !data.can_recover;
-}
-function scheduleUpdates() {
-  clearTimeout(updatesTimer);
-  if (!document.hidden) updatesTimer = setTimeout(refreshUpdates, updatesData?.running ? 3000 : updatesData?.checked_at ? 60000 : 10000);
-}
-async function refreshUpdates() {
-  if (updatesBusy || updateActionBusy || document.hidden) return;
-  updatesBusy = true;
-  const sequence = ++updateSequence;
-  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
-  try {
-    const response = await fetch('/dashboard/api/updates', {cache:'no-store', signal:controller.signal});
-    if (handleUnauthorized(response)) return;
-    if (!response.ok) throw new Error(t('update_unavailable'));
-    const data = await response.json();
-    if (sequence === updateSequence) { renderUpdates(data); $('updateError').hidden = true; }
-  } catch (error) {
-    if (sequence === updateSequence) {
-      $('updateError').hidden = false;
-      $('updateError').textContent = error.name === 'AbortError' ? t('update_timeout') : error.message;
-      $('installUpdate').disabled = true;
-      $('recoverUpdate').disabled = true;
-    }
-  } finally { clearTimeout(timeout); updatesBusy = false; scheduleUpdates(); }
-}
-async function updateAction(action) {
-  if (updateActionBusy) return;
-  updateActionBusy = true;
-  ++updateSequence;
-  clearTimeout(updatesTimer);
-  for (const id of ['checkUpdate', 'installUpdate', 'recoverUpdate']) $(id).disabled = true;
-  $('updateError').hidden = true;
-  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 180000);
-  try {
-    const response = await fetch(`/dashboard/api/updates/${action}`, {
-      method:'POST', headers:{'Content-Type':'application/json', 'X-Halogen-Action':'update'},
-      body:JSON.stringify(action === 'install' ? {version:updatesData?.latest_version} : {}), signal:controller.signal,
-    });
-    if (handleUnauthorized(response)) return;
-    if (!response.ok) throw new Error((await response.text()) || t('update_action_failed'));
-    updatesData = await response.json();
-    refreshLive();
-  } catch (error) {
-    $('updateError').hidden = false;
-    $('updateError').textContent = error.name === 'AbortError' ? t('update_action_timeout') : error.message;
-  } finally {
-    clearTimeout(timeout);
-    updateActionBusy = false;
-    if (updatesData) renderUpdates(updatesData); else $('checkUpdate').disabled = false;
-    scheduleUpdates();
-  }
-}
-$('checkUpdate').addEventListener('click', () => updateAction('check'));
-$('installUpdate').addEventListener('click', () => updateAction('install'));
-$('recoverUpdate').addEventListener('click', () => updateAction('recover'));
-let resetArmed = false, resetBusy = false, resetRevertTimer;
-function setResetUi() {
-  $('resetDb').hidden = resetArmed;
-  $('resetConfirm').hidden = !resetArmed;
-  $('resetCancel').hidden = !resetArmed || resetBusy;
-  $('resetConfirm').disabled = resetBusy;
-  $('resetConfirm').textContent = resetBusy ? t('reset_running') : t('reset_confirm');
-}
-function disarmReset() {
-  resetArmed = false;
-  clearTimeout(resetRevertTimer);
-  setResetUi();
-}
-$('resetDb').addEventListener('click', () => {
-  resetArmed = true;
-  $('resetStatus').textContent = t('reset_arm');
-  clearTimeout(resetRevertTimer);
-  resetRevertTimer = setTimeout(disarmReset, 15000);
-  setResetUi();
-});
-$('resetCancel').addEventListener('click', () => {
-  disarmReset();
-  $('resetStatus').textContent = '';
-});
-$('resetConfirm').addEventListener('click', async () => {
-  if (!resetArmed || resetBusy) return;
-  resetBusy = true;
-  setResetUi();
-  try {
-    const response = await fetch('/dashboard/api/reset', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'reset'},
-      body: JSON.stringify({confirm: true}),
-    });
-    if (handleUnauthorized(response)) return;
-    if (!response.ok) throw new Error((await response.text()) || t('reset_failed'));
-    const data = await response.json();
-    const count = Object.values(data.deleted || {}).reduce((total, value) => total + value, 0);
-    $('resetStatus').textContent = t('reset_done', {count: integer(count)});
-    refreshAnalytics(true);
-    refreshLive();
-  } catch (error) {
-    $('resetStatus').textContent = error.message || t('reset_failed');
-  } finally {
-    resetBusy = false;
-    disarmReset();
-  }
-});
-// ---------- Deployment ----------
-let deployData = null, deployBusy = false, deployPreviewOk = false, deployArm = null;
-const DEPLOY_ENV_FIELDS = [
-  ['HALOGEN_CHECKPOINT', 'text', 'deploy_f_checkpoint'],
-  ['HALOGEN_TOKENIZER', 'text', 'deploy_f_tokenizer'],
-  ['HALOGEN_VISION_TOWER', 'text', 'deploy_f_vision'],
-  ['HALOGEN_CACHE_DIR', 'text', 'deploy_f_cache_dir'],
-  ['HALOGEN_KV_SLOTS', 'number', 'deploy_f_kv_slots'],
-  ['HALOGEN_KV_POOL_POSITIONS', 'number', 'deploy_f_kv_pool'],
-  ['HALOGEN_CTX', 'number', 'deploy_f_ctx'],
-  ['HALOGEN_MAX_TOK', 'number', 'deploy_f_max_tok'],
-  ['HALOGEN_HOST_RESERVE_GIB', 'number', 'deploy_f_host_reserve'],
-  ['HALOGEN_CACHE_DISK_GIB', 'number', 'deploy_f_cache_gib'],
-  ['HALOGEN_CACHE_PRUNE_OLD', 'check', 'deploy_f_cache_prune'],
-  ['HALOGEN_REASONING_EFFORT', 'select:minimal,low,medium,high,xhigh', 'deploy_f_reasoning'],
-  ['HALOGEN_MAX_TOKENS_DEFAULT', 'number', 'deploy_f_out_default'],
-  ['HALOGEN_MAX_TOKENS_CAP', 'number', 'deploy_f_out_cap'],
-  ['HALOGEN_DOWNLOAD', 'text', 'deploy_f_download'],
-];
-const DEPLOY_ENV_NAMES = new Set(DEPLOY_ENV_FIELDS.map(f => f[0]));
-DEPLOY_ENV_NAMES.add('HALOGEN_MODEL_ID');
-function volHost(profile, containerPath) {
-  const v = (profile.volumes || []).find(x => x[1] === containerPath);
-  return v ? v[0] : '';
-}
-function volRo(profile, containerPath) {
-  const v = (profile.volumes || []).find(x => x[1] === containerPath);
-  return v ? v[2].includes('ro') : false;
-}
-function renderDeployForm(profile) {
-  const core = [
-    ['profile_id', 'text', 'deploy_f_profile_id', profile.profile_id],
-    ['model_id', 'text', 'deploy_f_model_id', (profile.env || {}).HALOGEN_MODEL_ID || ''],
-    ['image', 'text', 'deploy_f_image', profile.image],
-    ['host_port', 'number', 'deploy_f_port', profile.host_port],
-    ['models_host', 'text', 'deploy_f_models_path', volHost(profile, '/models')],
-    ['models_ro', 'check', 'deploy_f_models_ro', volRo(profile, '/models')],
-    ['cache_host', 'text', 'deploy_f_cache_path', volHost(profile, '/cache')],
-  ];
-  const fieldHtml = (name, type, key, value) => {
-    if (type === 'check') return `<label class="chk">${esc(t(key))}<input id="df_${name}" type="checkbox" ${value ? 'checked' : ''}></label>`;
-    if (type.startsWith('select')) {
-      const opts = type.split(':')[1].split(',');
-      return `<label>${esc(t(key))}<select id="df_${name}"><option value=""></option>${opts.map(c => `<option value="${c}" ${value === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>`;
-    }
-    return `<label>${esc(t(key))}<input id="df_${name}" type="${type}" value="${esc(String(value ?? ''))}"></label>`;
-  };
-  $('deployFields').innerHTML = core.map(f => fieldHtml(...f)).join('') + DEPLOY_ENV_FIELDS.map(([name, type, key]) => fieldHtml(name, type, key, (profile.env || {})[name] ?? '')).join('');
-  for (const el of $('deployFields').querySelectorAll('input,select')) el.addEventListener('input', invalidateDeployPreview);
-  $('deployEnvRows').innerHTML = '';
-  for (const [k, v] of Object.entries(profile.env || {})) if (!DEPLOY_ENV_NAMES.has(k)) addEnvRow(k, v);
-  $('deployMountRows').innerHTML = '';
-  for (const v of profile.volumes || []) if (v[1] !== '/models' && v[1] !== '/cache') addMountRow(v[0], v[1], v[2].includes('ro'));
-}
-function addMountRow(host = '', container = '', ro = true) {
-  const row = document.createElement('div');
-  row.className = 'deploy-env-row';
-  row.innerHTML = `<input class="mount-host" value="${esc(host)}" placeholder="/host/pfad"><input class="mount-container" value="${esc(container)}" placeholder="/container/pfad"><label class="mount-ro-label"><input type="checkbox" class="mount-ro" ${ro ? 'checked' : ''}>ro</label><button type="button" class="mount-del" aria-label="remove">✕</button>`;
-  row.querySelector('.mount-del').addEventListener('click', () => { row.remove(); invalidateDeployPreview(); });
-  for (const el of row.querySelectorAll('input')) el.addEventListener('input', invalidateDeployPreview);
-  $('deployMountRows').appendChild(row);
-}
-function addEnvRow(key = '', value = '') {
-  const row = document.createElement('div');
-  row.className = 'deploy-env-row';
-  row.innerHTML = `<input list="deployEnvKeys" class="env-key" value="${esc(key)}" placeholder="HALOGEN_..."><input class="env-value" value="${esc(value)}" placeholder="Wert"><button type="button" class="env-del" aria-label="remove">✕</button>`;
-  row.querySelector('.env-del').addEventListener('click', () => { row.remove(); invalidateDeployPreview(); });
-  for (const el of row.querySelectorAll('input')) el.addEventListener('input', invalidateDeployPreview);
-  $('deployEnvRows').appendChild(row);
-}
-function collectDeploy() {
-  const env = {};
-  const set = (k, v) => { if (v !== '') env[k] = v; };
-  set('HALOGEN_MODEL_ID', $('df_model_id').value.trim());
-  for (const [name, type] of DEPLOY_ENV_FIELDS) {
-    const el = $('df_' + name);
-    set(name, type === 'check' ? (el.checked ? '1' : '') : el.value.trim());
-  }
-  for (const row of $('deployEnvRows').children) {
-    const k = row.querySelector('.env-key').value.trim();
-    if (k) env[k] = row.querySelector('.env-value').value.trim();
-  }
-  const mounts = [];
-  for (const row of $('deployMountRows').children) {
-    const host = row.querySelector('.mount-host').value.trim();
-    const container = row.querySelector('.mount-container').value.trim();
-    if (host && container) mounts.push([host, container, row.querySelector('.mount-ro').checked ? 'ro,Z' : 'Z']);
-  }
-  return {
-    profile_id: $('df_profile_id').value.trim(),
-    image: $('df_image').value.trim(),
-    host_port: parseInt($('df_host_port').value, 10) || 0,
-    volumes: [
-      [$('df_models_host').value.trim(), '/models', $('df_models_ro').checked ? 'ro,Z' : 'Z'],
-      [$('df_cache_host').value.trim(), '/cache', 'Z'],
-      ...mounts,
-    ],
-    env,
-  };
-}
-function invalidateDeployPreview() { deployPreviewOk = false; $('deployApply').disabled = true; }
-function showDeployError(message) { const el = $('deployError'); el.hidden = false; el.textContent = message; }
-function resetDeployArm() { if (deployArm) { deployArm.btn.textContent = deployArm.label; deployArm = null; } }
-function armDeploy(btn, run, confirmLabel) {
-  if (deployArm && deployArm.btn === btn) { const fn = deployArm.run; resetDeployArm(); fn(); return; }
-  resetDeployArm();
-  deployArm = {btn, label: btn.textContent, run};
-  btn.textContent = confirmLabel || t('deploy_confirm');
-}
-async function deployRequest(path, options = {}) {
-  const response = await fetch(path, {cache: 'no-store', ...options});
-  if (handleUnauthorized(response)) throw new Error(t('auth_required') || 'Nicht angemeldet');
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = data.error || data.message || `HTTP ${response.status} ${response.statusText}`;
-    throw new Error(detail);
-  }
-  return data;
-}
-async function refreshDeploy() {
-  try { deployData = await deployRequest('/dashboard/api/deploy'); renderDeploy(); } catch { /* Backend offline */ }
-}
-function renderDeploy() {
-  if (!deployData) return;
-  $('deployError').hidden = true;
-  if (!deployData.enabled || !deployData.posix) {
-    $('deployHint').textContent = t('deploy_disabled');
-    $('deployList').innerHTML = '';
-    $('deployNew').hidden = true;
-    $('deployHf').hidden = true;
-    return;
-  }
-  $('quickDeploy').hidden = false;
-  $('deployNew').hidden = false;
-  $('deployHf').hidden = false;
-  refreshHf();
-  $('deployHint').textContent = t('deploy_hint', {dir: deployData.quadlet_dir});
-  const rows = (deployData.profiles || []).map(p => {
-    if (p.error) return `<div class="deploy-row"><strong>${esc(p.profile_id)}</strong> <span class="failure">${esc(p.error)}</span></div>`;
-    const badge = p.service_active ? `<span class="badge ok">${esc(t('deploy_running'))}</span>` : `<span class="badge">${esc(t('deploy_stopped'))}</span>`;
-    const btns = [`<button type="button" data-act="edit" data-id="${esc(p.profile_id)}">${esc(t('deploy_edit'))}</button>`];
-    if (!p.service_active) btns.push(`<button type="button" data-act="start" data-id="${esc(p.profile_id)}">${esc(t('deploy_start'))}</button>`);
-    if (p.has_backup) btns.push(`<button type="button" data-act="rollback" data-id="${esc(p.profile_id)}">${esc(t('deploy_rollback'))}</button>`);
-    if (!p.service_active) btns.push(`<button type="button" data-act="delete" data-id="${esc(p.profile_id)}">${esc(t('deploy_delete'))}</button>`);
-    return `<div class="deploy-row"><div><strong>${esc(p.profile_id)}</strong> · <code>${esc(p.model_id)}</code> · <code>${esc(String(p.image).split(':').pop())}</code> ${badge}</div><div class="deploy-row-actions">${btns.join(' ')}</div></div>`;
-  }).join('');
-  $('deployList').innerHTML = rows || `<p class="muted">${esc(t('deploy_none'))}</p>`;
-  $('deployEnvKeys').innerHTML = (deployData.env_keys || []).map(k => `<option value="${k}"></option>`).join('');
-}
-async function deployReload() {
-  try { await deployRequest('/dashboard/api/deploy/reload', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}}); refreshLive(); } catch { /* reload optional */ }
-}
-async function runDeployAction(id, act) {
-  if (deployBusy) return;
-  deployBusy = true;
-  try {
-    await deployRequest(`/dashboard/api/deploy/${encodeURIComponent(id)}/${act}`, {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
-    await refreshDeploy();
-    if (act !== 'start') await deployReload();
-  } catch (err) { showDeployError(err.message); }
-  finally { deployBusy = false; resetDeployArm(); }
-}
-$('deployList').addEventListener('click', event => {
-  const btn = event.target.closest('button[data-act]');
-  if (!btn || deployBusy) return;
-  const act = btn.dataset.act, id = btn.dataset.id;
-  if (act === 'edit') {
-    const p = (deployData.profiles || []).find(x => x.profile_id === id);
-    if (p && !p.error) openDeployEditor(p, false);
-    return;
-  }
-  if (act === 'rollback' || act === 'delete') { armDeploy(btn, () => runDeployAction(id, act)); return; }
-  runDeployAction(id, act);
-});
-$('deployAddEnv').addEventListener('click', () => { addEnvRow(); invalidateDeployPreview(); });
-$('deployAddMount').addEventListener('click', () => { addMountRow(); invalidateDeployPreview(); });
-$('deployLoadTemplate').addEventListener('click', async () => {
-  if (deployBusy) return;
-  try {
-    const data = await deployRequest(`/dashboard/api/deploy/template/${$('deployTemplate').value}`);
-    openDeployEditor(data.profile, true);
-  } catch (err) { showDeployError(err.message); }
-});
-function openDeployEditor(profile, isNew) {
-  $('deployEditor').hidden = false;
-  $('deployEditorTitle').textContent = (isNew ? t('deploy_new_profile') : t('deploy_edit_profile')) + ': ' + profile.profile_id;
-  renderDeployForm(profile);
-  $('deployDiff').hidden = true;
-  $('deployWarnings').hidden = true;
-  $('deployApply').disabled = true;
-  deployPreviewOk = false;
-  $('deployEditor').scrollIntoView({behavior: 'smooth', block: 'nearest'});
-}
-$('deployCancel').addEventListener('click', () => { $('deployEditor').hidden = true; resetDeployArm(); });
-$('deployPreview').addEventListener('click', async () => {
-  if (deployBusy) return;
-  deployBusy = true;
-  $('deployError').hidden = true;
-  try {
-    const data = await deployRequest('/dashboard/api/deploy/dry-run', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify(collectDeploy())});
-    $('deployDiff').hidden = false;
-    $('deployDiff').textContent = data.diff;
-    const notes = [...(data.errors || []), ...(data.warnings || [])];
-    $('deployWarnings').hidden = notes.length === 0;
-    $('deployWarnings').textContent = notes.join('\n');
-    $('deployWarnings').className = data.ok ? 'warning' : 'failure';
-    deployPreviewOk = data.ok;
-    $('deployApply').disabled = !data.ok;
-  } catch (err) { showDeployError(err.message); }
-  finally { deployBusy = false; }
-});
-$('deployApply').addEventListener('click', () => {
-  if (!deployPreviewOk || deployBusy) return;
-  armDeploy($('deployApply'), async () => {
-    deployBusy = true;
-    try {
-      await deployRequest('/dashboard/api/deploy/apply', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify(collectDeploy())});
-      $('deployEditor').hidden = true;
-      await refreshDeploy();
-      await deployReload();
-    } catch (err) { showDeployError(err.message); }
-    finally { deployBusy = false; resetDeployArm(); }
-  });
-});
-// ---------- HF download & convert ----------
-let jobTimer = null;
-let hfDefaults = {};
-let hfAutoGguf = false;
-function syncHfGgufPath() {
-  if (!hfAutoGguf || !hfDefaults.default_gguf_name) return;
-  const dest = $('hfDest').value.trim().replace(/\/$/, '');
-  if (dest) $('convGguf').value = dest + '/' + hfDefaults.default_gguf_name;
-}
-async function refreshHf() {
-  try {
-    const hf = await deployRequest('/dashboard/api/deploy/hf');
-    hfDefaults = hf || {};
-    $('hfStatusLine').textContent = hf.installed ? t('hf_installed') : t('hf_not_installed');
-    $('hfInstallBtn').hidden = hf.installed;
-    if (!$('hfRepo').value) $('hfRepo').value = hf.default_repo || '';
-    if (!$('hfFile').value) $('hfFile').value = hf.default_file || '';
-    if (!$('hfDest').value && deployData.allowed_roots && deployData.allowed_roots.length) {
-      $('hfDest').value = String(deployData.allowed_roots[0]).replace(/\/$/, '') + '/halogen/models/uncensored';
-    }
-    if (!$('convImage').value) {
-      const tag = (typeof updatesData !== 'undefined' && updatesData && updatesData.latest_version) || '';
-      if (tag) $('convImage').value = 'ghcr.io/peonist-ai/halogen-flash-server:' + tag;
-    }
-    if (!$('convOut').value) $('convOut').value = hf.default_output || 'qwen3.8-flash-uncensored.hgn';
-    if (!$('convGguf').value && hf.default_gguf_name) {
-      hfAutoGguf = true;
-      syncHfGgufPath();
-    }
-  } catch { /* offline */ }
-}
-$('hfDest').addEventListener('input', syncHfGgufPath);
-function startJobPoll() { clearTimeout(jobTimer); pollJob(); }
-async function pollJob() {
-  try {
-    const job = await deployRequest('/dashboard/api/deploy/job');
-    if (!job.active) { $('jobBox').hidden = true; return; }
-    $('jobBox').hidden = false;
-    const step = job.total_steps ? ` (${job.step || 0}/${job.total_steps})` : '';
-    $('jobKind').textContent = t('job_' + job.kind.replace(/-/g, '_')) + step;
-    const stateEl = $('jobState');
-    stateEl.textContent = t('job_state_' + job.state);
-    stateEl.className = 'badge' + (job.state === 'running' ? ' ok' : job.state === 'error' ? ' err' : '');
-    $('jobElapsed').textContent = Math.round(job.elapsed) + 's';
-    $('jobLog').textContent = (job.lines || []).join('\n') + (job.error ? '\nERROR: ' + job.error : '');
-    $('jobCancelBtn').hidden = job.state !== 'running';
-    if (job.state === 'running') {
-      jobTimer = setTimeout(pollJob, 2000);
-    } else if (job.kind === 'hf-install') {
-      await refreshHf();
-    }
-  } catch { jobTimer = setTimeout(pollJob, 5000); }
-}
-$('jobCancelBtn').addEventListener('click', () => {
-  armDeploy($('jobCancelBtn'), async () => {
-    try {
-      await deployRequest('/dashboard/api/deploy/job/cancel', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
-    } catch (err) { showDeployError(err.message); }
-    finally { resetDeployArm(); }
-  }, t('job_cancel_confirm'));
-});
-$('hfInstallBtn').addEventListener('click', async () => {
-  try {
-    await deployRequest('/dashboard/api/deploy/hf/install', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
-    startJobPoll();
-  } catch (err) { showDeployError(err.message); }
-});
-$('hfDownloadBtn').addEventListener('click', async () => {
-  const token = $('hfToken').value.trim();
-  if (!token) {
-    showDeployError(t('hf_token_required') || 'HF-Token fehlt.');
-    return;
-  }
-  $('hfToken').value = '';
-  try {
-    await deployRequest('/dashboard/api/deploy/hf/download', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({repo: $('hfRepo').value.trim(), file: $('hfFile').value.trim(), dest: $('hfDest').value.trim(), token})});
-    startJobPoll();
-  } catch (err) { showDeployError(err.message); }
-});
-$('quickOfficialBtn').addEventListener('click', () => {
-  if (deployBusy) return;
-  armDeploy($('quickOfficialBtn'), async () => {
-    deployBusy = true;
-    $('deployError').hidden = true;
-    try {
-      await deployRequest('/dashboard/api/deploy/quick/official', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
-      await refreshDeploy();
-      await deployReload();
-    } catch (err) { showDeployError(err.message); }
-    finally { deployBusy = false; resetDeployArm(); }
-  }, t('quick_confirm'));
-});
-$('quickUncensoredBtn').addEventListener('click', () => {
-  if (deployBusy) return;
-  const token = $('quickHfToken').value.trim();
-  if (!token) {
-    showDeployError(t('hf_token_required') || 'HF-Token fehlt.');
-    return;
-  }
-  armDeploy($('quickUncensoredBtn'), async () => {
-    deployBusy = true;
-    $('deployError').hidden = true;
-    try {
-      await deployRequest('/dashboard/api/deploy/quick/uncensored', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({token})});
-      $('quickHfToken').value = '';
-      startJobPoll();
-    } catch (err) { showDeployError(err.message); }
-    finally { deployBusy = false; resetDeployArm(); }
-  }, t('quick_confirm'));
-});
-$('convBtn').addEventListener('click', async () => {
-  try {
-    await deployRequest('/dashboard/api/deploy/convert', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({image: $('convImage').value.trim(), gguf: $('convGguf').value.trim(), output: $('convOut').value.trim(), download_head: $('convHead').checked})});
-    startJobPoll();
-  } catch (err) { showDeployError(err.message); }
-});
-$('verifyBtn').addEventListener('click', async () => {
-  const gguf = $('convGguf').value.trim();
-  const dir = gguf.slice(0, gguf.lastIndexOf('/') + 1);
-  try {
-    await deployRequest('/dashboard/api/deploy/verify', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({image: $('convImage').value.trim(), hgn: dir + $('convOut').value.trim()})});
-    startJobPoll();
-  } catch (err) { showDeployError(err.message); }
-});
-$('toDate').value = localInput(new Date());
-$('fromDate').value = localInput(new Date(Date.now() - 86400000));
-new ResizeObserver(() => {
-  if (currentAnalytics) renderChart(currentAnalytics);
-}).observe(document.querySelector('.chart-area'));
-document.addEventListener('visibilitychange', () => {
-  clearTimeout(liveTimer); clearTimeout(analyticsTimer); clearTimeout(updatesTimer);
-  if (!document.hidden) { refreshLive(); refreshAnalytics(); refreshUpdates(); refreshDeploy(); }
-});
-function applyLocale() {
-  document.documentElement.lang = currentLang;
-  document.title = t('page_title');
-  for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
-  for (const el of document.querySelectorAll('[data-i18n-html]')) el.innerHTML = t(el.dataset.i18nHtml);
-  for (const el of document.querySelectorAll('[data-i18n-attr]')) {
-    for (const pair of el.dataset.i18nAttr.split(';')) {
-      const [attr, key] = pair.split(':');
-      if (attr && key) el.setAttribute(attr, t(key));
-    }
-  }
-}
-async function loadLocale(lang) {
-  const response = await fetch(`/dashboard/api/locale/${encodeURIComponent(lang)}`, {cache: 'no-store'});
-  if (!response.ok) throw new Error('locale unavailable');
-  L = await response.json();
-  NUM = L.__locale || (lang === 'de' ? 'de-DE' : 'en-US');
-  currentLang = lang;
-}
-async function switchLanguage(lang) {
-  try {
-    await loadLocale(lang);
-  } catch {
-    try { await loadLocale('de'); } catch { L = {}; currentLang = lang; NUM = lang === 'de' ? 'de-DE' : 'en-US'; }
-  }
-  try { localStorage.setItem('halobridge_lang', currentLang); } catch {}
-  applyLocale();
-  setResetUi();
-  refreshLive();
-  refreshAnalytics(true);
-  refreshUpdates();
-  refreshDeploy();
-}
-const initialLang = (() => {
-  try {
-    const stored = localStorage.getItem('halobridge_lang');
-    if (stored === 'de' || stored === 'en') return stored;
-  } catch {}
-  return (navigator.language || 'de').toLowerCase().startsWith('de') ? 'de' : 'en';
-})();
-$('langSelect').value = initialLang;
-$('langSelect').addEventListener('change', event => switchLanguage(event.target.value));
-switchLanguage(initialLang);
-</script>
-</body>
-</html>
+</section><section class="data-section"><details><summary data-i18n="db_summary">Database</summary><div class="detail-body">
+      <p class="explanation" data-i18n="db_explanation">Deletes all stored telemetry (requests and engine logs) from the local database. This action cannot be undone. Running requests are not terminated.</p>
+      <div class="controls" style="justify-content:flex-start">
+        <button id="resetDb" class="danger" data-i18n="reset_btn">Reset database</button>
+        <button id="resetConfirm" class="danger" hidden>Yes, delete all</button>
+        <button id="resetCancel" hidden data-i18n="reset_no">Cancel</button>
+        <span id="resetStatus" class="muted" role="status"></span>
+      </div>
+    </div></details></section></div><footer><span id="updated" data-i18n="footer_not_updated">Not updated yet</span><span data-i18n="footer_note">Recorded locally · 365-day retention</span></footer>
+<noscript><p class="notice">Enable JavaScript to use the dashboard.</p></noscript>
+</main><script src="/dashboard/assets/dashboard.js" defer></script></body></html>

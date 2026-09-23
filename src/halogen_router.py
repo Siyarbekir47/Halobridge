@@ -114,7 +114,7 @@ class ModelManager:
             while self.switching:
                 await self.condition.wait()
             if self.maintenance:
-                raise RouterError("Wartungsmodus ist bereits aktiv")
+                raise RouterError("Maintenance mode is already active")
             self.maintenance = True
             self.condition.notify_all()
 
@@ -132,7 +132,7 @@ class ModelManager:
         while True:
             health = await self.backend_health()
             if not health or health.get("status") != "ok":
-                raise RouterError("Backend beim Leeren der Warteschlange nicht erreichbar")
+                raise RouterError("Backend is unreachable while draining the queue")
             if health.get("in_flight") == 0 and health.get("queued") == 0:
                 return
             await asyncio.sleep(2)
@@ -143,7 +143,7 @@ class ModelManager:
         check: bool = True,
         timeout: float = 600,
     ) -> tuple[int, str, str]:
-        LOG.info("Ausführen: %s", " ".join(command))
+        LOG.info("Running: %s", " ".join(command))
 
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -160,7 +160,7 @@ class ModelManager:
             process.kill()
             await process.wait()
             raise RouterError(
-                f"Zeitüberschreitung bei: {' '.join(command)}"
+                f"Timed out running: {' '.join(command)}"
             )
 
         stdout = stdout_bytes.decode(errors="replace").strip()
@@ -174,7 +174,7 @@ class ModelManager:
 
         if check and process.returncode != 0:
             raise RouterError(
-                f"Befehl fehlgeschlagen ({process.returncode}): "
+                f"Command failed ({process.returncode}): "
                 f"{' '.join(command)}; {stderr or stdout}"
             )
 
@@ -228,7 +228,7 @@ class ModelManager:
                 and health.get("model") == expected_model
             ):
                 LOG.info(
-                    "Backend %s ist bereit",
+                    "Backend %s is ready",
                     expected_model,
                 )
                 return health
@@ -236,8 +236,8 @@ class ModelManager:
             await asyncio.sleep(2)
 
         raise RouterError(
-            f"Backend {expected_model} wurde innerhalb von "
-            f"{timeout:.0f} Sekunden nicht bereit"
+            f"Backend {expected_model} was not ready within "
+            f"{timeout:.0f} seconds"
         )
 
     async def wait_for_backend_idle(self) -> None:
@@ -253,18 +253,18 @@ class ModelManager:
             queued = int(health.get("queued", 0) or 0)
 
             if in_flight == 0 and queued == 0:
-                LOG.info("Backend hat keine laufenden Anfragen")
+                LOG.info("Backend has no active requests")
                 return
 
             LOG.info(
-                "Warte auf Backend: in_flight=%d queued=%d",
+                "Waiting for backend: in_flight=%d queued=%d",
                 in_flight,
                 queued,
             )
             await asyncio.sleep(2)
 
         raise RouterError(
-            "Zeitüberschreitung beim Warten auf laufende Anfragen"
+            "Timed out waiting for active requests"
         )
 
     def read_gtt_used(self) -> int:
@@ -272,7 +272,7 @@ class ModelManager:
             return int(self.gtt_path.read_text().strip())
         except (OSError, ValueError) as error:
             raise RouterError(
-                f"GTT-Zähler konnte nicht gelesen werden: {error}"
+                f"Could not read GTT counter: {error}"
             ) from error
 
     async def wait_for_gtt_release(self) -> None:
@@ -283,13 +283,13 @@ class ModelManager:
 
             if used <= self.gtt_limit_bytes:
                 LOG.info(
-                    "GTT freigegeben: %.1f MiB",
+                    "GTT released: %.1f MiB",
                     used / 1024 / 1024,
                 )
                 return
 
             LOG.info(
-                "Warte auf GTT-Freigabe: %.2f GiB",
+                "Waiting for GTT release: %.2f GiB",
                 used / 1024 / 1024 / 1024,
             )
             await asyncio.sleep(2)
@@ -297,8 +297,8 @@ class ModelManager:
         used = self.read_gtt_used()
 
         raise RouterError(
-            "GTT wurde nicht freigegeben: "
-            f"{used / 1024 / 1024 / 1024:.2f} GiB verbleiben"
+            "GTT was not released: "
+            f"{used / 1024 / 1024 / 1024:.2f} GiB remaining"
         )
 
     async def stop_service(self, model: str) -> None:
@@ -338,7 +338,7 @@ class ModelManager:
         for model, service in self.models.items():
             if await self.service_is_active(service):
                 LOG.warning(
-                    "Stoppe unerwartet aktiven Dienst %s",
+                    "Stopping unexpectedly active service %s",
                     service,
                 )
                 await self.stop_service(model)
@@ -351,7 +351,7 @@ class ModelManager:
         if health and health.get("model") in self.models:
             self.current_model = str(health["model"])
             LOG.info(
-                "Bereits aktives Backend erkannt: %s",
+                "Detected an already active backend: %s",
                 self.current_model,
             )
             return
@@ -371,7 +371,7 @@ class ModelManager:
                 return
             except RouterError:
                 LOG.exception(
-                    "Aktiver Dienst %s wurde nicht bereit",
+                    "Active service %s did not become ready",
                     candidate,
                 )
                 await self.stop_service(candidate)
@@ -379,7 +379,7 @@ class ModelManager:
 
         elif len(active_models) > 1:
             LOG.error(
-                "Mehrere Backend-Dienste sind gleichzeitig aktiv: %s",
+                "Multiple backend services are active at the same time: %s",
                 active_models,
             )
             await self.stop_all_model_services()
@@ -399,7 +399,7 @@ class ModelManager:
             return
 
         LOG.info(
-            "Modellwechsel: %s -> %s",
+            "Model switch: %s -> %s",
             old_model,
             target_model,
         )
@@ -417,7 +417,7 @@ class ModelManager:
             await self.start_service(target_model)
         except Exception as start_error:
             LOG.exception(
-                "Start von %s fehlgeschlagen",
+                "Failed to start %s",
                 target_model,
             )
 
@@ -431,20 +431,20 @@ class ModelManager:
 
                 if old_model in self.models:
                     LOG.warning(
-                        "Versuche Rollback auf %s",
+                        "Attempting rollback to %s",
                         old_model,
                     )
                     await self.start_service(old_model)
             except Exception:
-                LOG.exception("Rollback ist ebenfalls fehlgeschlagen")
+                LOG.exception("Rollback also failed")
 
             raise RouterError(
-                f"Modellwechsel auf {target_model} fehlgeschlagen: "
+                f"Model switch to {target_model} failed: "
                 f"{start_error}"
             ) from start_error
 
         LOG.info(
-            "Modellwechsel abgeschlossen: %s",
+            "Model switch completed: %s",
             target_model,
         )
 
@@ -493,7 +493,7 @@ class ModelManager:
         except BaseException as exc:
             cancelled = isinstance(exc, asyncio.CancelledError)
             LOG.warning(
-                "Switch auf %s fehlgeschlagen (%s); Rollback auf %s",
+                "Switch to %s failed (%s); rolling back to %s",
                 target_model,
                 "abgebrochen" if cancelled else exc,
                 old_model,
@@ -507,7 +507,7 @@ class ModelManager:
                 if old_model in self.models:
                     await self.start_service(old_model)
             except Exception:
-                LOG.exception("Rollback auf %s fehlgeschlagen", old_model)
+                LOG.exception("Rollback to %s failed", old_model)
             async with self.condition:
                 self.switching = False
                 self.switch_target = None
@@ -515,7 +515,7 @@ class ModelManager:
             if cancelled:
                 raise
             raise RouterError(
-                f"Switch auf {target_model} fehlgeschlagen: {exc}"
+                f"Switch to {target_model} failed: {exc}"
             ) from exc
 
         async with self.condition:
@@ -529,7 +529,7 @@ class ModelManager:
             raise web.HTTPServiceUnavailable(
                 text=json.dumps({"error": {
                     "type": "maintenance",
-                    "message": "Container-Update läuft. Bitte später erneut versuchen.",
+                    "message": "Container update in progress. Try again later.",
                 }}),
                 content_type="application/json",
                 headers={"Retry-After": "30"},
@@ -548,7 +548,7 @@ class ModelManager:
                     {
                         "error": {
                             "message": (
-                                f"Unbekanntes Modell: {target_model}"
+                                f"Unknown model: {target_model}"
                             ),
                             "type": "invalid_request_error",
                             "available_models": list(self.models),
@@ -574,7 +574,7 @@ class ModelManager:
 
                 while self.active_requests > 0:
                     LOG.info(
-                        "Warte auf %d Router-Anfrage(n)",
+                        "Waiting for %d router request(s)",
                         self.active_requests,
                     )
                     await self.condition.wait()
@@ -737,8 +737,8 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
                     {
                         "error": {
                             "message": (
-                                "Aktives Halogen-Backend ist "
-                                f"nicht erreichbar: {error}"
+                                "Active Halogen backend is "
+                                f"unreachable: {error}"
                             ),
                             "type": "backend_error",
                         }
@@ -812,30 +812,37 @@ LOGIN_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · {login_suffix}</title>
+<title>Halobridge · {login_suffix}</title>
 <style>
-body {{ font: 15px/1.5 "Segoe UI", sans-serif; background: #0b1419; color: #e8f0ee; display: grid; place-items: center; min-height: 100vh; margin: 0; }}
-form {{ display: grid; gap: 12px; background: #101d24; border: 1px solid #293c43; border-radius: 8px; padding: 24px; width: min(360px, calc(100vw - 32px)); }}
-h1 {{ margin: 0 0 4px; font-size: 22px; letter-spacing: -.04em; }}
-label {{ display: grid; gap: 4px; font-size: 13px; color: #9bafb6; }}
-input, button {{ font: inherit; border: 1px solid #293c43; border-radius: 6px; background: #0b1419; color: #e8f0ee; padding: 9px 11px; }}
-button {{ cursor: pointer; border-color: #367765; color: #5ee7c4; }}
-button:hover {{ background: #19332f; }}
-.err {{ color: #ff909b; font-size: 13px; margin: 0; }}
-.lang {{ margin: 8px 0 0; font-size: 12px; text-align: center; }}
-.lang a {{ color: #5ee7c4; text-decoration: none; }}
+* {{ box-sizing: border-box; }}
+body {{ font: 14px/1.6 "Segoe UI", sans-serif; background: #f5f6f8; color: #202a35; display: grid; place-items: center; min-height: 100vh; margin: 0; }}
+main {{ width: min(420px, calc(100vw - 40px)); padding-block: 32px; }}
+form {{ display: grid; gap: 20px; padding-top: 28px; margin-top: 24px; border-top: 1px solid #dce1e7; }}
+h1 {{ margin: 0; font-size: 30px; letter-spacing: -.04em; }}
+.mark {{ color: #176650; font-weight: 700; font-size: 12px; letter-spacing: .08em; margin-bottom: 12px; }}
+label {{ display: grid; gap: 8px; font-size: 13px; color: #5f6b79; }}
+input, button {{ font: inherit; width: 100%; border: 1px solid #bfc8d2; border-radius: 5px; background: #fff; color: #202a35; padding: 11px 14px; }}
+button {{ cursor: pointer; border-color: #176650; background: #176650; color: white; font-weight: 600; }}
+button:hover {{ background: #104e3d; }}
+:focus-visible {{ outline: 3px solid #345da7; outline-offset: 3px; }}
+.err {{ color: #b02d3d; background: #fff0f1; border-left: 3px solid #b02d3d; padding: 12px; font-size: 13px; margin: 0; }}
+.lang {{ margin: 8px 0 0; font-size: 12px; }}
+.lang a {{ color: #345da7; text-underline-offset: 3px; }}
 .lang a:hover {{ text-decoration: underline; }}
 </style>
 </head>
 <body>
-<form method="post" action="/dashboard/login">
+<main>
+<div class="mark">HALOBRIDGE</div>
 <h1>{title}</h1>
-<p class="muted" style="color:#9bafb6;margin:0 0 8px">{prompt}</p>
+<p style="color:#5f6b79;margin:12px 0 0">{prompt}</p>
+<form method="post" action="/dashboard/login?lang={lang}">
 {error}
 <label>Token<input type="password" name="token" required autofocus autocomplete="current-password"></label>
 <button type="submit">{submit}</button>
 <p class="lang"><a href="?lang=de" hreflang="de">Deutsch</a> · <a href="?lang=en" hreflang="en">English</a></p>
 </form>
+</main>
 </body>
 </html>
 """
@@ -843,7 +850,7 @@ button:hover {{ background: #19332f; }}
 
 def _load_locale(lang: str) -> dict:
     if lang not in {"de", "en"}:
-        lang = "de"
+        lang = "en"
     try:
         from importlib.resources import files
 
@@ -859,22 +866,21 @@ def _request_lang(request: web.Request) -> str:
     lang = request.query.get("lang", "")
     if lang in {"de", "en"}:
         return lang
-    if request.headers.get("Accept-Language", "").lower().startswith("en"):
-        return "en"
-    return "de"
+    saved = request.cookies.get("halobridge_lang")
+    return saved if saved in {"de", "en"} else "en"
 
 
-def _login_response(error: bool = False, status: int = 200, lang: str = "de") -> web.Response:
+def _login_response(error: bool = False, status: int = 200, lang: str = "en") -> web.Response:
     strings = _load_locale(lang)
     html = LOGIN_TEMPLATE.format(
         lang=lang,
-        title=settings.APP,
+        title=strings["login_page_title"],
         login_suffix=strings["login_page_title"],
         prompt=strings["login_prompt"],
-        error=f'<p class="err">{strings["login_error"]}</p>' if error else "",
+        error=f'<p class="err" role="alert">{strings["login_error"]}</p>' if error else "",
         submit=strings["login_submit"],
     )
-    return web.Response(
+    response = web.Response(
         text=html,
         content_type="text/html",
         status=status,
@@ -885,6 +891,8 @@ def _login_response(error: bool = False, status: int = 200, lang: str = "de") ->
             "Referrer-Policy": "no-referrer",
         },
     )
+    response.set_cookie("halobridge_lang", lang, path="/dashboard", samesite="Lax")
+    return response
 
 
 def make_auth_middleware(token: str):
@@ -910,7 +918,7 @@ def make_auth_middleware(token: str):
                 {
                     "error": {
                         "type": "unauthorized",
-                        "message": "Authentifizierung erforderlich.",
+                        "message": "Authentication required.",
                     }
                 },
                 status=401,
@@ -933,7 +941,7 @@ def make_login_handlers(token: str, secure: bool):
         expected_origin = f"{request.scheme}://{request.host}"
         origin = request.headers.get("Origin")
         if origin and origin != expected_origin:
-            raise web.HTTPForbidden(text="Anmeldung nur von derselben Origin.")
+            raise web.HTTPForbidden(text="Login requires the same origin.")
 
         if request.content_type == "application/json":
             try:
@@ -995,15 +1003,15 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     ):
         config.dashboard.state_dir = settings.LEGACY_STATE_DIR
         LOG.warning(
-            "Legacy-State-Verzeichnis gefunden; Dashboard nutzt %s",
+            "Legacy state directory found; dashboard uses %s",
             settings.LEGACY_STATE_DIR,
         )
 
     specs, skipped, models = resolve_models(config)
     if not models:
         raise RouterError(
-            "Keine Modelle gefunden. models.auto_discover/quadlet_dir prüfen "
-            "oder models.explicit setzen."
+            "No models found. Check models.auto_discover/quadlet_dir "
+            "or set models.explicit."
         )
 
     default_model = DEFAULT_MODEL if DEFAULT_MODEL in models else next(iter(models))
@@ -1065,7 +1073,7 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     app["config"] = config
 
     if skipped:
-        LOG.warning("Modell-Discovery hat Einträge übersprungen: %s", "; ".join(skipped))
+        LOG.warning("Model discovery skipped entries: %s", "; ".join(skipped))
 
     if config.security.auth_token:
         secure = config.dashboard.public_endpoint.startswith("https://")
@@ -1112,11 +1120,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         prog=settings.APP,
         description="Router & Dashboard for halogen",
     )
-    parser.add_argument("--config", help="Pfad zur Konfigurationsdatei")
+    parser.add_argument("--config", help="Path to the configuration file")
     parser.add_argument(
         "--check-config",
         action="store_true",
-        help="Konfiguration validieren und beenden",
+        help="Validate configuration and exit",
     )
     parser.add_argument(
         "--version",
@@ -1125,10 +1133,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
 
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("router", help="Router und Dashboard starten")
-    sub.add_parser("dashboard", help="Alias für router")
-    sub.add_parser("doctor", help="Setup prüfen")
-    sub.add_parser("update-check", help="Update-Status prüfen, nichts installieren")
+    sub.add_parser("router", help="Start router and dashboard")
+    sub.add_parser("dashboard", help="Alias for router")
+    sub.add_parser("doctor", help="Check setup")
+    sub.add_parser("update-check", help="Check update status without installing")
 
     return parser.parse_args(argv)
 
@@ -1137,7 +1145,7 @@ async def run_router(config: settings.Config) -> None:
     try:
         app = await create_application(config)
     except RouterError as error:
-        print(f"Router-Fehler: {error}", file=sys.stderr)
+        print(f"Router error: {error}", file=sys.stderr)
         raise SystemExit(1)
 
     runner = web.AppRunner(app)
@@ -1156,7 +1164,7 @@ async def run_router(config: settings.Config) -> None:
         sites.append(site)
 
         LOG.info(
-            "Router lauscht auf http://%s:%d",
+            "Router listening on http://%s:%d",
             address,
             config.router.port,
         )
@@ -1183,7 +1191,7 @@ async def run_router(config: settings.Config) -> None:
 async def run_update_check(config: settings.Config) -> int:
     _, _, models = resolve_models(config)
     if not models:
-        print("Keine Modelle gefunden; Update-Check ist nicht möglich.", file=sys.stderr)
+        print("No models found; update check is unavailable.", file=sys.stderr)
         return 1
 
     session = ClientSession(
@@ -1210,11 +1218,11 @@ def cli(argv: Optional[list[str]] = None) -> None:
     try:
         config = settings.load(args.config)
     except settings.ConfigError as error:
-        print(f"Konfigurationsfehler: {error}", file=sys.stderr)
+        print(f"Configuration error: {error}", file=sys.stderr)
         raise SystemExit(2)
 
     if args.check_config:
-        print("Konfiguration gültig.")
+        print("Configuration is valid.")
         return
 
     command = args.command or "router"
@@ -1228,7 +1236,7 @@ def cli(argv: Optional[list[str]] = None) -> None:
     elif command == "update-check":
         raise SystemExit(asyncio.run(run_update_check(config)))
     else:
-        print(f"Unbekanntes Kommando: {command}", file=sys.stderr)
+        print(f"Unknown command: {command}", file=sys.stderr)
         raise SystemExit(2)
 
 
@@ -1238,10 +1246,10 @@ async def main(argv: Optional[list[str]] = None) -> None:
     try:
         config = settings.load(args.config)
     except settings.ConfigError as error:
-        print(f"Konfigurationsfehler: {error}", file=sys.stderr)
+        print(f"Configuration error: {error}", file=sys.stderr)
         raise SystemExit(2)
     if args.check_config:
-        print("Konfiguration gültig.")
+        print("Configuration is valid.")
         return
     await run_router(config)
 

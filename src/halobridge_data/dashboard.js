@@ -1,362 +1,7 @@
-<!doctype html>
-<html lang="de">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0b1419">
-<title>Halobridge · Übersicht</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230b1419'/%3E%3Cpath d='M17 43V21h7v8h16v-8h7v22h-7v-8H24v8z' fill='%235ee7c4'/%3E%3C/svg%3E">
-<style>
-  :root { color-scheme: dark; --bg: #0b1419; --surface: #101d24; --text: #e8f0ee; --muted: #9bafb6; --line: #293c43; --mint: #5ee7c4; --blue: #7daff3; --amber: #edc17e; --red: #ff909b; }
-  * { box-sizing: border-box; }
-  body { margin: 0; color: var(--text); background: radial-gradient(ellipse at 90% 0, #14312f66, transparent 45%), var(--bg); font: 15px/1.55 "Segoe UI", sans-serif; }
-  button, input, select { font: inherit; }
-  button, select, input { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); padding: 8px 12px; }
-  button, select, summary { cursor: pointer; }
-  button { transition: border-color .15s, background .15s; }
-  button:hover:not(:disabled) { border-color: var(--mint); background: #19332f; }
-  button:disabled { opacity: .45; cursor: default; }
-  :focus-visible { outline: 2px solid var(--mint); outline-offset: 4px; }
-  [hidden] { display: none !important; }
-  h1, h2, p { margin: 0; }
-  h1 { font-size: 28px; font-weight: 650; letter-spacing: -.055em; }
-  h2 { font-size: 19px; font-weight: 600; letter-spacing: -.025em; }
-  small, .muted { color: var(--muted); }
-  code { font-family: Consolas, "Liberation Mono", monospace; font-size: .9em; overflow-wrap: anywhere; }
-  .shell { max-width: 1240px; margin: auto; padding: 30px 36px 24px; }
-  .top, .section-head, .controls, .status, .pager, .endpoint { display: flex; align-items: center; gap: 12px; }
-  .top, .section-head { justify-content: space-between; }
-  .top { margin-bottom: 26px; }
-  .brand { display: flex; align-items: baseline; gap: 16px; }
-  .brand span { color: var(--muted); font-size: 13px; }
-  .status { color: var(--muted); font-size: 13px; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
-  .dot[data-state="ok"] { background: var(--mint); }
-  .dot[data-state="error"] { background: var(--red); }
-  .dot[data-state="switching"] { background: var(--amber); }
-  .live-strip { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 32px; align-items: center; border-block: 1px solid var(--line); padding: 18px 0; }
-  .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .04em; }
-  .model-name { display: block; font-size: 17px; font-weight: 550; overflow-wrap: anywhere; }
-  .live-number { font-variant-numeric: tabular-nums; font-size: 18px; }
-  .active-list { padding-top: 12px; color: var(--muted); font-size: 13px; }
-  .active-list div { display: flex; gap: 16px; justify-content: space-between; padding: 4px 0; }
-  .update-strip { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 14px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
-  .update-strip p { color: var(--muted); font-size: 12px; margin-top: 3px; }
-  .update-strip .controls { flex-shrink: 0; }
-  .update-strip button { padding: 6px 10px; font-size: 12px; }
-  .update-strip a { color: var(--mint); }
-  .update-strip details { margin-top: 8px; }
-  .update-strip details[open] > summary { margin-bottom: 6px; }
-  .update-strip summary { font-size: 12px; }
-  .update-action { border-color: #367765; color: var(--mint); }
-  .danger { border-color: #7a3b41; color: var(--red); }
-  .danger:hover:not(:disabled) { border-color: var(--red); background: #2f1a1e; }
-  .usage { margin-top: 32px; }
-  .controls { flex-wrap: wrap; justify-content: flex-end; }
-  .controls label { font-size: 13px; color: var(--muted); }
-  .icon-button { padding: 7px 12px; font-size: 18px; }
-  .range-caption { color: var(--muted); font-size: 12px; margin: 8px 0 18px; }
-  .custom-range { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 16px 0; }
-  .custom-range label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
-  .notice { padding: 10px 14px; border-left: 2px solid var(--amber); background: #edc17e08; color: var(--amber); font-size: 13px; margin: 12px 0; }
-  .notice.error { color: var(--red); border-color: var(--red); }
-  .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 10px 0 26px; }
-  .metric { padding: 0 22px; border-left: 1px solid var(--line); min-width: 0; }
-  .metric:first-child { padding-left: 0; border: 0; }
-  .metric:last-child { padding-right: 0; }
-  .metric dt { color: var(--muted); font-size: 13px; }
-  .metric dd { margin: 5px 0; font-size: clamp(22px, 2.8vw, 35px); letter-spacing: -.045em; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-  .metric small { display: block; font-size: 12px; }
-  .metric.input dd { color: var(--blue); }
-  .metric.output dd { color: var(--mint); }
-  .chart-area { border-block: 1px solid var(--line); padding: 18px 0 14px; }
-  .chart-title { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 13px; }
-  .legend { display: flex; gap: 18px; color: var(--muted); }
-  .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; background: var(--blue); border-radius: 1px; }
-  .legend span:last-child::before { background: var(--mint); }
-  .chart { display: block; width: 100%; height: 200px; margin-top: 8px; overflow: visible; }
-  .chart text { fill: var(--muted); font: 12px "Segoe UI", sans-serif; }
-  .chart .gridline { stroke: var(--line); stroke-width: 1; }
-  .chart .axis { stroke: var(--line); stroke-width: 1.5; }
-  .chart .tick { fill: var(--muted); font-size: 11px; letter-spacing: .02em; }
-  .chart .bar { transition: opacity .12s ease; }
-  .chart g.bucket:hover .bar { opacity: .75; }
-  .chart-empty { display: grid; place-items: center; min-height: 200px; color: var(--muted); text-align: center; padding: 20px; }
-  .chart-note { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  .activity { margin-top: 28px; }
-  .activity .section-head { margin-bottom: 14px; }
-  .scroll-hint { display: none; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
-  th { font-weight: 400; color: var(--muted); text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-  td { padding: 12px; border-bottom: 1px solid #203139; vertical-align: middle; }
-  th:first-child, td:first-child { padding-left: 0; }
-  th:last-child, td:last-child { padding-right: 0; }
-  th.number, td.number { text-align: right; font-variant-numeric: tabular-nums; }
-  .cell-sub { display: block; color: var(--muted); font-size: 11px; }
-  .row-toggle { border: 0; background: transparent; padding: 3px 6px; margin-left: -6px; font-size: 13px; color: var(--text); }
-  .row-toggle span { color: var(--muted); display: inline-block; width: 14px; }
-  .success { color: var(--mint); }
-  .failure { color: var(--red); }
-  .legacy { color: var(--amber); }
-  .request-detail td { padding: 12px 16px; background: #132129; white-space: normal; }
-  .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 8px 0; }
-  .detail-grid dt { color: var(--muted); font-size: 12px; }
-  .detail-grid dd { margin: 3px 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-  .empty { color: var(--muted); text-align: center; padding: 36px !important; white-space: normal; }
-  .pager { justify-content: flex-end; padding: 14px 0; font-size: 12px; color: var(--muted); }
-  .pager button { padding: 5px 10px; }
-  .secondary { margin-top: 20px; border-top: 1px solid var(--line); }
-  .secondary > details { border-bottom: 1px solid var(--line); padding: 16px 0; }
-  .deploy-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  .deploy-row:last-child { border-bottom: 0; }
-  .deploy-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-  .deploy-row button { padding: 5px 10px; font-size: 12px; }
-  .deploy-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px 18px; margin: 14px 0; }
-  .deploy-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-  .deploy-fields input, .deploy-fields select { padding: 7px 9px; font-size: 13px; min-width: 0; }
-  .deploy-fields label.chk { flex-direction: row; align-items: center; gap: 8px; }
-  .deploy-env-row { display: flex; gap: 8px; margin-bottom: 6px; }
-  .deploy-env-row input { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px; }
-  .deploy-diff { background: #0a1218; border: 1px solid var(--line); color: #c9d1d9; padding: 12px; border-radius: 8px; overflow: auto; font: 12px/1.5 Consolas, "Liberation Mono", monospace; white-space: pre-wrap; margin: 12px 0; max-height: 420px; }
-  .deploy-actions { display: flex; gap: 8px; margin-top: 10px; }
-  .deploy-new { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-  .badge { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 11px; color: var(--muted); }
-  .badge.ok { color: var(--mint); border-color: var(--mint); }
-  .badge.err { color: var(--red); border-color: var(--red); }
-  .mount-ro-label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; }
-  .warning { color: var(--amber); white-space: pre-line; }
-  summary { color: var(--muted); font-size: 14px; width: fit-content; }
-  details[open] > summary { color: var(--text); margin-bottom: 16px; }
-  .detail-body { animation: reveal .18s ease-out; }
-  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; }
-  .list-title { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
-  .breakdown-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #203139; font-size: 13px; overflow-wrap: anywhere; }
-  .breakdown-row span:last-child { text-align: right; flex-shrink: 0; color: var(--muted); }
-  .endpoint { margin: 18px 0 8px; flex-wrap: wrap; }
-  .endpoint code { color: var(--mint); }
-  .endpoint button { font-size: 12px; padding: 5px 10px; }
-  .explanation { color: var(--muted); font-size: 13px; max-width: 85ch; }
-  .explanation p + p { margin-top: 10px; }
-  footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 28px; color: var(--muted); font-size: 11px; }
-  #analytics[aria-busy="true"] .metrics { opacity: .45; }
-  .metrics { transition: opacity .18s; }
-  @keyframes reveal { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
-  @media (max-width: 760px) {
-    .shell { padding: 22px 20px; }
-    .brand { gap: 10px; } .brand > span { display: none; }
-    .live-strip { gap: 16px; grid-template-columns: 1fr auto; }
-    .live-strip > :first-child { grid-column: 1 / -1; }
-    .live-strip > :last-child { text-align: right; }
-    .metrics { grid-template-columns: 1fr 1fr; row-gap: 24px; }
-    .metric:nth-child(3) { padding-left: 0; border: 0; }
-    .metric:nth-child(2) { padding-right: 0; }
-    .metric dd { font-size: 28px; }
-    .split { grid-template-columns: 1fr; gap: 24px; }
-    .detail-grid { grid-template-columns: 1fr 1fr; }
-    .controls label { display: none; }
-    .chart { height: 170px; }
-    .scroll-hint { display: block; }
-    .update-strip { align-items: flex-start; flex-direction: column; gap: 10px; }
-    .pager { justify-content: space-between; }
-  }
-  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
-</style>
-</head>
-<body>
-<main class="shell">
-  <header class="top">
-    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.7</span></span></div>
-    <div class="controls">
-      <label for="langSelect" class="muted" data-i18n="lang_label">Sprache</label>
-      <select id="langSelect" data-i18n-attr="aria-label:lang_label"><option value="de">Deutsch</option><option value="en">English</option></select>
-      <div class="status" role="status"><i class="dot" id="statusDot"></i><span id="connection" data-i18n="conn_connecting">Verbinde …</span></div>
-    </div>
-  </header>
-  <section data-i18n-attr="aria-label:live_section">
-    <div class="live-strip">
-      <div><span class="eyebrow" data-i18n="active_model">Aktives Modell</span><strong class="model-name" id="activeModel">–</strong><small id="switchState" hidden></small></div>
-      <div><span class="live-number" id="activeCount">–</span> <span class="muted" data-i18n="running">laufend</span></div>
-      <div><span class="live-number" id="queueCount">–</span> <span class="muted" data-i18n="waiting">wartend</span></div>
-    </div>
-    <div class="active-list" id="activeRequests" hidden></div>
-  </section>
-
-  <section class="update-strip" data-i18n-attr="aria-label:updates_section">
-    <div>
-      <span id="updateTitle" role="status" data-i18n="update_checking">Serverversion wird geprüft …</span>
-      <p id="updateMessage" data-i18n="update_msg_default">Automatische Prüfung alle 6 Stunden · Installation per Klick</p>
-      <details id="updateDetails"><summary data-i18n="update_details_summary">Update-Details</summary><div class="detail-body">
-        <p id="updateVersions">–</p><p id="updateChecked" data-i18n="not_checked">Noch nicht geprüft</p>
-        <p data-i18n="update_warning">Aktualisiert beide Quadlets. Laufende Anfragen werden beendet; neue Anfragen erhalten während des Neustarts HTTP 503.</p>
-        <p id="updateBackup" hidden></p>
-        <a id="updateChangelog" target="_blank" rel="noopener noreferrer" hidden data-i18n="update_changelog">Änderungen auf GitHub ↗</a>
-      </div></details>
-      <p id="updateError" class="failure" role="alert" hidden></p>
-    </div>
-    <div class="controls">
-      <button id="checkUpdate" data-i18n="btn_check">Prüfen</button>
-      <button id="installUpdate" class="update-action" hidden data-i18n="btn_install">Jetzt aktualisieren</button>
-      <button id="recoverUpdate" class="update-action" hidden data-i18n="btn_recover">Wiederherstellen</button>
-    </div>
-  </section>
-
-  <section class="usage" id="analytics" aria-labelledby="usageTitle" aria-busy="true">
-    <div class="section-head">
-      <h2 id="usageTitle" data-i18n="usage_title">Nutzung</h2>
-      <div class="controls">
-        <label for="period" data-i18n="period_label">Zeitraum</label>
-        <select id="period" data-i18n-attr="aria-label:period_aria">
-          <option value="24h" data-i18n="period_24h">24 Stunden</option><option value="7d" data-i18n="period_7d">Woche</option>
-          <option value="30d" data-i18n="period_30d">Monat</option><option value="1y" data-i18n="period_1y">Jahr</option>
-          <option value="custom" data-i18n="period_custom">Eigener Zeitraum</option>
-        </select>
-        <button class="icon-button" id="refresh" data-i18n-attr="aria-label:refresh_aria;title:refresh_title">↻</button>
-      </div>
-    </div>
-    <form class="custom-range" id="customRange" hidden>
-      <label for="fromDate"><span data-i18n="from_label">Von (Ortszeit)</span><input type="datetime-local" id="fromDate" required></label>
-      <label for="toDate"><span data-i18n="to_label">Bis (Ortszeit)</span><input type="datetime-local" id="toDate" required></label>
-      <button type="submit" data-i18n="apply">Anwenden</button><span class="muted" id="rangeHint" data-i18n="range_hint">Mit „Anwenden“ übernehmen.</span>
-    </form>
-    <p class="range-caption" id="rangeCaption" data-i18n="range_loading">Zeitraum wird geladen …</p>
-    <div class="notice error" id="analyticsError" role="alert" hidden></div>
-    <div class="notice" id="coverageNotice" hidden></div>
-    <dl class="metrics">
-      <div class="metric"><dt data-i18n="metric_requests">Anfragen</dt><dd id="requestCount">–</dd><small id="requestNote" data-i18n="metric_requests_note">Abgeschlossene Router-Anfragen</small></div>
-      <div class="metric input"><dt data-i18n="metric_input">Input-Token</dt><dd id="inputTokens">–</dd><small id="inputNote" data-i18n="metric_input_note">Inklusive Cache</small></div>
-      <div class="metric output"><dt data-i18n="metric_output">Output-Token</dt><dd id="outputTokens">–</dd><small id="outputNote" data-i18n="metric_output_note">Inklusive Reasoning</small></div>
-      <div class="metric"><dt data-i18n="metric_cache">Cache-Anteil</dt><dd id="cacheRatio">–</dd><small id="cacheNote" data-i18n="metric_cache_note">An gemeldeten Input-Token</small></div>
-    </dl>
-    <div class="chart-area">
-      <div class="chart-title"><span data-i18n="chart_title">Erfasste Token im Zeitverlauf</span><div class="legend"><span>Input</span><span>Output</span></div></div>
-      <svg class="chart" id="tokenChart" viewBox="0 0 1080 200" role="img" data-i18n-attr="aria-label:chart_svg_title" hidden></svg>
-      <div class="chart-empty" id="chartEmpty" data-i18n="chart_loading">Nutzungsdaten werden geladen …</div>
-      <p class="chart-note" id="chartNote" data-i18n="chart_note_static">Cache ist Teil des Inputs, Reasoning ist Teil des Outputs.</p>
-    </div>
-  </section>
-
-  <section class="activity" aria-labelledby="activityTitle">
-    <div class="section-head"><h2 id="activityTitle" data-i18n="activity_title">Anfragen</h2><small id="historyCount">–</small></div>
-    <p class="scroll-hint" data-i18n="scroll_hint">Tabelle seitlich scrollen · Zeit anklicken für Details</p>
-    <div class="table-wrap" tabindex="0" role="region" data-i18n-attr="aria-label:table_aria">
-      <table><thead><tr><th scope="col" data-i18n="th_time">Zeit / Details</th><th scope="col" data-i18n="th_client">Client / Modell</th><th scope="col" class="number" data-i18n="th_input">Input</th><th scope="col" class="number" data-i18n="th_output">Output</th><th scope="col" class="number" data-i18n="th_duration">Dauer</th><th scope="col" class="number" data-i18n="th_status">Status</th></tr></thead>
-      <tbody id="rows"><tr><td colspan="6" class="empty" data-i18n="requests_loading">Anfragen werden geladen …</td></tr></tbody></table>
-    </div>
-    <div class="pager"><span id="pageInfo">Seite 1 von 1</span><button id="prevPage" disabled data-i18n="btn_prev">← Zurück</button><button id="nextPage" disabled data-i18n="btn_next">Weiter →</button></div>
-  </section>
-
-  <section class="secondary" data-i18n-attr="aria-label:secondary_section">
-    <details><summary data-i18n="breakdown_summary">Nutzung nach Client und Modell</summary><div class="split detail-body"><div><p class="list-title" data-i18n="clients_title">Clients · Anfragen / erfasste Output-Token</p><div id="clients">–</div></div><div><p class="list-title" data-i18n="models_title">Modelle · Anfragen / erfasste Output-Token</p><div id="models">–</div></div></div></details>
-    <details><summary data-i18n="system_summary">System &amp; Engine</summary><div class="detail-body">
-      <p class="list-title" data-i18n="system_title">System · aktueller Zustand</p>
-      <dl class="detail-grid"><div><dt data-i18n="label_ram">RAM</dt><dd id="ram">–</dd></div><div><dt data-i18n="label_gpu">GPU</dt><dd id="gpu">–</dd></div><div><dt data-i18n="label_pool">KV-Pool</dt><dd id="pool">–</dd></div><div><dt data-i18n="label_disk">Datenträger</dt><dd id="disk">–</dd></div></dl>
-      <dl class="detail-grid"><div><dt data-i18n="label_context">Kontext / Slots</dt><dd id="context">–</dd></div><div><dt data-i18n="label_max_tokens">Output Standard / Limit</dt><dd id="maxTokens">–</dd></div><div><dt data-i18n="label_reasoning">Reasoning Standard</dt><dd id="reasoning">–</dd></div><div><dt data-i18n="label_version">Version</dt><dd id="version">–</dd></div></dl>
-      <p class="list-title" id="engineCaption" data-i18n="engine_caption_static">Engine · gewählter Zeitraum</p>
-      <dl class="detail-grid"><div><dt data-i18n="label_engine_tps">Generation, gewichtet</dt><dd id="engineTps">–</dd></div><div><dt data-i18n="label_prefill">Prefill, gewichtet</dt><dd id="prefillTps">–</dd></div><div><dt data-i18n="label_mtp">MTP Commit / Runde</dt><dd id="mtp">–</dd></div><div><dt data-i18n="label_pld">PLD Akzeptanz / Runde</dt><dd id="pld">–</dd></div></dl>
-      <p class="explanation" data-i18n="engine_explanation">Engine-Messungen stammen aus lokalen Abschluss-Logs. Sie können auch direkte Backend-Aufrufe enthalten und sind unabhängig von den Router-Anfragen oben.</p>
-      <div class="endpoint"><span class="muted" data-i18n="api_label">API</span><code id="endpoint">–</code><button id="copy" data-i18n="copy_btn">Kopieren</button><span id="copyStatus" class="muted" role="status"></span></div>
-      <div id="storage" class="explanation"></div>
-    </div></details>
-    <details><summary data-i18n="faq_summary">Wie werden die Zahlen erfasst?</summary><div class="explanation detail-body">
-      <p data-i18n-html="faq_p1">Die Nutzung zeigt abgeschlossene Inferenzanfragen über diesen Router. Tokenzahlen stammen ausschließlich aus dem <code>usage</code>-Objekt der API. Bei fehlenden Werten steht „–“; Teilsummen sind als unvollständig gekennzeichnet. Laufende Anfragen werden erst nach Abschluss gezählt.</p>
-      <p data-i18n="faq_p2">Input enthält Cache-Token. Output enthält Reasoning-Token. Diese Teilmengen werden nicht noch einmal addiert. Der Cache-Anteil berücksichtigt nur Anfragen, die sowohl Input als auch Cache melden. „0“ bedeutet einen tatsächlich gemeldeten Nullwert.</p>
-      <p data-i18n="faq_p3">Altbestände bleiben in der Historie, fließen aber wegen der früheren uneinheitlichen Erfassung nicht in die verifizierten Tokensummen ein. Zeitlich ähnliche Engine-Logs werden keiner Anfrage automatisch zugeordnet.</p>
-      <p data-i18n="faq_p4">Die Dauer reicht vom Start der Weiterleitung bis zum Ende der Antwort. TTFB ist die Zeit bis zum ersten Antwort-Byte, nicht bis zum ersten Token. TPS werden nur bei einer direkten Zeitmessung angezeigt. Streaming-Abbrüche können ohne abschließende Usage-Meldung bleiben.</p>
-      <p data-i18n="faq_p5">Gespeichert werden technische Metadaten für 365 Tage. Prompts, Antworten, Bilder, Tool-Inhalte und Schlüssel werden nicht gespeichert.</p>
-    </div></details>
-    <details><summary data-i18n="db_summary">Datenbank</summary><div class="detail-body">
-      <p class="explanation" data-i18n="db_explanation">Löscht alle gespeicherten Telemetriedaten (Anfragen und Engine-Logs) aus der lokalen Datenbank. Diese Aktion kann nicht rückgängig gemacht werden. Laufende Anfragen werden dabei nicht beendet.</p>
-      <div class="controls" style="justify-content:flex-start">
-        <button id="resetDb" class="danger" data-i18n="reset_btn">Datenbank zurücksetzen</button>
-        <button id="resetConfirm" class="danger" hidden>Ja, alles löschen</button>
-        <button id="resetCancel" hidden data-i18n="reset_no">Abbrechen</button>
-        <span id="resetStatus" class="muted" role="status"></span>
-      </div>
-    </div></details>
-    <details id="deploySection"><summary data-i18n="deploy_summary">Profile &amp; Deployment</summary><div class="detail-body">
-      <p id="deployHint" class="muted">–</p>
-      <p id="deployError" class="failure" role="alert" hidden></p>
-      <div id="quickDeploy" class="quick-deploy" hidden>
-        <p class="list-title" data-i18n="quick_title">1-Klick-Installation</p>
-        <div class="deploy-fields">
-          <label><span data-i18n="hf_token">HF-Token — nur READ benötigt</span><input id="quickHfToken" type="password" autocomplete="off" autocapitalize="off"></label>
-        </div>
-        <div class="deploy-actions">
-          <button type="button" id="quickOfficialBtn" data-i18n="quick_official">Offizielles Modell installieren</button>
-          <button type="button" id="quickUncensoredBtn" data-i18n="quick_uncensored">Uncensored installieren</button>
-        </div>
-        <p class="muted" data-i18n="quick_note">Official lädt beim ersten Start ca. 118 GiB. Uncensored lädt das GGUF, konvertiert es und startet danach.</p>
-      </div>
-      <div id="deployList"><p>–</p></div>
-      <div id="deployNew" class="deploy-new">
-        <label for="deployTemplate" data-i18n="deploy_new_label">Neues Profil aus Vorlage:</label>
-        <select id="deployTemplate">
-          <option value="official" data-i18n="deploy_tpl_official">Offiziell (vorkonfiguriert, Gewichte auf Platte)</option>
-          <option value="uncensored" data-i18n="deploy_tpl_uncensored">Uncensored (OrcaRouter IQ4_XS)</option>
-          <option value="custom" data-i18n="deploy_tpl_custom">Eigenes Modell (GGUF- oder .hgn-Dateien)</option>
-        </select>
-        <button type="button" id="deployLoadTemplate" data-i18n="deploy_load_template">Vorlage bearbeiten</button>
-      </div>
-      <div id="deployEditor" hidden>
-        <h3 id="deployEditorTitle"></h3>
-        <div id="deployFields" class="deploy-fields"></div>
-        <div class="deploy-advanced">
-          <p class="list-title" data-i18n="deploy_mounts">Zusätzliche Mounts (Host → Container)</p>
-          <div id="deployMountRows"></div>
-          <button type="button" id="deployAddMount" data-i18n="deploy_add_mount">+ Mount hinzufügen</button>
-        </div>
-        <div class="deploy-advanced">
-          <p class="list-title" data-i18n="deploy_advanced">Weitere Parameter (nur Allowlist)</p>
-          <div id="deployEnvRows"></div>
-          <button type="button" id="deployAddEnv" data-i18n="deploy_add_env">+ Parameter hinzufügen</button>
-          <datalist id="deployEnvKeys"></datalist>
-        </div>
-        <pre id="deployDiff" class="deploy-diff" hidden></pre>
-        <p id="deployWarnings" class="warning" hidden></p>
-        <div class="deploy-actions">
-          <button type="button" id="deployPreview" data-i18n="deploy_preview">Vorschau (Dry-Run)</button>
-          <button type="button" id="deployApply" disabled data-i18n="deploy_apply">Anwenden</button>
-          <button type="button" id="deployCancel" data-i18n="deploy_cancel">Abbrechen</button>
-        </div>
-      </div>
-      <div id="deployHf">
-        <p class="list-title" data-i18n="hf_title">Uncensored-Modell: herunterladen &amp; konvertieren</p>
-        <p id="hfStatusLine" class="muted">–</p>
-        <button type="button" id="hfInstallBtn" hidden data-i18n="hf_install">HF-CLI installieren</button>
-        <div class="deploy-fields">
-          <label><span data-i18n="hf_repo">HF-Repo</span><input id="hfRepo" type="text"></label>
-          <label><span data-i18n="hf_file">Datei (leer = ganzes Repo)</span><input id="hfFile" type="text"></label>
-          <label><span data-i18n="hf_dest">Zielverzeichnis (Host)</span><input id="hfDest" type="text"></label>
-          <label><span data-i18n="hf_token">HF-Token — nur READ benötigt</span><input id="hfToken" type="password" autocomplete="off" autocapitalize="off"></label>
-        </div>
-        <p class="muted" data-i18n="hf_token_note">Wird nicht gespeichert: nur als Umgebungsvariable an den Download übergeben und aus allen Ausgaben gefiltert.</p>
-        <button type="button" id="hfDownloadBtn" data-i18n="hf_download">Download starten</button>
-        <p class="list-title" data-i18n="conv_title">GGUF → HGN konvertieren (verlustfrei, ~10 Min)</p>
-        <div class="deploy-fields">
-          <label><span data-i18n="conv_image">Image</span><input id="convImage" type="text"></label>
-          <label><span data-i18n="conv_gguf">GGUF-Datei (Host)</span><input id="convGguf" type="text"></label>
-          <label><span data-i18n="conv_out">Ausgabedatei (.hgn)</span><input id="convOut" type="text" value="qwen3.8-flash-uncensored.hgn"></label>
-          <label class="chk"><input id="convHead" type="checkbox" checked><span data-i18n="conv_head">MTP-Head automatisch von Hugging Face laden</span></label>
-        </div>
-        <div class="deploy-actions">
-          <button type="button" id="convBtn" data-i18n="conv_start">Konvertieren</button>
-          <button type="button" id="verifyBtn" data-i18n="verify_start">HGN prüfen</button>
-        </div>
-        <div id="jobBox" hidden>
-          <p><strong id="jobKind"></strong> <span id="jobState" class="badge"></span> <span id="jobElapsed" class="muted"></span> <button type="button" id="jobCancelBtn" class="ghost" data-i18n="job_cancel">Abbrechen</button></p>
-          <pre id="jobLog" class="deploy-diff"></pre>
-        </div>
-      </div>
-    </div></details>
-  </section>
-  <footer><span id="updated" data-i18n="footer_not_updated">Noch nicht aktualisiert</span><span data-i18n="footer_note">Lokal erfasst · 365 Tage Aufbewahrung</span></footer>
-  <noscript><p class="notice" data-i18n="noscript">Für die Live-Anzeige bitte JavaScript aktivieren.</p></noscript>
-</main>
-<script>
 'use strict';
 const $ = id => document.getElementById(id);
-let L = {}, NUM = 'de-DE', currentLang = 'de';
+let L = {}, NUM = 'en-US', currentLang = 'en', localeSequence = 0, localeLoading = false;
+let liveData, currentView = 'overview';
 const t = (key, params) => {
   let s = L[key];
   if (typeof s !== 'string') return key;
@@ -368,7 +13,7 @@ const integer = n => valid(n) ? n.toLocaleString(NUM) : '–';
 const decimal = (n, digits = 1) => valid(n) ? n.toLocaleString(NUM, {minimumFractionDigits: digits, maximumFractionDigits: digits}) : '–';
 const percent = n => valid(n) ? `${decimal(n * 100)} %` : '–';
 const seconds = n => valid(n) ? `${decimal(n / 1000, 2)} s` : '–';
-const rate = n => valid(n) ? `${decimal(n)} Token/s` : '–';
+const rate = n => valid(n) ? `${decimal(n)} ${t('tokens_per_second')}` : '–';
 const esc = s => String(s ?? '–').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 const dateTime = n => new Date(n * 1000).toLocaleString(NUM, {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
 const compact = n => n.toLocaleString(NUM, {notation:'compact', maximumFractionDigits:1});
@@ -383,16 +28,69 @@ const state = {period:'24h', from:null, to:null, page:1, pages:1, range:null, pi
 let analyticsController, analyticsSequence = 0, liveBusy = false, liveTimer, analyticsTimer, currentAnalytics;
 let updatesData, updatesTimer, updatesBusy = false, updateActionBusy = false, updateSequence = 0;
 const expanded = new Set();
+const clientLabel = value => ['Unknown', 'Unbekannt'].includes(value) ? t('unknown_client') : value;
+
+async function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  const language = currentLang;
+  headers.set('Accept-Language', language);
+  const response = await fetch(url, {...options, headers});
+  if (language !== currentLang && (!options.method || options.method === 'GET')) {
+    return apiFetch(url, options);
+  }
+  return response;
+}
+
+function showView(focus = false) {
+  const requested = location.hash.slice(1);
+  currentView = ['overview', 'requests', 'models', 'system'].includes(requested) ? requested : 'overview';
+  for (const name of ['overview', 'requests', 'models', 'system']) $('view-' + name).hidden = name !== currentView;
+  for (const link of document.querySelectorAll('[data-view]')) {
+    if (link.dataset.view === currentView) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  }
+  $('viewTitle').textContent = t('nav_' + currentView);
+  $('viewDescription').textContent = t('intro_' + currentView);
+  document.title = `Halobridge · ${t('nav_' + currentView)}`;
+  $('analytics').hidden = currentView === 'models';
+  if (focus) $('viewTitle').focus({preventScroll: true});
+  if (currentView === 'overview' && currentAnalytics) renderChart(currentAnalytics);
+  if (currentView === 'models' && focus) { refreshDeploy(); startJobPoll(); }
+}
+window.addEventListener('hashchange', () => showView(true));
+document.querySelector('.skip-link').addEventListener('click', event => {
+  event.preventDefault();
+  $('mainContent').focus();
+});
+function modelTab(assets) {
+  $('deployError').hidden = true;
+  resetDeployArm();
+  $('profilesPanel').hidden = assets;
+  $('assetsPanel').hidden = !assets;
+  $('profilesTab').setAttribute('aria-pressed', String(!assets));
+  $('assetsTab').setAttribute('aria-pressed', String(assets));
+}
+$('profilesTab').addEventListener('click', () => modelTab(false));
+$('assetsTab').addEventListener('click', () => modelTab(true));
+$('quickModel').addEventListener('change', () => {
+  const uncensored = $('quickModel').value === 'uncensored';
+  $('quickTokenField').hidden = !uncensored;
+  $('quickOfficialBtn').hidden = uncensored;
+  $('quickUncensoredBtn').hidden = !uncensored;
+  resetDeployArm();
+});
+$('deployRefresh').addEventListener('click', () => { refreshDeploy(); startJobPoll(); });
 
 function handleUnauthorized(response) {
   if (response.status === 401) {
-    location.assign('/dashboard/login');
+    location.assign(`/dashboard/login?lang=${currentLang}`);
     return true;
   }
   return false;
 }
 
 function renderLive(data) {
+  liveData = data;
   const api = data.api || {}, backend = data.backend || {}, system = data.system || {}, app = data.app || {};
   $('appVersion').textContent = app.version ? `v${app.version}` : 'v0+local';
   const online = backend.status === 'ok';
@@ -407,7 +105,7 @@ function renderLive(data) {
   $('queueCount').textContent = integer(backend.queued);
   const active = data.active_requests || [];
   $('activeRequests').hidden = active.length === 0;
-  $('activeRequests').innerHTML = active.map(r => `<div><span>${esc(r.client)} · ${esc(r.model)}</span><span>${seconds(r.elapsed_ms)}</span></div>`).join('');
+  $('activeRequests').innerHTML = active.map(r => `<div><span>${esc(clientLabel(r.client))} · ${esc(r.model)}</span><span>${seconds(r.elapsed_ms)}</span></div>`).join('');
   const memory = system.memory || {};
   $('ram').textContent = `${bytes(memory.used_bytes)} / ${bytes(memory.total_bytes)}`;
   $('gpu').textContent = valid(system.gpu_busy_percent) ? `${integer(system.gpu_busy_percent)} %` : '–';
@@ -462,12 +160,12 @@ function renderChart(data) {
     if (w <= 0) return;
     const label = t('chart_tooltip', {from: dateTime(Math.max(item.bucket_start, data.from)), to: dateTime(Math.min(item.bucket_end ?? item.bucket_start + data.bucket_seconds, data.to)), input: integer(item.input_tokens), output: integer(item.output_tokens), requests: integer(item.requests)}) + (item.partial ? t('chart_tooltip_partial') : '');
     svg += `<g class="bucket"><title>${esc(label)}</title>`;
-    for (const [j, key, color] of [[0, 'input_tokens', '#7daff3'], [1, 'output_tokens', '#5ee7c4']]) {
+    for (const [j, key, color] of [[0, 'input_tokens', 'var(--blue)'], [1, 'output_tokens', 'var(--mint)']]) {
       if (!valid(item[key])) continue;
       const h = item[key] / max * height;
       svg += `<rect class="bar" x="${x + w * (.1 + j * .42)}" y="${axisY - h}" width="${Math.max(.5, w * .36)}" height="${h}" rx="2" fill="${color}"/>`;
     }
-    if (item.partial) svg += `<circle cx="${x + w / 2}" cy="${axisY + 7}" r="2" fill="#edc17e"/>`;
+    if (item.partial) svg += `<circle cx="${x + w / 2}" cy="${axisY + 7}" r="2" fill="var(--amber)"/>`;
     if (i % labelEvery === 0) {
       svg += `<text class="tick" x="${x + w / 2}" y="${chartHeight - 9}" text-anchor="middle">${esc(bucketLabel(item.bucket_start, unit, period))}</text>`;
     }
@@ -495,14 +193,14 @@ function renderHistory(history) {
       [t('detail_endpoint'), r.endpoint], [t('detail_capture'), legacy ? t('capture_legacy') : t('capture_api')],
     ];
     return `<tr><td><button class="row-toggle" data-request="${esc(r.request_id)}" aria-expanded="${open}" aria-controls="detail-${i}"><span aria-hidden="true">${open ? '−' : '+'}</span>${esc(dateTime(r.completed_at))}</button></td>
-      <td>${esc(r.client)}<span class="cell-sub">${esc(r.model)}</span></td><td class="number ${legacy ? 'legacy' : ''}">${count(r.input_tokens)}</td><td class="number ${legacy ? 'legacy' : ''}">${count(r.output_tokens)}</td>
+      <td>${esc(clientLabel(r.client))}<span class="cell-sub">${esc(r.model)}</span></td><td class="number ${legacy ? 'legacy' : ''}">${count(r.input_tokens)}</td><td class="number ${legacy ? 'legacy' : ''}">${count(r.output_tokens)}</td>
       <td class="number">${seconds(r.duration_ms)}</td><td class="number ${r.status >= 400 ? 'failure' : 'success'}">${integer(r.status)}<span class="cell-sub">${r.status === 499 ? t('status_aborted') : r.status >= 400 ? t('status_error') : t('status_ok')}</span></td></tr>
       <tr class="request-detail" id="detail-${i}" ${open ? '' : 'hidden'}><td colspan="6"><dl class="detail-grid">${details.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${r.error ? `<p class="failure">${esc(r.error)}</p>` : ''}${legacy ? `<small class="legacy">${esc(t('legacy_note'))}</small>` : ''}</td></tr>`;
   }).join('') : `<tr><td colspan="6" class="empty">${esc(t('history_empty'))}</td></tr>`;
 }
 
 function renderBreakdown(id, rows) {
-  $(id).innerHTML = rows.length ? rows.map(r => `<div class="breakdown-row"><span>${esc(r.name)}</span><span>${integer(r.requests)} / ${integer(r.output_tokens)}${r.output_reported < r.requests ? esc(t('partial_suffix')) : ''}</span></div>`).join('') : `<p class="muted">${esc(t('no_requests'))}</p>`;
+  $(id).innerHTML = rows.length ? rows.map(r => `<div class="breakdown-row"><span>${esc(id === 'clients' ? clientLabel(r.name) : r.name)}</span><span>${integer(r.requests)} / ${integer(r.output_tokens)}${r.output_reported < r.requests ? esc(t('partial_suffix')) : ''}</span></div>`).join('') : `<p class="muted">${esc(t('no_requests'))}</p>`;
 }
 
 function renderAnalytics(data) {
@@ -549,7 +247,7 @@ async function refreshLive() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch('/dashboard/api/snapshot', {cache:'no-store', signal:controller.signal});
+    const response = await apiFetch('/dashboard/api/snapshot', {cache:'no-store', signal:controller.signal});
     if (handleUnauthorized(response)) return;
     if (!response.ok) throw new Error();
     renderLive(await response.json());
@@ -584,7 +282,7 @@ async function refreshAnalytics(clear = false) {
     $('rows').innerHTML = `<tr><td colspan="6" class="empty">${esc(t('requests_loading'))}</td></tr>`;
   }
   try {
-    const response = await fetch(analyticsUrl(), {cache:'no-store', signal:controller.signal});
+    const response = await apiFetch(analyticsUrl(), {cache:'no-store', signal:controller.signal});
     if (handleUnauthorized(response)) return;
     if (!response.ok) throw new Error();
     const data = await response.json();
@@ -648,7 +346,11 @@ $('rows').addEventListener('click', event => {
   $(button.getAttribute('aria-controls')).hidden = !open;
   if (open) expanded.add(button.dataset.request); else expanded.delete(button.dataset.request);
 });
-$('refresh').addEventListener('click', () => { refreshLive(); refreshAnalytics(); });
+$('refresh').addEventListener('click', () => {
+  if (!Object.keys(L).length) { switchLanguage(currentLang); return; }
+  refreshLive(); refreshAnalytics();
+});
+$('quickHfToken').addEventListener('input', resetDeployArm);
 $('endpoint').textContent = `${location.origin}/v1`;
 $('copy').addEventListener('click', async () => {
   try {
@@ -665,6 +367,10 @@ function localInput(date) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 function renderUpdates(data) {
+  const attention = data.running || data.recovery_required || data.update_available;
+  $('systemAttention').hidden = !attention;
+  $('operationNotice').hidden = !attention;
+  $('operationText').textContent = data.recovery_required ? t('update_recovery_notice') : data.running ? t('update_running_notice') : t('update_available_notice');
   updatesData = data;
   const job = data.job;
   let title = data.current_version ? t('update_server_title', {version: data.current_version}) : t('update_default_title');
@@ -699,7 +405,7 @@ async function refreshUpdates() {
   const sequence = ++updateSequence;
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch('/dashboard/api/updates', {cache:'no-store', signal:controller.signal});
+    const response = await apiFetch('/dashboard/api/updates', {cache:'no-store', signal:controller.signal});
     if (handleUnauthorized(response)) return;
     if (!response.ok) throw new Error(t('update_unavailable'));
     const data = await response.json();
@@ -716,13 +422,14 @@ async function refreshUpdates() {
 async function updateAction(action) {
   if (updateActionBusy) return;
   updateActionBusy = true;
+  setLanguageAvailability();
   ++updateSequence;
   clearTimeout(updatesTimer);
   for (const id of ['checkUpdate', 'installUpdate', 'recoverUpdate']) $(id).disabled = true;
   $('updateError').hidden = true;
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 180000);
   try {
-    const response = await fetch(`/dashboard/api/updates/${action}`, {
+    const response = await apiFetch(`/dashboard/api/updates/${action}`, {
       method:'POST', headers:{'Content-Type':'application/json', 'X-Halogen-Action':'update'},
       body:JSON.stringify(action === 'install' ? {version:updatesData?.latest_version} : {}), signal:controller.signal,
     });
@@ -736,6 +443,7 @@ async function updateAction(action) {
   } finally {
     clearTimeout(timeout);
     updateActionBusy = false;
+    setLanguageAvailability();
     if (updatesData) renderUpdates(updatesData); else $('checkUpdate').disabled = false;
     scheduleUpdates();
   }
@@ -745,6 +453,7 @@ $('installUpdate').addEventListener('click', () => updateAction('install'));
 $('recoverUpdate').addEventListener('click', () => updateAction('recover'));
 let resetArmed = false, resetBusy = false, resetRevertTimer;
 function setResetUi() {
+  setLanguageAvailability();
   $('resetDb').hidden = resetArmed;
   $('resetConfirm').hidden = !resetArmed;
   $('resetCancel').hidden = !resetArmed || resetBusy;
@@ -772,7 +481,7 @@ $('resetConfirm').addEventListener('click', async () => {
   resetBusy = true;
   setResetUi();
   try {
-    const response = await fetch('/dashboard/api/reset', {
+    const response = await apiFetch('/dashboard/api/reset', {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'reset'},
       body: JSON.stringify({confirm: true}),
@@ -792,7 +501,7 @@ $('resetConfirm').addEventListener('click', async () => {
   }
 });
 // ---------- Deployment ----------
-let deployData = null, deployBusy = false, deployPreviewOk = false, deployArm = null;
+let deployData = null, deployBusy = false, deployPreviewOk = false, deployArm = null, deployRevision = 0, editorReturnFocus;
 const DEPLOY_ENV_FIELDS = [
   ['HALOGEN_CHECKPOINT', 'text', 'deploy_f_checkpoint'],
   ['HALOGEN_TOKENIZER', 'text', 'deploy_f_tokenizer'],
@@ -812,6 +521,21 @@ const DEPLOY_ENV_FIELDS = [
 ];
 const DEPLOY_ENV_NAMES = new Set(DEPLOY_ENV_FIELDS.map(f => f[0]));
 DEPLOY_ENV_NAMES.add('HALOGEN_MODEL_ID');
+function setDeployBusy(busy) {
+  deployBusy = busy;
+  setLanguageAvailability();
+  $('view-models').setAttribute('aria-busy', String(busy));
+  $('deployProgress').hidden = !busy;
+  $('deployProgress').textContent = t('working');
+  if (busy) $('deployNotice').hidden = true;
+  for (const button of $('view-models').querySelectorAll('button')) {
+    if (['profilesTab', 'assetsTab', 'jobCancelBtn'].includes(button.id)) continue;
+    button.disabled = busy || (button.id === 'deployApply' && !deployPreviewOk);
+  }
+}
+function setLanguageAvailability() {
+  $('langSelect').disabled = localeLoading || deployBusy || updateActionBusy || resetBusy;
+}
 function volHost(profile, containerPath) {
   const v = (profile.volumes || []).find(x => x[1] === containerPath);
   return v ? v[0] : '';
@@ -831,14 +555,19 @@ function renderDeployForm(profile) {
     ['cache_host', 'text', 'deploy_f_cache_path', volHost(profile, '/cache')],
   ];
   const fieldHtml = (name, type, key, value) => {
-    if (type === 'check') return `<label class="chk">${esc(t(key))}<input id="df_${name}" type="checkbox" ${value ? 'checked' : ''}></label>`;
+    if (type === 'check') return `<label class="chk"><span data-i18n="${key}">${esc(t(key))}</span><input id="df_${name}" type="checkbox" ${value === true || value === '1' ? 'checked' : ''}></label>`;
     if (type.startsWith('select')) {
       const opts = type.split(':')[1].split(',');
-      return `<label>${esc(t(key))}<select id="df_${name}"><option value=""></option>${opts.map(c => `<option value="${c}" ${value === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>`;
+      return `<label><span data-i18n="${key}">${esc(t(key))}</span><select id="df_${name}"><option value=""></option>${opts.map(c => `<option value="${c}" ${value === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>`;
     }
-    return `<label>${esc(t(key))}<input id="df_${name}" type="${type}" value="${esc(String(value ?? ''))}"></label>`;
+    return `<label><span data-i18n="${key}">${esc(t(key))}</span><input id="df_${name}" type="${type}" value="${esc(String(value ?? ''))}"></label>`;
   };
-  $('deployFields').innerHTML = core.map(f => fieldHtml(...f)).join('') + DEPLOY_ENV_FIELDS.map(([name, type, key]) => fieldHtml(name, type, key, (profile.env || {})[name] ?? '')).join('');
+  const group = (key, html) => `<fieldset><legend data-i18n="${key}">${esc(t(key))}</legend><div class="deploy-fields">${html}</div></fieldset>`;
+  const fields = items => items.map(([name, type, key]) => fieldHtml(name, type, key, (profile.env || {})[name] ?? '')).join('');
+  $('deployFields').innerHTML = group('profile_identity', core.slice(0, 4).map(f => fieldHtml(...f)).join(''))
+    + group('profile_storage', core.slice(4).map(f => fieldHtml(...f)).join('') + fields(DEPLOY_ENV_FIELDS.slice(0, 4)))
+    + group('profile_capacity', fields(DEPLOY_ENV_FIELDS.slice(4, 11)))
+    + group('profile_generation', fields(DEPLOY_ENV_FIELDS.slice(11)));
   for (const el of $('deployFields').querySelectorAll('input,select')) el.addEventListener('input', invalidateDeployPreview);
   $('deployEnvRows').innerHTML = '';
   for (const [k, v] of Object.entries(profile.env || {})) if (!DEPLOY_ENV_NAMES.has(k)) addEnvRow(k, v);
@@ -848,7 +577,7 @@ function renderDeployForm(profile) {
 function addMountRow(host = '', container = '', ro = true) {
   const row = document.createElement('div');
   row.className = 'deploy-env-row';
-  row.innerHTML = `<input class="mount-host" value="${esc(host)}" placeholder="/host/pfad"><input class="mount-container" value="${esc(container)}" placeholder="/container/pfad"><label class="mount-ro-label"><input type="checkbox" class="mount-ro" ${ro ? 'checked' : ''}>ro</label><button type="button" class="mount-del" aria-label="remove">✕</button>`;
+  row.innerHTML = `<input class="mount-host" value="${esc(host)}" placeholder="/host/path" aria-label="${esc(t('mount_host'))}" data-i18n-attr="aria-label:mount_host"><input class="mount-container" value="${esc(container)}" placeholder="/container/path" aria-label="${esc(t('mount_container'))}" data-i18n-attr="aria-label:mount_container"><label class="mount-ro-label"><input type="checkbox" class="mount-ro" ${ro ? 'checked' : ''}>ro</label><button type="button" class="mount-del" aria-label="${esc(t('remove'))}" data-i18n-attr="aria-label:remove">✕</button>`;
   row.querySelector('.mount-del').addEventListener('click', () => { row.remove(); invalidateDeployPreview(); });
   for (const el of row.querySelectorAll('input')) el.addEventListener('input', invalidateDeployPreview);
   $('deployMountRows').appendChild(row);
@@ -856,7 +585,7 @@ function addMountRow(host = '', container = '', ro = true) {
 function addEnvRow(key = '', value = '') {
   const row = document.createElement('div');
   row.className = 'deploy-env-row';
-  row.innerHTML = `<input list="deployEnvKeys" class="env-key" value="${esc(key)}" placeholder="HALOGEN_..."><input class="env-value" value="${esc(value)}" placeholder="Wert"><button type="button" class="env-del" aria-label="remove">✕</button>`;
+  row.innerHTML = `<input list="deployEnvKeys" class="env-key" value="${esc(key)}" placeholder="HALOGEN_..." aria-label="${esc(t('field_parameter'))}" data-i18n-attr="aria-label:field_parameter"><input class="env-value" value="${esc(value)}" placeholder="${esc(t('field_value'))}" aria-label="${esc(t('field_value'))}" data-i18n-attr="placeholder:field_value;aria-label:field_value"><button type="button" class="env-del" aria-label="${esc(t('remove'))}" data-i18n-attr="aria-label:remove">✕</button>`;
   row.querySelector('.env-del').addEventListener('click', () => { row.remove(); invalidateDeployPreview(); });
   for (const el of row.querySelectorAll('input')) el.addEventListener('input', invalidateDeployPreview);
   $('deployEnvRows').appendChild(row);
@@ -891,8 +620,8 @@ function collectDeploy() {
     env,
   };
 }
-function invalidateDeployPreview() { deployPreviewOk = false; $('deployApply').disabled = true; }
-function showDeployError(message) { const el = $('deployError'); el.hidden = false; el.textContent = message; }
+function invalidateDeployPreview() { deployRevision++; deployPreviewOk = false; $('deployApply').disabled = true; $('deployDiff').hidden = true; $('deployWarnings').hidden = true; $('previewStatus').textContent = t('preview_required'); resetDeployArm(); }
+function showDeployError(message) { const el = $('deployError'); el.hidden = false; el.textContent = message; el.scrollIntoView({block: 'nearest'}); }
 function resetDeployArm() { if (deployArm) { deployArm.btn.textContent = deployArm.label; deployArm = null; } }
 function armDeploy(btn, run, confirmLabel) {
   if (deployArm && deployArm.btn === btn) { const fn = deployArm.run; resetDeployArm(); fn(); return; }
@@ -901,8 +630,12 @@ function armDeploy(btn, run, confirmLabel) {
   btn.textContent = confirmLabel || t('deploy_confirm');
 }
 async function deployRequest(path, options = {}) {
-  const response = await fetch(path, {cache: 'no-store', ...options});
-  if (handleUnauthorized(response)) throw new Error(t('auth_required') || 'Nicht angemeldet');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.method === 'POST' ? 180000 : 15000);
+  let response;
+  try { response = await apiFetch(path, {cache: 'no-store', signal: controller.signal, ...options}); }
+  finally { clearTimeout(timeout); }
+  if (handleUnauthorized(response)) throw new Error(t('auth_required'));
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = data.error || data.message || `HTTP ${response.status} ${response.statusText}`;
@@ -911,7 +644,7 @@ async function deployRequest(path, options = {}) {
   return data;
 }
 async function refreshDeploy() {
-  try { deployData = await deployRequest('/dashboard/api/deploy'); renderDeploy(); } catch { /* Backend offline */ }
+  try { deployData = await deployRequest('/dashboard/api/deploy'); renderDeploy(); } catch { showDeployError(t('deploy_load_failed')); }
 }
 function renderDeploy() {
   if (!deployData) return;
@@ -919,6 +652,8 @@ function renderDeploy() {
   if (!deployData.enabled || !deployData.posix) {
     $('deployHint').textContent = t('deploy_disabled');
     $('deployList').innerHTML = '';
+    $('quickDeploy').hidden = true;
+    $('deployEditor').hidden = true;
     $('deployNew').hidden = true;
     $('deployHf').hidden = true;
     return;
@@ -935,7 +670,7 @@ function renderDeploy() {
     if (!p.service_active) btns.push(`<button type="button" data-act="start" data-id="${esc(p.profile_id)}">${esc(t('deploy_start'))}</button>`);
     if (p.has_backup) btns.push(`<button type="button" data-act="rollback" data-id="${esc(p.profile_id)}">${esc(t('deploy_rollback'))}</button>`);
     if (!p.service_active) btns.push(`<button type="button" data-act="delete" data-id="${esc(p.profile_id)}">${esc(t('deploy_delete'))}</button>`);
-    return `<div class="deploy-row"><div><strong>${esc(p.profile_id)}</strong> · <code>${esc(p.model_id)}</code> · <code>${esc(String(p.image).split(':').pop())}</code> ${badge}</div><div class="deploy-row-actions">${btns.join(' ')}</div></div>`;
+    return `<div class="deploy-row"><div class="profile-info"><div class="profile-title"><strong>${esc(p.profile_id)}</strong>${badge}</div><span>${esc(p.model_id)} · ${esc(String(p.image).split(':').pop())}</span></div><div class="deploy-row-actions">${btns.join(' ')}</div></div>`;
   }).join('');
   $('deployList').innerHTML = rows || `<p class="muted">${esc(t('deploy_none'))}</p>`;
   $('deployEnvKeys').innerHTML = (deployData.env_keys || []).map(k => `<option value="${k}"></option>`).join('');
@@ -945,13 +680,15 @@ async function deployReload() {
 }
 async function runDeployAction(id, act) {
   if (deployBusy) return;
-  deployBusy = true;
+  setDeployBusy(true);
   try {
     await deployRequest(`/dashboard/api/deploy/${encodeURIComponent(id)}/${act}`, {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
     await refreshDeploy();
     if (act !== 'start') await deployReload();
+    $('deployNotice').hidden = false;
+    $('deployNotice').textContent = t('profile_action_done');
   } catch (err) { showDeployError(err.message); }
-  finally { deployBusy = false; resetDeployArm(); }
+  finally { setDeployBusy(false); resetDeployArm(); }
 }
 $('deployList').addEventListener('click', event => {
   const btn = event.target.closest('button[data-act]');
@@ -975,6 +712,7 @@ $('deployLoadTemplate').addEventListener('click', async () => {
   } catch (err) { showDeployError(err.message); }
 });
 function openDeployEditor(profile, isNew) {
+  editorReturnFocus = document.activeElement;
   $('deployEditor').hidden = false;
   $('deployEditorTitle').textContent = (isNew ? t('deploy_new_profile') : t('deploy_edit_profile')) + ': ' + profile.profile_id;
   renderDeployForm(profile);
@@ -982,41 +720,54 @@ function openDeployEditor(profile, isNew) {
   $('deployWarnings').hidden = true;
   $('deployApply').disabled = true;
   deployPreviewOk = false;
-  $('deployEditor').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  $('deployEditor').dataset.profileId = profile.profile_id;
+  $('deployEditor').dataset.isNew = String(isNew);
+  deployRevision++;
+  $('previewStatus').textContent = t('preview_required');
+  $('deployEditorTitle').focus();
 }
-$('deployCancel').addEventListener('click', () => { $('deployEditor').hidden = true; resetDeployArm(); });
+$('deployCancel').addEventListener('click', () => {
+  $('deployEditor').hidden = true;
+  resetDeployArm();
+  (editorReturnFocus?.isConnected ? editorReturnFocus : $('deployRefresh')).focus();
+});
 $('deployPreview').addEventListener('click', async () => {
   if (deployBusy) return;
-  deployBusy = true;
+  setDeployBusy(true);
+  const revision = deployRevision;
   $('deployError').hidden = true;
   try {
     const data = await deployRequest('/dashboard/api/deploy/dry-run', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify(collectDeploy())});
+    if (revision !== deployRevision) return;
     $('deployDiff').hidden = false;
     $('deployDiff').textContent = data.diff;
     const notes = [...(data.errors || []), ...(data.warnings || [])];
     $('deployWarnings').hidden = notes.length === 0;
     $('deployWarnings').textContent = notes.join('\n');
     $('deployWarnings').className = data.ok ? 'warning' : 'failure';
+    $('previewStatus').textContent = data.ok ? t('preview_ready') : t('preview_invalid');
     deployPreviewOk = data.ok;
     $('deployApply').disabled = !data.ok;
   } catch (err) { showDeployError(err.message); }
-  finally { deployBusy = false; }
+  finally { setDeployBusy(false); }
 });
 $('deployApply').addEventListener('click', () => {
   if (!deployPreviewOk || deployBusy) return;
   armDeploy($('deployApply'), async () => {
-    deployBusy = true;
+    setDeployBusy(true);
     try {
       await deployRequest('/dashboard/api/deploy/apply', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify(collectDeploy())});
       $('deployEditor').hidden = true;
       await refreshDeploy();
       await deployReload();
+      $('deployNotice').hidden = false;
+      $('deployNotice').textContent = t('profile_saved');
     } catch (err) { showDeployError(err.message); }
-    finally { deployBusy = false; resetDeployArm(); }
+    finally { setDeployBusy(false); resetDeployArm(); }
   });
 });
 // ---------- HF download & convert ----------
-let jobTimer = null;
+let jobTimer = null, jobBusy = false;
 let hfDefaults = {};
 let hfAutoGguf = false;
 function syncHfGgufPath() {
@@ -1044,11 +795,14 @@ async function refreshHf() {
       hfAutoGguf = true;
       syncHfGgufPath();
     }
-  } catch { /* offline */ }
+  } catch { $('hfStatusLine').textContent = t('hf_load_failed'); }
 }
 $('hfDest').addEventListener('input', syncHfGgufPath);
 function startJobPoll() { clearTimeout(jobTimer); pollJob(); }
 async function pollJob() {
+  if (jobBusy || document.hidden) return;
+  clearTimeout(jobTimer);
+  jobBusy = true;
   try {
     const job = await deployRequest('/dashboard/api/deploy/job');
     if (!job.active) { $('jobBox').hidden = true; return; }
@@ -1067,6 +821,7 @@ async function pollJob() {
       await refreshHf();
     }
   } catch { jobTimer = setTimeout(pollJob, 5000); }
+  finally { jobBusy = false; }
 }
 $('jobCancelBtn').addEventListener('click', () => {
   armDeploy($('jobCancelBtn'), async () => {
@@ -1076,68 +831,69 @@ $('jobCancelBtn').addEventListener('click', () => {
     finally { resetDeployArm(); }
   }, t('job_cancel_confirm'));
 });
-$('hfInstallBtn').addEventListener('click', async () => {
+async function startModelJob(path, payload) {
+  if (deployBusy) return;
+  setDeployBusy(true);
+  $('deployError').hidden = true;
   try {
-    await deployRequest('/dashboard/api/deploy/hf/install', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
+    await deployRequest(path, {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'},
+      body: JSON.stringify(payload || {}),
+    });
     startJobPoll();
   } catch (err) { showDeployError(err.message); }
-});
+  finally { setDeployBusy(false); }
+}
+$('hfInstallBtn').addEventListener('click', () => startModelJob('/dashboard/api/deploy/hf/install'));
 $('hfDownloadBtn').addEventListener('click', async () => {
+  if (deployBusy) return;
   const token = $('hfToken').value.trim();
   if (!token) {
-    showDeployError(t('hf_token_required') || 'HF-Token fehlt.');
+    showDeployError(t('hf_token_required'));
     return;
   }
   $('hfToken').value = '';
-  try {
-    await deployRequest('/dashboard/api/deploy/hf/download', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({repo: $('hfRepo').value.trim(), file: $('hfFile').value.trim(), dest: $('hfDest').value.trim(), token})});
-    startJobPoll();
-  } catch (err) { showDeployError(err.message); }
+  await startModelJob('/dashboard/api/deploy/hf/download', {repo: $('hfRepo').value.trim(), file: $('hfFile').value.trim(), dest: $('hfDest').value.trim(), token});
 });
 $('quickOfficialBtn').addEventListener('click', () => {
   if (deployBusy) return;
   armDeploy($('quickOfficialBtn'), async () => {
-    deployBusy = true;
+    setDeployBusy(true);
     $('deployError').hidden = true;
     try {
       await deployRequest('/dashboard/api/deploy/quick/official', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
       await refreshDeploy();
       await deployReload();
+      startJobPoll();
     } catch (err) { showDeployError(err.message); }
-    finally { deployBusy = false; resetDeployArm(); }
+    finally { setDeployBusy(false); resetDeployArm(); }
   }, t('quick_confirm'));
 });
 $('quickUncensoredBtn').addEventListener('click', () => {
   if (deployBusy) return;
   const token = $('quickHfToken').value.trim();
   if (!token) {
-    showDeployError(t('hf_token_required') || 'HF-Token fehlt.');
+    showDeployError(t('hf_token_required'));
     return;
   }
   armDeploy($('quickUncensoredBtn'), async () => {
-    deployBusy = true;
+    setDeployBusy(true);
     $('deployError').hidden = true;
     try {
       await deployRequest('/dashboard/api/deploy/quick/uncensored', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({token})});
       $('quickHfToken').value = '';
       startJobPoll();
     } catch (err) { showDeployError(err.message); }
-    finally { deployBusy = false; resetDeployArm(); }
+    finally { setDeployBusy(false); resetDeployArm(); }
   }, t('quick_confirm'));
 });
 $('convBtn').addEventListener('click', async () => {
-  try {
-    await deployRequest('/dashboard/api/deploy/convert', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({image: $('convImage').value.trim(), gguf: $('convGguf').value.trim(), output: $('convOut').value.trim(), download_head: $('convHead').checked})});
-    startJobPoll();
-  } catch (err) { showDeployError(err.message); }
+  await startModelJob('/dashboard/api/deploy/convert', {image: $('convImage').value.trim(), gguf: $('convGguf').value.trim(), output: $('convOut').value.trim(), download_head: $('convHead').checked});
 });
 $('verifyBtn').addEventListener('click', async () => {
   const gguf = $('convGguf').value.trim();
   const dir = gguf.slice(0, gguf.lastIndexOf('/') + 1);
-  try {
-    await deployRequest('/dashboard/api/deploy/verify', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({image: $('convImage').value.trim(), hgn: dir + $('convOut').value.trim()})});
-    startJobPoll();
-  } catch (err) { showDeployError(err.message); }
+  await startModelJob('/dashboard/api/deploy/verify', {image: $('convImage').value.trim(), hgn: dir + $('convOut').value.trim()});
 });
 $('toDate').value = localInput(new Date());
 $('fromDate').value = localInput(new Date(Date.now() - 86400000));
@@ -1145,8 +901,8 @@ new ResizeObserver(() => {
   if (currentAnalytics) renderChart(currentAnalytics);
 }).observe(document.querySelector('.chart-area'));
 document.addEventListener('visibilitychange', () => {
-  clearTimeout(liveTimer); clearTimeout(analyticsTimer); clearTimeout(updatesTimer);
-  if (!document.hidden) { refreshLive(); refreshAnalytics(); refreshUpdates(); refreshDeploy(); }
+  clearTimeout(liveTimer); clearTimeout(analyticsTimer); clearTimeout(updatesTimer); clearTimeout(jobTimer);
+  if (!document.hidden) { refreshLive(); refreshAnalytics(); refreshUpdates(); refreshDeploy(); pollJob(); }
 });
 function applyLocale() {
   document.documentElement.lang = currentLang;
@@ -1160,37 +916,57 @@ function applyLocale() {
     }
   }
 }
-async function loadLocale(lang) {
-  const response = await fetch(`/dashboard/api/locale/${encodeURIComponent(lang)}`, {cache: 'no-store'});
-  if (!response.ok) throw new Error('locale unavailable');
-  L = await response.json();
-  NUM = L.__locale || (lang === 'de' ? 'de-DE' : 'en-US');
-  currentLang = lang;
-}
 async function switchLanguage(lang) {
+  const sequence = ++localeSequence;
+  localeLoading = true;
+  setLanguageAvailability();
   try {
-    await loadLocale(lang);
+    const response = await fetch(`/dashboard/api/locale/${encodeURIComponent(lang)}`, {cache: 'no-store'});
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) throw new Error('locale unavailable');
+    const strings = await response.json();
+    if (sequence !== localeSequence) return;
+    L = strings;
+    currentLang = lang;
+    NUM = L.__locale || (lang === 'de' ? 'de-DE' : 'en-US');
+    try { localStorage.setItem('halobridge_lang', currentLang); } catch {}
+    document.cookie = `halobridge_lang=${currentLang}; Path=/dashboard; SameSite=Lax`;
+    applyLocale();
+    $('deployNotice').hidden = true;
+    $('copyStatus').textContent = '';
+    $('resetStatus').textContent = '';
+    showView();
+    setResetUi();
+    resetDeployArm();
+    if (!$('deployEditor').hidden) {
+      $('deployEditorTitle').textContent = t($('deployEditor').dataset.isNew === 'true' ? 'deploy_new_profile' : 'deploy_edit_profile') + ': ' + $('deployEditor').dataset.profileId;
+      invalidateDeployPreview();
+    }
+    if (liveData) renderLive(liveData);
+    if (currentAnalytics) renderAnalytics(currentAnalytics);
+    await Promise.all([refreshLive(), refreshAnalytics(), refreshUpdates(), refreshDeploy(), pollJob()]);
   } catch {
-    try { await loadLocale('de'); } catch { L = {}; currentLang = lang; NUM = lang === 'de' ? 'de-DE' : 'en-US'; }
+    if (sequence !== localeSequence) return;
+    if (!Object.keys(L).length && lang !== 'en') { await switchLanguage('en'); return; }
+    $('analyticsError').hidden = false;
+    $('analyticsError').textContent = Object.keys(L).length ? t('locale_failed') : 'Could not load the dashboard. Reload the page to try again.';
+  } finally {
+    if (sequence === localeSequence) {
+      localeLoading = false;
+      $('langSelect').value = currentLang;
+      setLanguageAvailability();
+    }
   }
-  try { localStorage.setItem('halobridge_lang', currentLang); } catch {}
-  applyLocale();
-  setResetUi();
-  refreshLive();
-  refreshAnalytics(true);
-  refreshUpdates();
-  refreshDeploy();
 }
 const initialLang = (() => {
+  const cookie = document.cookie.match(/(?:^|; )halobridge_lang=(de|en)(?:;|$)/);
+  if (cookie) return cookie[1];
   try {
     const stored = localStorage.getItem('halobridge_lang');
     if (stored === 'de' || stored === 'en') return stored;
   } catch {}
-  return (navigator.language || 'de').toLowerCase().startsWith('de') ? 'de' : 'en';
+  return 'en';
 })();
 $('langSelect').value = initialLang;
 $('langSelect').addEventListener('change', event => switchLanguage(event.target.value));
 switchLanguage(initialLang);
-</script>
-</body>
-</html>

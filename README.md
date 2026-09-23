@@ -144,6 +144,16 @@ auto_discover = false
 
 ## Dashboard
 
+The dashboard is organized into four workspaces: **Overview** for usage and
+breakdowns, **Requests** for paginated history and request details, **Models**
+for profiles, installation and model files, and **System** for host health,
+updates and telemetry maintenance. The active model and connection status stay
+visible across workspaces. Monitoring views share the selected reporting period.
+
+English is the default. The language selector remembers English or German and
+applies it to labels, validation errors, update status and deployment job messages.
+Changing language preserves profile edits and the selected reporting period.
+
 The dashboard shows:
 
 - active model and switch target
@@ -171,7 +181,7 @@ disk stay the source of truth.
 
 ### One-click deploy
 
-The **Quick deploy** section at the top of **Profile & Deployment** needs no
+The **Install a model** section in **Models → Profiles & installation** needs no
 configuration. Halobridge serves one backend at a time, so installing a model
 takes over the host: the currently active backend is drained and stopped, the
 GPU is released, the new model is installed and started, and the router points
@@ -387,6 +397,18 @@ Optional real-browser dashboard check:
 ```bash
 python tests/browser_check.py --browser "/path/to/chrome"
 ```
+
+For manual UI checks without Podman or a model backend, run
+`python tests/preview_dashboard.py` and open `http://127.0.0.1:8732/dashboard`.
+This fixture uses synthetic, in-memory telemetry and supports profile previews;
+it does not deploy models or modify system services.
+
+Dashboard markup, styles and behavior live in `src/halobridge_data/dashboard.html`,
+`dashboard.css` and `dashboard.js`. UI translations are in `locales/en.json` and
+`locales/de.json`. Python messages use English source text; add their German
+translations to `locales/server.de.json`, using matching `{p0}`, `{p1}` placeholders
+for dynamic values. Response localization leaves profile data and shared job state
+unchanged, so each browser can select its own language.
 
 ## Security notes
 

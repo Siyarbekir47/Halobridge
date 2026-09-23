@@ -38,7 +38,7 @@ class CreateApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(app["manager"].models, app["models"])
         self.assertIs(app["updater"].models, app["models"])
         self.assertEqual(app["manager"].default_model, "model-a")
-        self.assertEqual(len(app.middlewares), 0)
+        self.assertEqual(len(app.middlewares), 1)
 
     async def test_discovery_and_explicit_override_are_merged(self):
         spec = ModelSpec(
@@ -90,7 +90,7 @@ class CreateApplicationTests(unittest.IsolatedAsyncioTestCase):
             app = await router.create_application(config)
         await app["session"].close()
 
-        self.assertEqual(len(app.middlewares), 1)
+        self.assertEqual(len(app.middlewares), 2)
         routes = {route.resource.canonical for route in app.router.routes()}
         self.assertIn("/dashboard/login", routes)
         self.assertIn("/dashboard/logout", routes)

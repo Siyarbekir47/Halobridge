@@ -88,7 +88,7 @@ class DryRunTests(PosixTestCase):
         payload["volumes"][0][0] = str(self.tmp.parent / "outside-models")
         result = self.manager.dry_run(payload)
         self.assertFalse(result["ok"])
-        self.assertTrue(any("erlaubten Wurzeln" in e for e in result["errors"]))
+        self.assertTrue(any("allowed roots" in e for e in result["errors"]))
 
     def test_dry_run_rejects_unknown_env(self):
         payload = official_payload(self.tmp)
@@ -118,7 +118,7 @@ class DryRunTests(PosixTestCase):
         )
         result = self.manager.dry_run(official_payload(self.tmp))
         self.assertFalse(result["ok"])
-        self.assertTrue(any("Modell-ID" in e for e in result["errors"]))
+        self.assertTrue(any("Model ID" in e for e in result["errors"]))
 
 
 class ApplyTests(PosixTestCase):

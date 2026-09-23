@@ -90,7 +90,7 @@ def _int(value: Any) -> Optional[int]:
 
 def _safe_label(value: str, maximum: int = 64) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9 ._:/@+-]", "", value or "").strip()
-    return cleaned[:maximum] or "Unbekannt"
+    return cleaned[:maximum] or "Unknown"
 
 
 def _read_int(path: str) -> Optional[int]:
@@ -148,7 +148,7 @@ def _client_name(request: web.Request) -> str:
     for marker, name in (("opencode", "OpenCode"), ("openclaw", "OpenClaw"), ("open-webui", "Open WebUI"), ("curl", "curl")):
         if marker in agent.lower():
             return name
-    return _safe_label(agent.split(" ", 1)[0] if agent else "Unbekannt")
+    return _safe_label(agent.split(" ", 1)[0] if agent else "Unknown")
 
 
 def _thinking(payload: dict[str, Any]) -> tuple[str, str]:
@@ -178,7 +178,7 @@ class Trace:
         self.started_mono = time.monotonic()
         self.first_byte_mono: Optional[float] = None
         self.client = _client_name(request)
-        self.client_ip = _safe_label(request.remote or "lokal", 64)
+        self.client_ip = _safe_label(request.remote or "local", 64)
         self.model = model
         self.endpoint = request.path
         self.stream = bool(payload.get("stream", False))
@@ -742,10 +742,10 @@ class Dashboard:
                 if start >= end:
                     raise ValueError
             except (KeyError, TypeError, ValueError):
-                raise web.HTTPBadRequest(text="Ungültiger Zeitraum: from und to als Unix-Zeit angeben.")
+                raise web.HTTPBadRequest(text="Invalid range: specify from and to as Unix timestamps.")
             return period, start, end
         if period not in PERIOD_SECONDS:
-            raise web.HTTPBadRequest(text="Unbekannter Zeitraum")
+            raise web.HTTPBadRequest(text="Unknown period")
         midnight = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         if period == "24h":
             # The whole current calendar day; data fills up to "now".
@@ -766,7 +766,7 @@ class Dashboard:
     def analytics(self, request: web.Request) -> dict[str, Any]:
         period, start, end = self._resolve_range(request)
         if not self.db:
-            raise web.HTTPServiceUnavailable(text="Telemetrie noch nicht verfügbar")
+            raise web.HTTPServiceUnavailable(text="Telemetry is not available yet")
         try:
             page = max(1, int(request.query.get("page", "1")))
         except ValueError:
@@ -841,19 +841,31 @@ class Dashboard:
 
             html = files("halobridge_data").joinpath("dashboard.html").read_text(encoding="utf-8")
         except Exception:
-            html = Path(__file__).with_name("halogen_dashboard.html").read_text(encoding="utf-8")
+            html = (Path(__file__).with_name("halobridge_data") / "dashboard.html").read_text(encoding="utf-8")
         return web.Response(
             text=html,
             content_type="text/html",
             headers={
                 "Cache-Control": "no-store",
-                "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
+                "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
                 "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
             },
         )
 
     async def api_snapshot(self, _: web.Request) -> web.Response:
         return web.json_response(await self.snapshot(), headers={"Cache-Control": "no-store"})
+
+    async def asset(self, request: web.Request) -> web.Response:
+        from importlib.resources import files
+
+        name = request.match_info["name"]
+        types = {"dashboard.css": "text/css", "dashboard.js": "application/javascript"}
+        if name not in types:
+            raise web.HTTPNotFound()
+        content = files("halobridge_data").joinpath(name).read_text(encoding="utf-8")
+        return web.Response(text=content, content_type=types[name], headers={
+            "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff",
+        })
 
     async def api_analytics(self, request: web.Request) -> web.Response:
         return web.json_response(self.analytics(request), headers={"Cache-Control": "no-store"})
@@ -885,9 +897,9 @@ class Dashboard:
 
     async def api_reset(self, request: web.Request) -> web.Response:
         if request.headers.get("X-Halogen-Action") != "reset":
-            raise web.HTTPBadRequest(text="Bestätigungsheader X-Halogen-Action: reset fehlt.")
+            raise web.HTTPBadRequest(text="Confirmation header X-Halogen-Action: reset is missing.")
         if not self.db:
-            raise web.HTTPServiceUnavailable(text="Telemetrie noch nicht verfügbar")
+            raise web.HTTPServiceUnavailable(text="Telemetry is not available yet")
         deleted = {}
         for table in ("requests", "engine_requests"):
             deleted[table] = self.db.execute(f"DELETE FROM {table}").rowcount
@@ -899,6 +911,11 @@ class Dashboard:
         )
 
     def register_routes(self, app: web.Application) -> None:
+        from halobridge_i18n import dashboard_locale_middleware
+
+        if dashboard_locale_middleware not in app.middlewares:
+            app.middlewares.append(dashboard_locale_middleware)
+        app.router.add_get("/dashboard/assets/{name}", self.asset)
         app.router.add_get("/dashboard", self.page)
         app.router.add_get("/dashboard/", self.page)
         app.router.add_get("/dashboard/api/snapshot", self.api_snapshot)

@@ -137,7 +137,7 @@ class DeployManager:
         elif kind == "custom":
             profile = custom_template(tag, models_root, cache_root)
         else:
-            raise DeployError(f"Unbekannte Vorlage: {kind}")
+            raise DeployError(f"Unknown template: {kind}")
         return {
             "template": kind,
             "profile": profile_to_dict(profile),
@@ -158,23 +158,23 @@ class DeployManager:
             difflib.unified_diff(
                 current.splitlines(),
                 rendered.splitlines(),
-                fromfile="aktuell",
-                tofile="neu",
+                fromfile="current",
+                tofile="new",
                 lineterm="",
             )
         )
         warnings = list(self._conflict_warnings(profile))
         if profile.downloads_weights:
             warnings.append(
-                "Erster Start laedt ~118 GiB Modellgewichte aus dem Internet "
-                "(HALOGEN_DOWNLOAD); das kann Stunden dauern."
+                "First start downloads ~118 GiB of model weights from the internet "
+                "(HALOGEN_DOWNLOAD); this can take hours."
             )
         return {
             "ok": not errors,
             "errors": errors,
             "warnings": warnings,
             "quadlet": rendered,
-            "diff": diff or "(keine Aenderung)",
+            "diff": diff or "(no changes)",
             "exists": target.exists(),
         }
 
@@ -226,14 +226,14 @@ class DeployManager:
     async def delete(self, profile_id: str) -> dict:
         self._require_enabled()
         if not PROFILE_SLUG_RE.match(profile_id):
-            raise DeployError("Ungueltige Profil-ID")
+            raise DeployError("Invalid profile ID")
         target = self.quadlet_dir / f"halogen-{profile_id}.container"
         if not QUADLET_FILENAME_RE.match(target.name) or not target.exists():
-            raise DeployError(f"Kein Quadlet fuer Profil {profile_id}")
+            raise DeployError(f"No Quadlet for profile {profile_id}")
         profile = parse_quadlet(target.read_text(encoding="utf-8"), target)
         if await self._service_is_active(profile.service_name):
             raise DeployError(
-                f"Dienst {profile.service_name} laeuft noch. Erst stoppen, dann loeschen."
+                f"Service {profile.service_name} is still running. Stop it before deleting."
             )
         async with self.deploy_lock:
             backup = self._backup_existing(target)
@@ -247,11 +247,11 @@ class DeployManager:
     async def rollback(self, profile_id: str) -> dict:
         self._require_enabled()
         if not PROFILE_SLUG_RE.match(profile_id):
-            raise DeployError("Ungueltige Profil-ID")
+            raise DeployError("Invalid profile ID")
         quadlet_name = f"halogen-{profile_id}.container"
         backups = self._backups_for(quadlet_name)
         if not backups:
-            raise DeployError(f"Kein Backup fuer Profil {profile_id}")
+            raise DeployError(f"No backup for profile {profile_id}")
         latest = backups[-1]
         target = self.quadlet_dir / quadlet_name
         async with self.deploy_lock:
@@ -266,19 +266,19 @@ class DeployManager:
     async def start(self, profile_id: str) -> dict:
         self._require_enabled()
         if not PROFILE_SLUG_RE.match(profile_id):
-            raise DeployError("Ungueltige Profil-ID")
+            raise DeployError("Invalid profile ID")
         if self.manager.switching or self.manager.maintenance:
             raise DeployError(
-                "Modellwechsel oder Wartung laeuft gerade - bitte kurz warten."
+                "A model switch or maintenance is in progress. Please wait."
             )
         if await self._any_other_service_active(profile_id):
             raise DeployError(
-                "Ein anderes Backend ist bereits aktiv. Halobridge bedient immer "
-                "nur ein Backend gleichzeitig; wechsle zuerst das Modell."
+                "Another backend is already active. Halobridge serves only "
+                "one backend at a time; switch the model first."
             )
         target = self.quadlet_dir / f"halogen-{profile_id}.container"
         if not target.exists():
-            raise DeployError(f"Kein Quadlet fuer Profil {profile_id}")
+            raise DeployError(f"No Quadlet for profile {profile_id}")
         profile = parse_quadlet(target.read_text(encoding="utf-8"), target)
         await self._run(
             "systemctl", "--user", "start", profile.service_name, timeout=900
@@ -297,11 +297,11 @@ class DeployManager:
                 self.config.models.quadlet_dir, self.config.updates.image_repo
             )
         except Exception as exc:
-            raise DeployError(f"Discovery fehlgeschlagen: {exc}")
+            raise DeployError(f"Discovery failed: {exc}")
         discovered = {spec.model_id: spec.service for spec in specs.values()}
         discovered.update(self.config.models.explicit)
         if not discovered:
-            raise DeployError("Keine Halogen-Backends gefunden - nichts geladen.")
+            raise DeployError("No Halogen backends found. Nothing loaded.")
         self.manager.models = discovered
         if self.updater is not None:
             self.updater.models = discovered
@@ -346,7 +346,7 @@ class DeployManager:
     def hf_install(self) -> dict:
         self._require_enabled()
         if self._hf_executable():
-            raise DeployError("HF-CLI ist bereits installiert.")
+            raise DeployError("HF CLI is already installed.")
         return self._start_job(
             "hf-install",
             [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
@@ -363,20 +363,20 @@ class DeployManager:
         self._require_enabled()
         repo = str(payload.get("repo", "")).strip()
         if not REPO_ID_RE.match(repo):
-            raise DeployError("Repo muss 'org/name' sein")
+            raise DeployError("Repository must be 'org/name'")
         filename = str(payload.get("file", "")).strip()
         if filename and ("/" in filename or "\\" in filename or ".." in filename):
-            raise DeployError("Dateiname enthaelt ungueltige Zeichen")
+            raise DeployError("Filename contains invalid characters")
         dest = self._validate_host_path(str(payload.get("dest", "")))
         token = str(payload.get("token", "")).strip()
         if not token:
             raise DeployError(
-                "HF-Token fehlt. Ein fine-graunes Token mit Read-Recht reicht."
+                "HF token is missing. A fine-grained token with read access is sufficient."
             )
         hf = self._hf_executable()
         if not hf:
             raise DeployError(
-                "HF-CLI fehlt. Bitte zuerst installieren oder `hf` in den PATH legen."
+                "HF CLI is missing. Install it first or add `hf` to PATH."
             )
         cmd = [hf, "download", repo]
         if filename:
@@ -398,12 +398,12 @@ class DeployManager:
         image = self._validated_image(str(payload.get("image", "")))
         gguf = self._validate_host_path(str(payload.get("gguf", "")))
         if not gguf.is_file():
-            raise DeployError(f"GGUF nicht gefunden: {gguf}")
+            raise DeployError(f"GGUF not found: {gguf}")
         if not gguf.name.lower().endswith(".gguf"):
-            raise DeployError("Eingabedatei muss auf .gguf enden")
+            raise DeployError("Input file must end in .gguf")
         out_name = str(payload.get("output", "")).strip() or (gguf.stem + ".hgn")
         if not re.match(r"^[A-Za-z0-9._-]+\.hgn$", out_name):
-            raise DeployError("Ausgabename muss eine einfache Dateiendung .hgn sein")
+            raise DeployError("Output must be a simple filename ending in .hgn")
         cmd = [
             "podman", "run", "--rm",
             "--device", "/dev/kfd",
@@ -417,7 +417,7 @@ class DeployManager:
         if head:
             head_path = self._validate_host_path(head)
             if not head_path.is_file():
-                raise DeployError(f"MTP-Head nicht gefunden: {head_path}")
+                raise DeployError(f"MTP head not found: {head_path}")
             cmd += [
                 "-e", f"HALOGEN_MTP_HEAD=/heads/{head_path.name}",
                 "-v", f"{head_path.parent}:/heads:ro,Z",
@@ -433,9 +433,9 @@ class DeployManager:
         image = self._validated_image(str(payload.get("image", "")))
         hgn = self._validate_host_path(str(payload.get("hgn", "")))
         if not hgn.is_file():
-            raise DeployError(f"HGN-Datei nicht gefunden: {hgn}")
+            raise DeployError(f"HGN file not found: {hgn}")
         if not hgn.name.lower().endswith(".hgn"):
-            raise DeployError("Datei muss auf .hgn enden")
+            raise DeployError("File must end in .hgn")
         cmd = [
             "podman", "run", "--rm",
             "-v", f"{hgn.parent}:/models:ro,Z",
@@ -447,18 +447,18 @@ class DeployManager:
     def _validated_image(self, image: str) -> str:
         parts = image.rsplit(":", 1)
         if len(parts) != 2 or not parts[1] or ":" in parts[0]:
-            raise DeployError("Image muss 'repository:tag' sein")
+            raise DeployError("Image must be 'repository:tag'")
         from semver import normalize_version
 
         if normalize_version(parts[1]) is None:
-            raise DeployError("Image-Tag muss eine stabile Version X.Y.Z sein")
+            raise DeployError("Image tag must be a stable version X.Y.Z")
         return image
 
     def _start_job(
         self, kind: str, argv: list[str], env_extra: dict | None = None, timeout: float = 3600
     ) -> dict:
         if self.job is not None and self.job["state"] == "running":
-            raise DeployError("Es laeuft bereits ein Job. Bitte warten.")
+            raise DeployError("A job is already running. Please wait.")
         self.job = {
             "kind": kind,
             "state": "running",
@@ -487,7 +487,7 @@ class DeployManager:
             )
         except FileNotFoundError:
             self.job["state"] = "error"
-            self.job["error"] = f"Programm nicht gefunden: {argv[0]}"
+            self.job["error"] = f"Program not found: {argv[0]}"
             return
 
         async def pump() -> None:
@@ -508,7 +508,7 @@ class DeployManager:
         except asyncio.TimeoutError:
             process.kill()
             self.job["state"] = "error"
-            self.job["error"] = "Zeitueberschreitung"
+            self.job["error"] = "Timed out"
             return
         if returncode == 0:
             self.job["state"] = "done"
@@ -541,7 +541,7 @@ class DeployManager:
                 env=env,
             )
         except FileNotFoundError as exc:
-            raise DeployError(f"Programm nicht gefunden: {argv[0]} ({exc})")
+            raise DeployError(f"Program not found: {argv[0]} ({exc})")
 
         async def pump() -> None:
             while True:
@@ -559,17 +559,17 @@ class DeployManager:
         except asyncio.TimeoutError:
             process.kill()
             await process.wait()
-            raise DeployError(f"Zeitueberschreitung bei: {argv[0]}")
+            raise DeployError(f"Timed out running: {argv[0]}")
         except asyncio.CancelledError:
             process.kill()
             await process.wait()
             raise
         if returncode != 0:
-            raise DeployError(f"{argv[0]} fehlgeschlagen (Exit {returncode})")
+            raise DeployError(f"{argv[0]} failed (exit {returncode})")
 
     def _start_pipeline_job(self, kind: str, total_steps: int) -> dict:
         if self.job is not None and self.job["state"] == "running":
-            raise DeployError("Es laeuft bereits ein Job. Bitte warten.")
+            raise DeployError("A job is already running. Please wait.")
         self.job = {
             "kind": kind,
             "state": "running",
@@ -592,7 +592,7 @@ class DeployManager:
     async def _run_quick_official(self) -> None:
         try:
             self.job["step"] = 1
-            self._append_job_line("--- Official-Profil anwenden ---")
+            self._append_job_line("--- Apply official profile ---")
             target = self.quadlet_dir / "halogen-official.container"
             if not target.exists():
                 tag = self._suggested_tag()
@@ -607,12 +607,12 @@ class DeployManager:
             self.reload_discovery()
             model_id = parse_quadlet(target.read_text(encoding="utf-8"), target).model_id
             self.job["step"] = 2
-            self._append_job_line("--- Aktives Backend stoppen und Official starten ---")
-            await self._switch_with_heartbeat(model_id, "warte auf Official")
+            self._append_job_line("--- Stop active backend and start official ---")
+            await self._switch_with_heartbeat(model_id, "waiting for official")
             self.job["state"] = "done"
         except asyncio.CancelledError:
             self.job["state"] = "cancelled"
-            self._append_job_line("--- Abgebrochen ---")
+            self._append_job_line("--- Cancelled ---")
             raise
         except Exception as exc:
             self.job["state"] = "error"
@@ -645,7 +645,7 @@ class DeployManager:
 
     def cancel_job(self) -> dict:
         if self.job is None or self.job["state"] != "running":
-            return {"ok": False, "reason": "kein laufender Job"}
+            return {"ok": False, "reason": "no running job"}
         if self._job_task is not None and not self._job_task.done():
             self._job_task.cancel()
         return {"ok": True}
@@ -670,7 +670,7 @@ class DeployManager:
         # A token is only needed when we still have to download the GGUF.
         if need_gguf and not token:
             raise DeployError(
-                "HF-Token fehlt. Ein fine-graunes Token mit Read-Recht reicht."
+                "HF token is missing. A fine-grained token with read access is sufficient."
             )
         hf = self._hf_executable()
         steps = 2  # apply profile + switch
@@ -703,7 +703,7 @@ class DeployManager:
             if need_gguf or need_tokenizer:
                 if not self._hf_executable():
                     self.job["step"] = step
-                    self._append_job_line(f"--- {step}: HF-CLI installieren ---")
+                    self._append_job_line(f"--- {step}: Install HF CLI ---")
                     await self._run_stream(
                         [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
                         timeout=900,
@@ -711,11 +711,11 @@ class DeployManager:
                     step += 1
                 hf = self._hf_executable()
                 if not hf:
-                    raise DeployError("HF-CLI fehlt nach Installation.")
+                    raise DeployError("HF CLI is missing after installation.")
 
                 if need_gguf:
                     self.job["step"] = step
-                    self._append_job_line(f"--- {step}: Uncensored-GGUF herunterladen ---")
+                    self._append_job_line(f"--- {step}: Download uncensored GGUF ---")
                     await self._run_stream(
                         [hf, "download", UNCENSORED_HF_REPO, "--local-dir", str(uncensored_dir)],
                         {"HF_TOKEN": token},
@@ -725,7 +725,7 @@ class DeployManager:
                     step += 1
 
                     self.job["step"] = step
-                    self._append_job_line("--- Draft-Head herunterladen ---")
+                    self._append_job_line("--- Download draft head ---")
                     await self._run_stream(
                         [
                             hf,
@@ -741,7 +741,7 @@ class DeployManager:
 
                 if need_tokenizer:
                     self.job["step"] = step
-                    self._append_job_line("--- Tokenizer herunterladen ---")
+                    self._append_job_line("--- Download tokenizer ---")
                     await self._run_stream(
                         [
                             hf,
@@ -759,7 +759,7 @@ class DeployManager:
             # Apply the profile and refresh discovery while the current backend
             # keeps serving; this does not touch the GPU.
             self.job["step"] = step
-            self._append_job_line("--- Uncensored-Profil anwenden ---")
+            self._append_job_line("--- Apply uncensored profile ---")
             models_root, cache_root = self._default_roots()
             profile = uncensored_quick_template(tag, models_root, cache_root)
             profile_payload = profile_to_dict(profile)
@@ -776,14 +776,14 @@ class DeployManager:
             # the switch hook so it has the GPU to itself. On failure or cancel
             # the switch rolls back to the previous backend.
             self.job["step"] = step
-            self._append_job_line("--- Aktives Backend stoppen und Uncensored starten ---")
+            self._append_job_line("--- Stop active backend and start uncensored ---")
             image = f"ghcr.io/peonist-ai/halogen-flash-server:{tag}"
 
             async def convert_hook() -> None:
                 if output.exists():
-                    self._append_job_line("--- Konvertierung uebersprungen, .hgn vorhanden ---")
+                    self._append_job_line("--- Conversion skipped; .hgn already exists ---")
                     return
-                self._append_job_line("--- GGUF nach HGN konvertieren ---")
+                self._append_job_line("--- Convert GGUF to HGN ---")
                 cmd = [
                     "podman", "run", "--rm",
                     "--device", "/dev/kfd",
@@ -800,12 +800,12 @@ class DeployManager:
                 await self._run_stream(cmd, timeout=7200)
 
             await self._switch_with_heartbeat(
-                profile.model_id, "warte auf Uncensored", convert_hook
+                profile.model_id, "waiting for uncensored", convert_hook
             )
             self.job["state"] = "done"
         except asyncio.CancelledError:
             self.job["state"] = "cancelled"
-            self._append_job_line("--- Abgebrochen ---")
+            self._append_job_line("--- Cancelled ---")
             raise
         except Exception as exc:
             self.job["state"] = "error"
@@ -817,15 +817,15 @@ class DeployManager:
     def _require_enabled(self) -> None:
         deploy = getattr(self.config, "deploy", None)
         if deploy is None or not deploy.enabled:
-            raise DeployError("Deployment ist in der Konfiguration deaktiviert.")
+            raise DeployError("Deployment is disabled in the configuration.")
         if sys.platform == "win32":
-            raise DeployError("Deployment ist nur unter Linux/POSIX verfuegbar.")
+            raise DeployError("Deployment is only available on Linux/POSIX.")
 
     def _profile_from_payload(self, payload: dict) -> Profile:
         try:
             volumes = [tuple(v) for v in payload.get("volumes", [])]
             if not all(len(v) == 3 for v in volumes):
-                raise DeployError("volumes: jede Angabe braucht host, container, mode")
+                raise DeployError("volumes: each entry requires host, container, and mode")
             profile = Profile(
                 profile_id=str(payload.get("profile_id", "")),
                 image=str(payload.get("image", "")),
@@ -838,7 +838,7 @@ class DeployManager:
                 },
             )
         except (TypeError, ValueError) as exc:
-            raise DeployError(f"Ungueltiges Profil: {exc}")
+            raise DeployError(f"Invalid profile: {exc}")
         return profile
 
     def _allowed_roots(self) -> list[Path]:
@@ -861,16 +861,16 @@ class DeployManager:
     def _validate_host_path(self, host_path: str) -> Path:
         path = Path(str(host_path)).expanduser()
         if not path.is_absolute():
-            raise DeployError(f"Pfad muss absolut sein: {host_path}")
+            raise DeployError(f"Path must be absolute: {host_path}")
         resolved = path.resolve()
         roots = self._allowed_roots()
         if not any(_is_within(resolved, root) for root in roots):
             raise DeployError(
-                f"Pfad ausserhalb der erlaubten Wurzeln: {host_path} "
-                f"(erlaubt: {', '.join(str(r) for r in roots)})"
+                f"Path is outside the allowed roots: {host_path} "
+                f"(allowed: {', '.join(str(r) for r in roots)})"
             )
         if resolved == Path("/") or len(resolved.parts) < 2:
-            raise DeployError(f"Zu unspezifischer Pfad: {host_path}")
+            raise DeployError(f"Path is too broad: {host_path}")
         return resolved
 
     def _validate_host_paths(self, profile: Profile) -> list[str]:
@@ -896,8 +896,8 @@ class DeployManager:
                 continue
             if other.model_id == profile.model_id:
                 errors.append(
-                    f"Modell-ID '{profile.model_id}' wird schon von Profil "
-                    f"'{other.profile_id}' verwendet"
+                    f"Model ID '{profile.model_id}' is already used by profile "
+                    f"'{other.profile_id}'"
                 )
         return errors
 
@@ -916,9 +916,9 @@ class DeployManager:
                 continue
             if other.host_port == profile.host_port:
                 warnings.append(
-                    f"Port {profile.host_port} teilen sich Profil "
-                    f"'{other.profile_id}' und dieses Profil "
-                    "(in Ordnung, da immer nur ein Backend laeuft)."
+                    f"Port {profile.host_port} is shared by profile "
+                    f"'{other.profile_id}' and this profile "
+                    "(allowed because only one backend runs at a time)."
                 )
         return warnings
 
@@ -945,7 +945,7 @@ class DeployManager:
 
     async def _service_is_active(self, service_name: str) -> bool:
         if not service_name.startswith("halogen-") or not service_name.endswith(".service"):
-            raise DeployError(f"Ungueltiger Dienstname: {service_name}")
+            raise DeployError(f"Invalid service name: {service_name}")
         process = await asyncio.create_subprocess_exec(
             "systemctl",
             "--user",
@@ -975,10 +975,10 @@ class DeployManager:
             if process.returncode is None:
                 process.kill()
                 await process.wait()
-            raise DeployError(f"Timeout bei: {' '.join(args[:2])}")
+            raise DeployError(f"Timeout running: {' '.join(args[:2])}")
         if process.returncode:
             raise DeployError(
-                f"{' '.join(args[:2])} fehlgeschlagen (Exit {process.returncode}): "
+                f"{' '.join(args[:2])} failed (exit {process.returncode}): "
                 f"{(stderr or stdout).decode('utf-8', errors='replace').strip()[:200]}"
             )
         return stdout.decode("utf-8", errors="replace")
@@ -992,8 +992,8 @@ class DeployManager:
         )
         if profile.image not in unit:
             raise DeployError(
-                f"Generiertes Unit fuer {profile.service_name} enthaelt nicht das "
-                "erwartete Image"
+                f"Generated unit for {profile.service_name} does not contain the "
+                "expected image"
             )
 
     @staticmethod
@@ -1038,29 +1038,29 @@ class DeployRoutes:
         expected = f"http://{request.headers.get('Host', '')}"
         origin = request.headers.get("Origin")
         if origin is not None and origin != expected:
-            raise DeployError("Cross-Origin-Request abgelehnt")
+            raise DeployError("Cross-origin request rejected")
         if request.headers.get("X-Halogen-Action") != "deploy":
-            raise DeployError("Header X-Halogen-Action: deploy erforderlich")
+            raise DeployError("Header X-Halogen-Action: deploy is required")
 
     async def _payload(self, request: web.Request) -> dict:
         if request.content_type != "application/json":
-            raise DeployError("JSON-Body erwartet")
+            raise DeployError("JSON body expected")
         try:
             text = await request.text()
         except Exception as exc:
-            raise DeployError(f"Body konnte nicht gelesen werden: {exc}")
+            raise DeployError(f"Could not read body: {exc}")
         try:
             data = json.loads(text or "{}")
         except json.JSONDecodeError as exc:
-            raise DeployError(f"Ungueltiges JSON: {exc}")
+            raise DeployError(f"Invalid JSON: {exc}")
         if not isinstance(data, dict):
-            raise DeployError("JSON-Objekt erwartet")
+            raise DeployError("JSON object expected")
         return data
 
     def _error(self, exc: Exception, status: int = 400) -> web.Response:
         if isinstance(exc, DeployError):
             logger.warning("deploy request rejected: %s", exc)
-            message = str(exc) or "Deployment-Fehler"
+            message = str(exc) or "Deployment error"
         else:
             logger.exception("deploy request failed")
             message = f"{type(exc).__name__}: {exc}"

@@ -57,7 +57,7 @@ class ValidateProfileTests(unittest.TestCase):
 
     def test_rejects_unknown_env_variable(self):
         errors = validate_profile(make_profile(env={"HALOGEN_MODEL_ID": "m", "EVIL_VAR": "1"}))
-        self.assertTrue(any("Allowlist" in e for e in errors))
+        self.assertTrue(any("allowlist" in e for e in errors))
 
     def test_rejects_out_of_range_kv_slots(self):
         errors = validate_profile(
@@ -69,7 +69,7 @@ class ValidateProfileTests(unittest.TestCase):
         errors = validate_profile(
             make_profile(env={"HALOGEN_MODEL_ID": "m; rm -rf /", "HALOGEN_KV_SLOTS": "2"})
         )
-        self.assertTrue(any("Zeichen nicht erlaubt" in e for e in errors))
+        self.assertTrue(any("invalid characters" in e for e in errors))
 
     def test_rejects_missing_model_id(self):
         errors = validate_profile(make_profile(env={"HALOGEN_KV_SLOTS": "2"}))
@@ -97,7 +97,7 @@ class ValidateProfileTests(unittest.TestCase):
             env={"HALOGEN_MODEL_ID": "m", "HALOGEN_DOWNLOAD": "org/repo"}
         )
         errors = validate_profile(profile)
-        self.assertTrue(any("beschreibbar" in e for e in errors))
+        self.assertTrue(any("writable" in e for e in errors))
         writable = make_profile(
             volumes=[
                 ("/home/tester/halogen/models/demo", "/models", "Z"),

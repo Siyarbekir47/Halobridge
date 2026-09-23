@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "halobridge"
-version = "0.1.7"
+version = "0.1.8"
 description = "Router and dashboard for halogen-flash-server"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -46,8 +46,9 @@ py-modules = [
   "doctor",
   "halogen_deploy",
   "profiles",
+  "halobridge_i18n",
 ]
 packages = ["halobridge_data"]
 
 [tool.setuptools.package-data]
-halobridge_data = ["dashboard.html", "locales/*.json"]
+halobridge_data = ["dashboard.html", "dashboard.css", "dashboard.js", "locales/*.json"]

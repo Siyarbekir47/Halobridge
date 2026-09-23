@@ -38,23 +38,23 @@ def _expand(value: str) -> Path:
 def _as_bool(section: dict[str, Any], key: str, default: bool) -> bool:
     value = section.get(key, default)
     if not isinstance(value, bool):
-        raise ConfigError(f"{key} muss ein Boolean sein")
+        raise ConfigError(f"{key} must be a boolean")
     return value
 
 
 def _as_int(section: dict[str, Any], key: str, default: int, *, minimum: int = 1) -> int:
     value = section.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ConfigError(f"{key} muss eine ganze Zahl sein")
+        raise ConfigError(f"{key} must be an integer")
     if value < minimum:
-        raise ConfigError(f"{key} muss >= {minimum} sein")
+        raise ConfigError(f"{key} must be >= {minimum}")
     return value
 
 
 def _as_str(section: dict[str, Any], key: str, default: str) -> str:
     value = section.get(key, default)
     if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"{key} muss eine nicht-leere Zeichenkette sein")
+        raise ConfigError(f"{key} must be a non-empty string")
     return value.strip()
 
 
@@ -62,14 +62,14 @@ def _as_optional_str(section: dict[str, Any], key: str) -> str:
     """A string that may be empty or absent (e.g. an optional public URL)."""
     value = section.get(key, "")
     if not isinstance(value, str):
-        raise ConfigError(f"{key} muss eine Zeichenkette sein")
+        raise ConfigError(f"{key} must be a string")
     return value.strip()
 
 
 def _as_str_list(section: dict[str, Any], key: str, default: list[str]) -> list[str]:
     value = section.get(key, default)
     if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
-        raise ConfigError(f"{key} muss eine Liste von Zeichenketten sein")
+        raise ConfigError(f"{key} must be a list of strings")
     return [v.strip() for v in value]
 
 
@@ -113,7 +113,7 @@ class ModelsConfig:
             isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()
             for k, v in explicit.items()
         ):
-            raise ConfigError("models.explicit muss eine Tabelle Modell->Service sein")
+            raise ConfigError("models.explicit must be a model-to-service table")
         return cls(
             auto_discover=_as_bool(s, "auto_discover", True),
             quadlet_dir=_expand(_as_str(s, "quadlet_dir", str(Path.home() / ".config/containers/systemd"))),
@@ -135,7 +135,7 @@ class UpdatesConfig:
     def from_section(cls, s: dict[str, Any]) -> "UpdatesConfig":
         tag_source = _as_str(s, "tag_source", "github")
         if tag_source not in {"github", "registry"}:
-            raise ConfigError("updates.tag_source muss 'github' oder 'registry' sein")
+            raise ConfigError("updates.tag_source must be 'github' or 'registry'")
         return cls(
             enabled=_as_bool(s, "enabled", True),
             image_repo=_as_str(s, "image_repo", "ghcr.io/peonist-ai/halogen-flash-server"),
@@ -182,7 +182,7 @@ class DeployConfig:
     def from_section(cls, s: dict[str, Any]) -> "DeployConfig":
         raw_roots = s.get("allowed_roots") or [str(Path.home())]
         if not isinstance(raw_roots, list) or not raw_roots:
-            raise ConfigError("deploy.allowed_roots muss eine Liste von Pfaden sein")
+            raise ConfigError("deploy.allowed_roots must be a list of paths")
         return cls(
             enabled=_as_bool(s, "enabled", True),
             allowed_roots=[_expand(str(r)) for r in raw_roots],
@@ -228,7 +228,7 @@ class Config:
             "deploy",
             "security",
         }:
-            raise ConfigError(f"Unbekannter Konfigurationsbereich: {unknown}")
+            raise ConfigError(f"Unknown configuration section: {unknown}")
         return cls(
             router=RouterConfig.from_section(data.get("router", {})),
             models=ModelsConfig.from_section(data.get("models", {})),
@@ -262,9 +262,9 @@ def load(path: str | os.PathLike[str] | None = None) -> Config:
         with resolved.open("rb") as handle:
             data = tomllib.load(handle)
     except tomllib.TOMLDecodeError as error:
-        raise ConfigError(f"Ungültige TOML in {resolved}: {error}") from error
+        raise ConfigError(f"Invalid TOML in {resolved}: {error}") from error
     if not isinstance(data, dict):
-        raise ConfigError(f"Konfiguration in {resolved} muss ein Objekt sein")
+        raise ConfigError(f"Configuration in {resolved} must be an object")
     return Config.from_dict(data, source=resolved)
 
 

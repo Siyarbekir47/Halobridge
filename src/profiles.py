@@ -124,35 +124,35 @@ def validate_profile(profile: Profile) -> list[str]:
     """Return human-readable validation errors; empty means valid."""
     errors: list[str] = []
     if not PROFILE_ID_RE.match(profile.profile_id):
-        errors.append("profile_id: nur Kleinbuchstaben, Zahlen, Bindestriche (1-32)")
+        errors.append("profile_id: use lowercase letters, numbers, and hyphens (1–32)")
     parts = profile.image.rsplit(":", 1)
     if len(parts) != 2 or not parts[1] or ":" in parts[0]:
-        errors.append("image: muss 'repository:tag' sein")
+        errors.append("image: must be 'repository:tag'")
     elif normalize_version(parts[1]) is None:
-        errors.append("image: Tag muss eine stabile Version X.Y.Z sein (kein latest)")
+        errors.append("image: tag must be a stable version X.Y.Z (not latest)")
     if not 1024 <= profile.host_port <= 65535:
-        errors.append("host_port: muss zwischen 1024 und 65535 liegen")
+        errors.append("host_port: must be between 1024 and 65535")
     container_paths = [v[1] for v in profile.volumes]
     if CONTAINER_MODELS_PATH not in container_paths:
-        errors.append(f"volumes: Models-Volume auf {CONTAINER_MODELS_PATH} fehlt")
+        errors.append(f"volumes: models volume at {CONTAINER_MODELS_PATH} is missing")
     if CONTAINER_CACHE_PATH not in container_paths:
-        errors.append(f"volumes: Cache-Volume auf {CONTAINER_CACHE_PATH} fehlt")
+        errors.append(f"volumes: cache volume at {CONTAINER_CACHE_PATH} is missing")
     if len(set(container_paths)) != len(container_paths):
-        errors.append("volumes: Container-Pfade muessen eindeutig sein")
+        errors.append("volumes: container paths must be unique")
     if profile.downloads_weights:
         models = next((v for v in profile.volumes if v[1] == CONTAINER_MODELS_PATH), None)
         if models is not None and ":ro" in f":{models[2]}":
             errors.append(
-                "volumes: HALOGEN_DOWNLOAD braucht das Models-Volume beschreibbar (kein ro)"
+                "volumes: HALOGEN_DOWNLOAD requires a writable models volume (not ro)"
             )
     if "HALOGEN_MODEL_ID" not in profile.env:
-        errors.append("env: HALOGEN_MODEL_ID ist erforderlich")
+        errors.append("env: HALOGEN_MODEL_ID is required")
     for key, value in profile.env.items():
         spec = ENV_FIELDS.get(key)
         if spec is None:
-            errors.append(f"env: Variable nicht auf der Allowlist: {key}")
+            errors.append(f"env: variable is not on the allowlist: {key}")
         elif not SAFE_VALUE_RE.match(value):
-            errors.append(f"env {key}: Zeichen nicht erlaubt")
+            errors.append(f"env {key}: invalid characters")
         else:
             error = _validate_value(value, spec)
             if error:
@@ -160,7 +160,7 @@ def validate_profile(profile: Profile) -> list[str]:
     default = profile.env.get("HALOGEN_MAX_TOKENS_DEFAULT")
     cap = profile.env.get("HALOGEN_MAX_TOKENS_CAP")
     if default and cap and int(default) > int(cap):
-        errors.append("env: MAX_TOKENS_DEFAULT darf MAX_TOKENS_CAP nicht ueberschreiten")
+        errors.append("env: MAX_TOKENS_DEFAULT must not exceed MAX_TOKENS_CAP")
     return errors
 
 
@@ -170,31 +170,31 @@ def _validate_value(value: str, spec: FieldSpec) -> str | None:
         try:
             number = int(value)
         except ValueError:
-            return "ganze Zahl erwartet"
+            return "integer expected"
     elif spec.kind == "float":
         try:
             number = float(value)
         except ValueError:
-            return "Zahl erwartet"
+            return "number expected"
     else:
         number = 0.0
     if spec.kind in ("int", "float"):
         if spec.minimum is not None and number < spec.minimum:
-            return f"Minimum ist {spec.minimum:g}"
+            return f"Minimum is {spec.minimum:g}"
         if spec.maximum is not None and number > spec.maximum:
-            return f"Maximum ist {spec.maximum:g}"
+            return f"Maximum is {spec.maximum:g}"
     elif spec.kind == "flag":
         if value not in {"0", "1"}:
-            return "0 oder 1 erwartet"
+            return "0 or 1 expected"
     elif spec.kind == "enum":
         if spec.choices and value not in spec.choices:
-            return "erlaubt: " + ", ".join(spec.choices)
+            return "allowed: " + ", ".join(spec.choices)
     elif spec.kind == "path":
         if not IN_CONTAINER_PATH_RE.match(value) or value == "/":
-            return "Pfad im Container erwartet (nur sichere Zeichen)"
+            return "Container path expected (safe characters only)"
     elif spec.kind == "repo":
         if not REPO_ID_RE.match(value):
-            return "'org/repo' erwartet"
+            return "'org/repo' expected"
     return None
 
 
@@ -269,19 +269,19 @@ def parse_quadlet(text: str, quadlet_path: Path | None = None) -> Profile:
                 try:
                     host_port = int(parts[-2] if len(parts) > 1 else parts[0])
                 except ValueError:
-                    raise ProfileError(f"PublishPort ungueltig: {value}")
+                    raise ProfileError(f"Invalid PublishPort: {value}")
             elif key == "Environment":
                 if "=" not in value:
-                    raise ProfileError(f"Environment ungueltig: {value}")
+                    raise ProfileError(f"Invalid Environment: {value}")
                 env_key, env_value = value.split("=", 1)
                 env[env_key] = env_value
     if not image:
-        raise ProfileError("Image fehlt")
+        raise ProfileError("Image is missing")
     if not container_name.startswith("halogen-"):
-        raise ProfileError(f"ContainerName muss mit 'halogen-' beginnen: {container_name}")
+        raise ProfileError(f"ContainerName must start with 'halogen-': {container_name}")
     profile_id = container_name[len("halogen-"):]
     if not PROFILE_ID_RE.match(profile_id):
-        raise ProfileError(f"Ungueltige Profil-ID aus ContainerName: {profile_id}")
+        raise ProfileError(f"Invalid profile ID in ContainerName: {profile_id}")
     return Profile(
         profile_id=profile_id,
         image=image,
