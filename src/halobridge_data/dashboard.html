@@ -166,7 +166,7 @@
 <body>
 <main class="shell">
   <header class="top">
-    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.3</span></span></div>
+    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.4</span></span></div>
     <div class="controls">
       <label for="langSelect" class="muted" data-i18n="lang_label">Sprache</label>
       <select id="langSelect" data-i18n-attr="aria-label:lang_label"><option value="de">Deutsch</option><option value="en">English</option></select>
@@ -892,9 +892,12 @@ function armDeploy(btn, run) {
 }
 async function deployRequest(path, options = {}) {
   const response = await fetch(path, {cache: 'no-store', ...options});
-  if (handleUnauthorized(response)) return null;
+  if (handleUnauthorized(response)) throw new Error(t('auth_required') || 'Nicht angemeldet');
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || t('deploy_failed'));
+  if (!response.ok) {
+    const detail = data.error || data.message || `HTTP ${response.status} ${response.statusText}`;
+    throw new Error(detail);
+  }
   return data;
 }
 async function refreshDeploy() {
@@ -1059,7 +1062,11 @@ $('hfInstallBtn').addEventListener('click', async () => {
   } catch (err) { showDeployError(err.message); }
 });
 $('hfDownloadBtn').addEventListener('click', async () => {
-  const token = $('hfToken').value;
+  const token = $('hfToken').value.trim();
+  if (!token) {
+    showDeployError(t('hf_token_required') || 'HF-Token fehlt.');
+    return;
+  }
   $('hfToken').value = '';
   try {
     await deployRequest('/dashboard/api/deploy/hf/download', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({repo: $('hfRepo').value.trim(), file: $('hfFile').value.trim(), dest: $('hfDest').value.trim(), token})});

@@ -732,113 +732,159 @@ class DeployRoutes:
         if request.headers.get("X-Halogen-Action") != "deploy":
             raise DeployError("Header X-Halogen-Action: deploy erforderlich")
 
-    def _payload(self, request: web.Request) -> dict:
+    async def _payload(self, request: web.Request) -> dict:
         if request.content_type != "application/json":
             raise DeployError("JSON-Body erwartet")
         try:
-            data = json.loads(request.text or "{}")
+            text = await request.text()
+        except Exception as exc:
+            raise DeployError(f"Body konnte nicht gelesen werden: {exc}")
+        try:
+            data = json.loads(text or "{}")
         except json.JSONDecodeError as exc:
             raise DeployError(f"Ungueltiges JSON: {exc}")
         if not isinstance(data, dict):
             raise DeployError("JSON-Objekt erwartet")
         return data
 
+    def _error(self, exc: Exception, status: int = 400) -> web.Response:
+        if isinstance(exc, DeployError):
+            logger.warning("deploy request rejected: %s", exc)
+            message = str(exc) or "Deployment-Fehler"
+        else:
+            logger.exception("deploy request failed")
+            message = f"{type(exc).__name__}: {exc}"
+        return web.json_response({"error": message}, status=status)
+
     async def api_status(self, _: web.Request) -> web.Response:
-        return web.json_response(await self.manager.status())
+        try:
+            return web.json_response(await self.manager.status())
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_template(self, request: web.Request) -> web.Response:
         try:
             return web.json_response(self.manager.template(request.match_info["kind"]))
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_dry_run(self, request: web.Request) -> web.Response:
-        self._guard(request)
         try:
-            return web.json_response(self.manager.dry_run(self._payload(request)))
+            self._guard(request)
+            return web.json_response(self.manager.dry_run(await self._payload(request)))
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_apply(self, request: web.Request) -> web.Response:
-        self._guard(request)
         try:
-            return web.json_response(await self.manager.apply(self._payload(request)))
+            self._guard(request)
+            return web.json_response(await self.manager.apply(await self._payload(request)))
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_install_dirs(self, request: web.Request) -> web.Response:
-        self._guard(request)
         try:
-            return web.json_response(self.manager.install_dirs(self._payload(request)))
+            self._guard(request)
+            return web.json_response(self.manager.install_dirs(await self._payload(request)))
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_delete(self, request: web.Request) -> web.Response:
-        self._guard(request)
         try:
+            self._guard(request)
             return web.json_response(
                 await self.manager.delete(request.match_info["profile_id"])
             )
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_rollback(self, request: web.Request) -> web.Response:
-        self._guard(request)
         try:
+            self._guard(request)
             return web.json_response(
                 await self.manager.rollback(request.match_info["profile_id"])
             )
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_start(self, request: web.Request) -> web.Response:
-        self._guard(request)
         try:
+            self._guard(request)
             return web.json_response(
                 await self.manager.start(request.match_info["profile_id"])
             )
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_reload(self, _: web.Request) -> web.Response:
         try:
             return web.json_response(self.manager.reload_discovery())
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_job(self, _: web.Request) -> web.Response:
-        return web.json_response(self.manager.job_status())
+        try:
+            return web.json_response(self.manager.job_status())
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_hf(self, _: web.Request) -> web.Response:
-        return web.json_response(self.manager.hf_status())
+        try:
+            return web.json_response(self.manager.hf_status())
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_hf_install(self, request: web.Request) -> web.Response:
-        self._guard(request)
         try:
+            self._guard(request)
             return web.json_response(self.manager.hf_install())
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_hf_download(self, request: web.Request) -> web.Response:
-        self._guard(request)
         try:
-            return web.json_response(self.manager.hf_download(self._payload(request)))
+            self._guard(request)
+            return web.json_response(self.manager.hf_download(await self._payload(request)))
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_convert(self, request: web.Request) -> web.Response:
-        self._guard(request)
         try:
-            return web.json_response(self.manager.convert(self._payload(request)))
+            self._guard(request)
+            return web.json_response(self.manager.convert(await self._payload(request)))
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     async def api_verify(self, request: web.Request) -> web.Response:
-        self._guard(request)
         try:
-            return web.json_response(self.manager.verify(self._payload(request)))
+            self._guard(request)
+            return web.json_response(self.manager.verify(await self._payload(request)))
         except DeployError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
 
     def register_routes(self, app: web.Application) -> None:
         app.router.add_get("/dashboard/api/deploy", self.api_status)

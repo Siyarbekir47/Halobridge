@@ -4,6 +4,7 @@ systemd interaction is mocked; file handling runs against temp directories.
 """
 
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -270,6 +271,38 @@ class RouteGuardTests(PosixTestCase):
             }
         )
         routes._guard(request)  # must not raise
+
+
+class RoutePayloadTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._platform = patch("halogen_deploy.sys.platform", "linux")
+        self._platform.start()
+        self.addCleanup(self._platform.stop)
+        self._dir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+        self.addCleanup(self._dir.cleanup)
+
+    async def test_dry_run_route_reads_json_body(self):
+        from halogen_deploy import DeployRoutes
+
+        routes = DeployRoutes(make_manager(self.tmp))
+        payload = official_payload(self.tmp)
+
+        class Req:
+            headers = {
+                "Host": "localhost:8820",
+                "Origin": "http://localhost:8820",
+                "X-Halogen-Action": "deploy",
+            }
+            content_type = "application/json"
+
+            async def text(self):
+                return json.dumps(payload)
+
+        response = await routes.api_dry_run(Req())
+        self.assertEqual(response.status, 200)
+        body = json.loads(response.body.decode("utf-8"))
+        self.assertTrue(body["ok"], body["errors"])
 
 
 class ConvertVerifyJobTests(PosixTestCase):
