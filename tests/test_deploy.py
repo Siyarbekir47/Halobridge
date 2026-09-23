@@ -443,5 +443,85 @@ class ConvertVerifyJobTests(PosixTestCase):
         self.assertIn("/uncensored", data["quadlet"])
 
 
+class QuickDeployTests(PosixTestCase):
+    """Quick install takes over the active backend instead of being blocked."""
+
+    def setUp(self):
+        super().setUp()
+        self._dir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+        self.deploy = make_manager(self.tmp)
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def test_quick_official_switches_to_official(self):
+        self.deploy.manager.switch_with_hook = AsyncMock()
+        with patch.object(DeployManager, "reload_discovery", return_value={"ok": True}):
+            result = asyncio.run(self.deploy.quick_official())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["model"], "qwen3.8-flash")
+        self.deploy.manager.switch_with_hook.assert_awaited_once_with("qwen3.8-flash")
+
+    def test_quick_official_does_not_raise_when_other_backend_active(self):
+        async def fake_active(service):
+            return service == "halogen-uncensored.service"
+
+        self.deploy._service_is_active = AsyncMock(side_effect=fake_active)
+        self.deploy.manager.switch_with_hook = AsyncMock()
+        with patch.object(DeployManager, "reload_discovery", return_value={"ok": True}):
+            result = asyncio.run(self.deploy.quick_official())
+        self.assertTrue(result["ok"])
+        self.deploy.manager.switch_with_hook.assert_awaited_once()
+
+    def test_quick_uncensored_requires_token_when_download_needed(self):
+        with self.assertRaises(DeployError):
+            asyncio.run(self.deploy.quick_uncensored({}))
+
+    def test_quick_uncensored_starts_job_when_other_backend_active(self):
+        async def fake_active(service):
+            return service == "halogen-official.service"
+
+        self.deploy._service_is_active = AsyncMock(side_effect=fake_active)
+        self.deploy._run_quick_uncensored = AsyncMock()
+        result = asyncio.run(self.deploy.quick_uncensored({"token": "hf_x"}))
+        self.assertEqual(result["kind"], "quick-uncensored")
+        self.assertEqual(self.deploy.job["state"], "running")
+
+    def test_run_quick_uncensored_switches_with_convert_hook(self):
+        uncensored_dir = self.tmp / "models" / "uncensored"
+        uncensored_dir.mkdir(parents=True)
+        gguf = uncensored_dir / "x.gguf"
+        output = uncensored_dir / "qwen3.8-flash-uncensored.hgn"
+        streams = []
+
+        async def fake_stream(argv, *a, **k):
+            streams.append(list(argv))
+
+        self.deploy._run_stream = fake_stream
+        self.deploy._hf_executable = lambda: "hf"
+        self.deploy.install_dirs = lambda payload: {"ok": True}
+        self.deploy.dry_run = lambda payload: {"ok": True, "errors": []}
+        self.deploy.apply = AsyncMock()
+        switch_calls = []
+
+        async def fake_switch(model, hook=None):
+            switch_calls.append(model)
+            if hook is not None:
+                await hook()
+
+        self.deploy.manager.switch_with_hook = fake_switch
+        self.deploy._start_pipeline_job("quick-uncensored", 5)
+        with patch.object(DeployManager, "reload_discovery", return_value={"ok": True}):
+            asyncio.run(
+                self.deploy._run_quick_uncensored(
+                    "tok", "0.13.2", uncensored_dir, gguf, output
+                )
+            )
+        self.assertEqual(switch_calls, ["qwen3.8-flash-uncensored"])
+        self.assertTrue(any("convert" in s for s in streams))
+        self.assertEqual(self.deploy.job["state"], "done")
+
+
 if __name__ == "__main__":
     unittest.main()

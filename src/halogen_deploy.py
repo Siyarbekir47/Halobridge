@@ -575,41 +575,30 @@ class DeployManager:
         self._require_enabled()
         if await self._service_is_active("halogen-official.service"):
             return {"ok": True, "already": True, "service": "halogen-official.service"}
-        if await self._any_other_service_active("official"):
-            raise DeployError(
-                "Ein anderes Backend ist bereits aktiv. Halobridge bedient immer "
-                "nur ein Backend gleichzeitig; wechsle zuerst das Modell."
-            )
         target = self.quadlet_dir / "halogen-official.container"
-        if target.exists():
-            started = await self.start("official")
-            return {"ok": True, "started_existing": True, "start": started}
-        tag = self._suggested_tag()
-        models_root, cache_root = self._default_roots()
-        profile = official_quick_template(tag, models_root, cache_root)
-        payload = profile_to_dict(profile)
-        self.install_dirs(payload)
-        preview = self.dry_run(payload)
-        if not preview["ok"]:
-            raise DeployError("; ".join(preview["errors"]))
-        applied = await self.apply(payload)
-        started = await self.start(profile.profile_id)
-        return {"ok": True, "profile": profile.profile_id, "apply": applied, "start": started}
+        if not target.exists():
+            tag = self._suggested_tag()
+            models_root, cache_root = self._default_roots()
+            profile = official_quick_template(tag, models_root, cache_root)
+            payload = profile_to_dict(profile)
+            self.install_dirs(payload)
+            preview = self.dry_run(payload)
+            if not preview["ok"]:
+                raise DeployError("; ".join(preview["errors"]))
+            await self.apply(payload)
+        # Refresh discovery so the router knows the official model, then switch
+        # onto it. The switch stops any other active backend and frees the GPU
+        # first, so a busy host is taken over instead of blocking the install.
+        self.reload_discovery()
+        model_id = parse_quadlet(target.read_text(encoding="utf-8"), target).model_id
+        await self.manager.switch_with_hook(model_id)
+        return {"ok": True, "profile": "official", "model": model_id, "switched": True}
 
     async def quick_uncensored(self, payload: dict) -> dict:
         self._require_enabled()
         if await self._service_is_active("halogen-uncensored.service"):
             return {"ok": True, "already": True, "service": "halogen-uncensored.service"}
-        if await self._any_other_service_active("uncensored"):
-            raise DeployError(
-                "Ein anderes Backend ist bereits aktiv. Halobridge bedient immer "
-                "nur ein Backend gleichzeitig; wechsle zuerst das Modell."
-            )
         token = str(payload.get("token", "")).strip()
-        if not token:
-            raise DeployError(
-                "HF-Token fehlt. Ein fine-graunes Token mit Read-Recht reicht."
-            )
         tag = self._suggested_tag()
         models_root, cache_root = self._default_roots()
         uncensored_dir = models_root / "uncensored"
@@ -617,26 +606,19 @@ class DeployManager:
         uncensored_dir.mkdir(parents=True, exist_ok=True)
         gguf = uncensored_dir / UNCENSORED_DEFAULT_GGUF_NAME
         output = uncensored_dir / UNCENSORED_DEFAULT_OUTPUT
-        target = self.quadlet_dir / "halogen-uncensored.container"
-        image = f"ghcr.io/peonist-ai/halogen-flash-server:{tag}"
-        if output.exists():
-            if target.exists():
-                started = await self.start("uncensored")
-                return {"ok": True, "started_existing": True, "start": started}
-            profile = uncensored_quick_template(tag, models_root, cache_root)
-            profile_payload = profile_to_dict(profile)
-            self.install_dirs(profile_payload)
-            preview = self.dry_run(profile_payload)
-            if not preview["ok"]:
-                raise DeployError("; ".join(preview["errors"]))
-            applied = await self.apply(profile_payload)
-            started = await self.start(profile.profile_id)
-            return {"ok": True, "profile": profile.profile_id, "apply": applied, "start": started}
+        # A token is only needed when we still have to download the GGUF.
+        if not output.exists() and not token:
+            raise DeployError(
+                "HF-Token fehlt. Ein fine-graunes Token mit Read-Recht reicht."
+            )
         hf = self._hf_executable()
-        steps = 5 if hf else 6
+        if output.exists():
+            steps = 2  # apply profile + switch
+        else:
+            steps = 5 if hf else 6  # (+ install HF CLI)
         self._start_pipeline_job("quick-uncensored", steps)
         self._job_task = asyncio.create_task(
-            self._run_quick_uncensored(token, tag, uncensored_dir, gguf, output, image)
+            self._run_quick_uncensored(token, tag, uncensored_dir, gguf, output)
         )
         return {"ok": True, "kind": "quick-uncensored"}
 
@@ -647,65 +629,89 @@ class DeployManager:
         uncensored_dir: Path,
         gguf: Path,
         output: Path,
-        image: str,
     ) -> None:
         try:
             step = 1
-            if not self._hf_executable():
+            if not output.exists():
+                if not self._hf_executable():
+                    self.job["step"] = step
+                    self._append_job_line(f"--- {step}: HF-CLI installieren ---")
+                    await self._run_stream(
+                        [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
+                        timeout=900,
+                    )
+                    step += 1
+                hf = self._hf_executable()
+                if not hf:
+                    raise DeployError("HF-CLI fehlt nach Installation.")
+
                 self.job["step"] = step
-                self._append_job_line(f"--- {step}: HF-CLI installieren ---")
+                self._append_job_line(f"--- {step}: Uncensored-GGUF herunterladen ---")
                 await self._run_stream(
-                    [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
-                    timeout=900,
+                    [hf, "download", UNCENSORED_HF_REPO, "--local-dir", str(uncensored_dir)],
+                    {"HF_TOKEN": token},
+                    timeout=21600,
+                    token=token,
                 )
                 step += 1
-            hf = self._hf_executable()
-            if not hf:
-                raise DeployError("HF-CLI fehlt nach Installation.")
 
-            self.job["step"] = step
-            self._append_job_line(f"--- {step}: Uncensored-GGUF herunterladen ---")
-            await self._run_stream(
-                [hf, "download", UNCENSORED_HF_REPO, "--local-dir", str(uncensored_dir)],
-                {"HF_TOKEN": token},
-                timeout=21600,
-                token=token,
-            )
-            step += 1
-
-            self.job["step"] = step
-            self._append_job_line("--- Draft-Head herunterladen ---")
-            await self._run_stream(
-                [
-                    hf,
-                    "download",
-                    OFFICIAL_WEIGHTS_REPO,
-                    "qwen38-flash-next-mtp.hgn",
-                    "--local-dir",
-                    str(uncensored_dir),
-                ],
-                timeout=3600,
-            )
-            step += 1
-
-            self.job["step"] = step
-            self._append_job_line("--- Tokenizer herunterladen ---")
-            await self._run_stream(
-                [
-                    hf,
-                    "download",
-                    OFFICIAL_WEIGHTS_REPO,
-                    "--include",
-                    "tokenizer/*",
-                    "--local-dir",
-                    str(uncensored_dir),
-                ],
-                timeout=3600,
-            )
-            step += 1
-
-            if not output.exists():
                 self.job["step"] = step
+                self._append_job_line("--- Draft-Head herunterladen ---")
+                await self._run_stream(
+                    [
+                        hf,
+                        "download",
+                        OFFICIAL_WEIGHTS_REPO,
+                        "qwen38-flash-next-mtp.hgn",
+                        "--local-dir",
+                        str(uncensored_dir),
+                    ],
+                    timeout=3600,
+                )
+                step += 1
+
+                self.job["step"] = step
+                self._append_job_line("--- Tokenizer herunterladen ---")
+                await self._run_stream(
+                    [
+                        hf,
+                        "download",
+                        OFFICIAL_WEIGHTS_REPO,
+                        "--include",
+                        "tokenizer/*",
+                        "--local-dir",
+                        str(uncensored_dir),
+                    ],
+                    timeout=3600,
+                )
+                step += 1
+
+            # Apply the profile and refresh discovery while the current backend
+            # keeps serving; this does not touch the GPU.
+            self.job["step"] = step
+            self._append_job_line("--- Uncensored-Profil anwenden ---")
+            models_root, cache_root = self._default_roots()
+            profile = uncensored_quick_template(tag, models_root, cache_root)
+            profile_payload = profile_to_dict(profile)
+            self.install_dirs(profile_payload)
+            preview = self.dry_run(profile_payload)
+            if not preview["ok"]:
+                raise DeployError("; ".join(preview["errors"]))
+            await self.apply(profile_payload)
+            self.reload_discovery()
+            step += 1
+
+            # Switch onto uncensored: stop the active backend, free the GPU,
+            # convert (if needed), then start uncensored. The convert runs as
+            # the switch hook so it has the GPU to itself.
+            self.job["step"] = step
+            self._append_job_line("--- Aktives Backend stoppen und Uncensored starten ---")
+            image = f"ghcr.io/peonist-ai/halogen-flash-server:{tag}"
+
+            async def convert_hook() -> None:
+                if output.exists():
+                    self._append_job_line("--- Konvertierung uebersprungen, .hgn vorhanden ---")
+                    return
                 self._append_job_line("--- GGUF nach HGN konvertieren ---")
                 cmd = [
                     "podman", "run", "--rm",
@@ -721,21 +727,8 @@ class DeployManager:
                     f"/models/{output.name}",
                 ]
                 await self._run_stream(cmd, timeout=7200)
-                step += 1
-            else:
-                self._append_job_line("--- Konvertierung uebersprungen, .hgn vorhanden ---")
 
-            self.job["step"] = step
-            self._append_job_line("--- Uncensored-Profil anwenden ---")
-            models_root, cache_root = self._default_roots()
-            profile = uncensored_quick_template(tag, models_root, cache_root)
-            profile_payload = profile_to_dict(profile)
-            self.install_dirs(profile_payload)
-            preview = self.dry_run(profile_payload)
-            if not preview["ok"]:
-                raise DeployError("; ".join(preview["errors"]))
-            await self.apply(profile_payload)
-            await self.start(profile.profile_id)
+            await self.manager.switch_with_hook(profile.model_id, convert_hook)
             self.job["state"] = "done"
         except Exception as exc:
             self.job["state"] = "error"

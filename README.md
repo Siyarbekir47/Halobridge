@@ -171,22 +171,29 @@ disk stay the source of truth.
 
 ### One-click deploy
 
-For a fresh install, the **Quick deploy** section at the top of **Profile &
-Deployment** needs no configuration:
+The **Quick deploy** section at the top of **Profile & Deployment** needs no
+configuration. Halobridge serves one backend at a time, so installing a model
+takes over the host: the currently active backend is drained and stopped, the
+GPU is released, the new model is installed and started, and the router points
+at it. You do not have to stop the running model by hand first.
 
 - **Official model** — one click installs the official profile and starts it.
   The first start downloads the upstream weights (~118 GiB) through
   `HALOGEN_DOWNLOAD`; later starts are offline. If a profile already exists,
   the existing one is started instead of being overwritten.
 - **Uncensored model** — paste a Hugging Face read token and click once.
-  Halobridge downloads the uncensored GGUF, the draft head and tokenizer,
-  converts to `.hgn`, applies the profile and starts it — all as one
-  streaming job with visible steps. If the converted `.hgn` already exists,
-  the download/convert steps are skipped.
+  Halobridge downloads the uncensored GGUF, the draft head and tokenizer
+  (while the current model keeps serving), then stops the active backend,
+  converts to `.hgn` with the GPU to itself, applies the profile and starts
+  uncensored — all as one streaming job with visible steps. If the converted
+  `.hgn` already exists, the download/convert steps are skipped and no token
+  is required.
 
-Both buttons still ask for a confirmation click and respect the same safety
-boundaries as the advanced editor (one backend at a time, allowed roots,
-same-origin + `X-Halogen-Action: deploy`).
+Both buttons ask for a confirmation click (labelled "Stop active model &
+install?") and respect the same safety boundaries as the advanced editor
+(allowed roots, same-origin + `X-Halogen-Action: deploy`). The switch drains
+in-flight requests and waits for GPU memory release before touching the
+hardware, so it never runs two backends on the GPU at once.
 
 ### Advanced editor
 

@@ -10,7 +10,7 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, web
 from halogen_dashboard import Dashboard, INFERENCE_ENDPOINTS
@@ -447,6 +447,57 @@ class ModelManager:
             "Modellwechsel abgeschlossen: %s",
             target_model,
         )
+
+    async def switch_with_hook(
+        self,
+        target_model: str,
+        hook: Optional[Callable[[], Awaitable[None]]] = None,
+    ) -> None:
+        """Stop the current backend and release the GPU, run an optional async
+        ``hook`` (e.g. a one-shot convert container), then start
+        ``target_model`` and make it current.
+
+        Uses the same switch lock as :meth:`reserve_request`, so request
+        admission stays closed for the whole operation and in-flight requests
+        are drained first. The hook runs after the GPU is free and before the
+        target service is started. This lets a quick install take over a busy
+        host instead of being blocked by the active backend.
+        """
+        async with self.condition:
+            self._check_maintenance()
+            while self.switching:
+                await self.condition.wait()
+                self._check_maintenance()
+            self.switching = True
+            self.switch_target = target_model
+            while self.active_requests > 0:
+                await self.condition.wait()
+
+        try:
+            old_model = self.current_model
+            await self.wait_for_backend_idle()
+            if old_model in self.models:
+                await self.stop_service(old_model)
+            else:
+                await self.stop_all_model_services()
+            await self.wait_for_gtt_release()
+            if hook is not None:
+                await hook()
+            await self.start_service(target_model)
+        except Exception as exc:
+            async with self.condition:
+                self.switching = False
+                self.switch_target = None
+                self.condition.notify_all()
+            raise RouterError(
+                f"Switch auf {target_model} fehlgeschlagen: {exc}"
+            ) from exc
+
+        async with self.condition:
+            self.current_model = target_model
+            self.switching = False
+            self.switch_target = None
+            self.condition.notify_all()
 
     def _check_maintenance(self) -> None:
         if self.maintenance:

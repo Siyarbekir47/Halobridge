@@ -166,7 +166,7 @@
 <body>
 <main class="shell">
   <header class="top">
-    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.5</span></span></div>
+    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.6</span></span></div>
     <div class="controls">
       <label for="langSelect" class="muted" data-i18n="lang_label">Sprache</label>
       <select id="langSelect" data-i18n-attr="aria-label:lang_label"><option value="de">Deutsch</option><option value="en">English</option></select>
@@ -894,12 +894,11 @@ function collectDeploy() {
 function invalidateDeployPreview() { deployPreviewOk = false; $('deployApply').disabled = true; }
 function showDeployError(message) { const el = $('deployError'); el.hidden = false; el.textContent = message; }
 function resetDeployArm() { if (deployArm) { deployArm.btn.textContent = deployArm.label; deployArm = null; } }
-function armDeploy(btn, run) {
+function armDeploy(btn, run, confirmLabel) {
   if (deployArm && deployArm.btn === btn) { const fn = deployArm.run; resetDeployArm(); fn(); return; }
   resetDeployArm();
   deployArm = {btn, label: btn.textContent, run};
-  btn.textContent = t('deploy_confirm');
-  setTimeout(resetDeployArm, 12000);
+  btn.textContent = confirmLabel || t('deploy_confirm');
 }
 async function deployRequest(path, options = {}) {
   const response = await fetch(path, {cache: 'no-store', ...options});
@@ -1097,7 +1096,7 @@ $('quickOfficialBtn').addEventListener('click', () => {
       await deployReload();
     } catch (err) { showDeployError(err.message); }
     finally { deployBusy = false; resetDeployArm(); }
-  });
+  }, t('quick_confirm'));
 });
 $('quickUncensoredBtn').addEventListener('click', () => {
   if (deployBusy) return;
@@ -1115,7 +1114,7 @@ $('quickUncensoredBtn').addEventListener('click', () => {
       startJobPoll();
     } catch (err) { showDeployError(err.message); }
     finally { deployBusy = false; resetDeployArm(); }
-  });
+  }, t('quick_confirm'));
 });
 $('convBtn').addEventListener('click', async () => {
   try {
