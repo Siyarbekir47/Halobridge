@@ -166,7 +166,7 @@
 <body>
 <main class="shell">
   <header class="top">
-    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen</span></div>
+    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.3</span></span></div>
     <div class="controls">
       <label for="langSelect" class="muted" data-i18n="lang_label">Sprache</label>
       <select id="langSelect" data-i18n-attr="aria-label:lang_label"><option value="de">Deutsch</option><option value="en">English</option></select>
@@ -382,7 +382,8 @@ function handleUnauthorized(response) {
 }
 
 function renderLive(data) {
-  const api = data.api || {}, backend = data.backend || {}, system = data.system || {};
+  const api = data.api || {}, backend = data.backend || {}, system = data.system || {}, app = data.app || {};
+  $('appVersion').textContent = app.version ? `v${app.version}` : 'v0+local';
   const online = backend.status === 'ok';
   const switching = api.status === 'switching';
   const maintenance = api.status === 'maintenance';

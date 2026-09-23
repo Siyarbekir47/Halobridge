@@ -266,3 +266,13 @@ def load(path: str | os.PathLike[str] | None = None) -> Config:
     if not isinstance(data, dict):
         raise ConfigError(f"Konfiguration in {resolved} muss ein Objekt sein")
     return Config.from_dict(data, source=resolved)
+
+
+def app_version() -> str:
+    """Installed package version, with a clear local-source fallback."""
+    try:
+        from importlib.metadata import version
+
+        return version(APP)
+    except Exception:
+        return "0+local"

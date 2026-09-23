@@ -17,6 +17,8 @@ from typing import Any, Optional
 
 from aiohttp import ClientSession, ClientTimeout, web
 
+import settings
+
 
 STATE_DIR = Path.home() / ".local/state/halogen-dashboard"
 RETENTION_DAYS = 365
@@ -811,6 +813,7 @@ class Dashboard:
             disk_info = {}
         return {
             "generated_at": time.time(),
+            "app": {"name": settings.APP, "version": settings.app_version()},
             "api": {"models": list(self.models), "active_model": state.get("active_model"),
                     "switch_target": state.get("switch_target"), "status": state.get("status")},
             "backend": {

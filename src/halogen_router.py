@@ -1028,12 +1028,7 @@ def app_version() -> str:
     Falls back to '0+local' when running from a bare source checkout that was
     never pip-installed, so --version never lies about a released number.
     """
-    try:
-        from importlib.metadata import version
-
-        return version("halobridge")
-    except Exception:
-        return "0+local"
+    return settings.app_version()
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
