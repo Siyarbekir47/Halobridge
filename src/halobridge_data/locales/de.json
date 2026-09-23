@@ -246,5 +246,10 @@
   "job_state_running": "laeuft",
   "job_state_done": "fertig",
   "job_state_error": "Fehler",
-  "deploy_f_download": "Download-Repo (leer = aus)"
+  "deploy_f_download": "Download-Repo (leer = aus)",
+  "quick_title": "1-Klick-Installation",
+  "quick_official": "Offizielles Modell installieren",
+  "quick_uncensored": "Uncensored installieren",
+  "quick_note": "Official lädt beim ersten Start ca. 118 GiB. Uncensored lädt das GGUF, konvertiert es und startet danach.",
+  "job_quick_uncensored": "Uncensored-Setup"
 }

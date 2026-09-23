@@ -246,5 +246,10 @@
   "job_state_running": "running",
   "job_state_done": "done",
   "job_state_error": "error",
-  "deploy_f_download": "Download repo (empty = off)"
+  "deploy_f_download": "Download repo (empty = off)",
+  "quick_title": "One-click install",
+  "quick_official": "Install official model",
+  "quick_uncensored": "Install uncensored model",
+  "quick_note": "Official downloads about 118 GiB on first start. Uncensored downloads the GGUF, converts it, then starts.",
+  "job_quick_uncensored": "Uncensored setup"
 }

@@ -166,7 +166,7 @@
 <body>
 <main class="shell">
   <header class="top">
-    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.4</span></span></div>
+    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.5</span></span></div>
     <div class="controls">
       <label for="langSelect" class="muted" data-i18n="lang_label">Sprache</label>
       <select id="langSelect" data-i18n-attr="aria-label:lang_label"><option value="de">Deutsch</option><option value="en">English</option></select>
@@ -277,6 +277,17 @@
     <details id="deploySection"><summary data-i18n="deploy_summary">Profile &amp; Deployment</summary><div class="detail-body">
       <p id="deployHint" class="muted">–</p>
       <p id="deployError" class="failure" role="alert" hidden></p>
+      <div id="quickDeploy" class="quick-deploy" hidden>
+        <p class="list-title" data-i18n="quick_title">1-Klick-Installation</p>
+        <div class="deploy-fields">
+          <label><span data-i18n="hf_token">HF-Token — nur READ benötigt</span><input id="quickHfToken" type="password" autocomplete="off" autocapitalize="off"></label>
+        </div>
+        <div class="deploy-actions">
+          <button type="button" id="quickOfficialBtn" data-i18n="quick_official">Offizielles Modell installieren</button>
+          <button type="button" id="quickUncensoredBtn" data-i18n="quick_uncensored">Uncensored installieren</button>
+        </div>
+        <p class="muted" data-i18n="quick_note">Official lädt beim ersten Start ca. 118 GiB. Uncensored lädt das GGUF, konvertiert es und startet danach.</p>
+      </div>
       <div id="deployList"><p>–</p></div>
       <div id="deployNew" class="deploy-new">
         <label for="deployTemplate" data-i18n="deploy_new_label">Neues Profil aus Vorlage:</label>
@@ -913,6 +924,7 @@ function renderDeploy() {
     $('deployHf').hidden = true;
     return;
   }
+  $('quickDeploy').hidden = false;
   $('deployNew').hidden = false;
   $('deployHf').hidden = false;
   refreshHf();
@@ -1042,7 +1054,8 @@ async function pollJob() {
     const job = await deployRequest('/dashboard/api/deploy/job');
     if (!job.active) { $('jobBox').hidden = true; return; }
     $('jobBox').hidden = false;
-    $('jobKind').textContent = t('job_' + job.kind.replace(/-/g, '_'));
+    const step = job.total_steps ? ` (${job.step || 0}/${job.total_steps})` : '';
+    $('jobKind').textContent = t('job_' + job.kind.replace(/-/g, '_')) + step;
     const stateEl = $('jobState');
     stateEl.textContent = t('job_state_' + job.state);
     stateEl.className = 'badge' + (job.state === 'running' ? ' ok' : job.state === 'error' ? ' err' : '');
@@ -1072,6 +1085,37 @@ $('hfDownloadBtn').addEventListener('click', async () => {
     await deployRequest('/dashboard/api/deploy/hf/download', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({repo: $('hfRepo').value.trim(), file: $('hfFile').value.trim(), dest: $('hfDest').value.trim(), token})});
     startJobPoll();
   } catch (err) { showDeployError(err.message); }
+});
+$('quickOfficialBtn').addEventListener('click', () => {
+  if (deployBusy) return;
+  armDeploy($('quickOfficialBtn'), async () => {
+    deployBusy = true;
+    $('deployError').hidden = true;
+    try {
+      await deployRequest('/dashboard/api/deploy/quick/official', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
+      await refreshDeploy();
+      await deployReload();
+    } catch (err) { showDeployError(err.message); }
+    finally { deployBusy = false; resetDeployArm(); }
+  });
+});
+$('quickUncensoredBtn').addEventListener('click', () => {
+  if (deployBusy) return;
+  const token = $('quickHfToken').value.trim();
+  if (!token) {
+    showDeployError(t('hf_token_required') || 'HF-Token fehlt.');
+    return;
+  }
+  armDeploy($('quickUncensoredBtn'), async () => {
+    deployBusy = true;
+    $('deployError').hidden = true;
+    try {
+      await deployRequest('/dashboard/api/deploy/quick/uncensored', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify({token})});
+      $('quickHfToken').value = '';
+      startJobPoll();
+    } catch (err) { showDeployError(err.message); }
+    finally { deployBusy = false; resetDeployArm(); }
+  });
 });
 $('convBtn').addEventListener('click', async () => {
   try {

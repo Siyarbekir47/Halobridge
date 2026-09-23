@@ -169,6 +169,27 @@ If Halogen is not installed yet, the dashboard can install and manage it. If
 Quadlets already exist, they are imported and edited in place — the files on
 disk stay the source of truth.
 
+### One-click deploy
+
+For a fresh install, the **Quick deploy** section at the top of **Profile &
+Deployment** needs no configuration:
+
+- **Official model** — one click installs the official profile and starts it.
+  The first start downloads the upstream weights (~118 GiB) through
+  `HALOGEN_DOWNLOAD`; later starts are offline. If a profile already exists,
+  the existing one is started instead of being overwritten.
+- **Uncensored model** — paste a Hugging Face read token and click once.
+  Halobridge downloads the uncensored GGUF, the draft head and tokenizer,
+  converts to `.hgn`, applies the profile and starts it — all as one
+  streaming job with visible steps. If the converted `.hgn` already exists,
+  the download/convert steps are skipped.
+
+Both buttons still ask for a confirmation click and respect the same safety
+boundaries as the advanced editor (one backend at a time, allowed roots,
+same-origin + `X-Halogen-Action: deploy`).
+
+### Advanced editor
+
 Open **Profile & Deployment** in the dashboard:
 
 - **New profile from template** — two starting points:

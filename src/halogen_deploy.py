@@ -36,10 +36,12 @@ from profiles import (
     Profile,
     ProfileError,
     custom_template,
+    official_quick_template,
     official_template,
     parse_quadlet,
     profile_to_dict,
     render_quadlet,
+    uncensored_quick_template,
     uncensored_template,
     validate_profile,
 )
@@ -122,6 +124,10 @@ class DeployManager:
             profile = official_template(tag, models_root, cache_root)
         elif kind == "uncensored":
             profile = uncensored_template(tag, models_root, cache_root)
+        elif kind == "official-quick":
+            profile = official_quick_template(tag, models_root, cache_root)
+        elif kind == "uncensored-quick":
+            profile = uncensored_quick_template(tag, models_root, cache_root)
         elif kind == "custom":
             profile = custom_template(tag, models_root, cache_root)
         else:
@@ -327,6 +333,8 @@ class DeployManager:
             "lines": self.job["lines"][-25:],
             "error": self.job.get("error"),
             "elapsed": round(time.time() - self.job["started"], 1),
+            "step": self.job.get("step"),
+            "total_steps": self.job.get("total_steps"),
         }
 
     def hf_install(self) -> dict:
@@ -501,6 +509,238 @@ class DeployManager:
         else:
             self.job["state"] = "error"
             self.job["error"] = f"Exit {returncode}"
+
+    def _append_job_line(self, text: str) -> None:
+        if self.job is None:
+            return
+        self.job["lines"].append(text)
+        if len(self.job["lines"]) > 200:
+            del self.job["lines"][:-200]
+
+    async def _run_stream(
+        self,
+        argv: list[str],
+        env_extra: dict | None = None,
+        timeout: float = 3600,
+        token: str | None = None,
+    ) -> None:
+        env = dict(os.environ)
+        if env_extra:
+            env.update(env_extra)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=env,
+            )
+        except FileNotFoundError as exc:
+            raise DeployError(f"Programm nicht gefunden: {argv[0]} ({exc})")
+
+        async def pump() -> None:
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if token and token in text:
+                    text = text.replace(token, "[token]")
+                self._append_job_line(text)
+
+        try:
+            await asyncio.wait_for(pump(), timeout)
+            returncode = await process.wait()
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise DeployError(f"Zeitueberschreitung bei: {argv[0]}")
+        if returncode != 0:
+            raise DeployError(f"{argv[0]} fehlgeschlagen (Exit {returncode})")
+
+    def _start_pipeline_job(self, kind: str, total_steps: int) -> dict:
+        if self.job is not None and self.job["state"] == "running":
+            raise DeployError("Es laeuft bereits ein Job. Bitte warten.")
+        self.job = {
+            "kind": kind,
+            "state": "running",
+            "lines": [],
+            "error": None,
+            "started": time.time(),
+            "step": 0,
+            "total_steps": total_steps,
+        }
+        return {"ok": True, "kind": kind}
+
+    async def quick_official(self) -> dict:
+        self._require_enabled()
+        if await self._service_is_active("halogen-official.service"):
+            return {"ok": True, "already": True, "service": "halogen-official.service"}
+        if await self._any_other_service_active("official"):
+            raise DeployError(
+                "Ein anderes Backend ist bereits aktiv. Halobridge bedient immer "
+                "nur ein Backend gleichzeitig; wechsle zuerst das Modell."
+            )
+        target = self.quadlet_dir / "halogen-official.container"
+        if target.exists():
+            started = await self.start("official")
+            return {"ok": True, "started_existing": True, "start": started}
+        tag = self._suggested_tag()
+        models_root, cache_root = self._default_roots()
+        profile = official_quick_template(tag, models_root, cache_root)
+        payload = profile_to_dict(profile)
+        self.install_dirs(payload)
+        preview = self.dry_run(payload)
+        if not preview["ok"]:
+            raise DeployError("; ".join(preview["errors"]))
+        applied = await self.apply(payload)
+        started = await self.start(profile.profile_id)
+        return {"ok": True, "profile": profile.profile_id, "apply": applied, "start": started}
+
+    async def quick_uncensored(self, payload: dict) -> dict:
+        self._require_enabled()
+        if await self._service_is_active("halogen-uncensored.service"):
+            return {"ok": True, "already": True, "service": "halogen-uncensored.service"}
+        if await self._any_other_service_active("uncensored"):
+            raise DeployError(
+                "Ein anderes Backend ist bereits aktiv. Halobridge bedient immer "
+                "nur ein Backend gleichzeitig; wechsle zuerst das Modell."
+            )
+        token = str(payload.get("token", "")).strip()
+        if not token:
+            raise DeployError(
+                "HF-Token fehlt. Ein fine-graunes Token mit Read-Recht reicht."
+            )
+        tag = self._suggested_tag()
+        models_root, cache_root = self._default_roots()
+        uncensored_dir = models_root / "uncensored"
+        self._validate_host_path(str(uncensored_dir))
+        uncensored_dir.mkdir(parents=True, exist_ok=True)
+        gguf = uncensored_dir / UNCENSORED_DEFAULT_GGUF_NAME
+        output = uncensored_dir / UNCENSORED_DEFAULT_OUTPUT
+        target = self.quadlet_dir / "halogen-uncensored.container"
+        image = f"ghcr.io/peonist-ai/halogen-flash-server:{tag}"
+        if output.exists():
+            if target.exists():
+                started = await self.start("uncensored")
+                return {"ok": True, "started_existing": True, "start": started}
+            profile = uncensored_quick_template(tag, models_root, cache_root)
+            profile_payload = profile_to_dict(profile)
+            self.install_dirs(profile_payload)
+            preview = self.dry_run(profile_payload)
+            if not preview["ok"]:
+                raise DeployError("; ".join(preview["errors"]))
+            applied = await self.apply(profile_payload)
+            started = await self.start(profile.profile_id)
+            return {"ok": True, "profile": profile.profile_id, "apply": applied, "start": started}
+        hf = self._hf_executable()
+        steps = 5 if hf else 6
+        self._start_pipeline_job("quick-uncensored", steps)
+        self._job_task = asyncio.create_task(
+            self._run_quick_uncensored(token, tag, uncensored_dir, gguf, output, image)
+        )
+        return {"ok": True, "kind": "quick-uncensored"}
+
+    async def _run_quick_uncensored(
+        self,
+        token: str,
+        tag: str,
+        uncensored_dir: Path,
+        gguf: Path,
+        output: Path,
+        image: str,
+    ) -> None:
+        try:
+            step = 1
+            if not self._hf_executable():
+                self.job["step"] = step
+                self._append_job_line(f"--- {step}: HF-CLI installieren ---")
+                await self._run_stream(
+                    [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
+                    timeout=900,
+                )
+                step += 1
+            hf = self._hf_executable()
+            if not hf:
+                raise DeployError("HF-CLI fehlt nach Installation.")
+
+            self.job["step"] = step
+            self._append_job_line(f"--- {step}: Uncensored-GGUF herunterladen ---")
+            await self._run_stream(
+                [hf, "download", UNCENSORED_HF_REPO, "--local-dir", str(uncensored_dir)],
+                {"HF_TOKEN": token},
+                timeout=21600,
+                token=token,
+            )
+            step += 1
+
+            self.job["step"] = step
+            self._append_job_line("--- Draft-Head herunterladen ---")
+            await self._run_stream(
+                [
+                    hf,
+                    "download",
+                    OFFICIAL_WEIGHTS_REPO,
+                    "qwen38-flash-next-mtp.hgn",
+                    "--local-dir",
+                    str(uncensored_dir),
+                ],
+                timeout=3600,
+            )
+            step += 1
+
+            self.job["step"] = step
+            self._append_job_line("--- Tokenizer herunterladen ---")
+            await self._run_stream(
+                [
+                    hf,
+                    "download",
+                    OFFICIAL_WEIGHTS_REPO,
+                    "--include",
+                    "tokenizer/*",
+                    "--local-dir",
+                    str(uncensored_dir),
+                ],
+                timeout=3600,
+            )
+            step += 1
+
+            if not output.exists():
+                self.job["step"] = step
+                self._append_job_line("--- GGUF nach HGN konvertieren ---")
+                cmd = [
+                    "podman", "run", "--rm",
+                    "--device", "/dev/kfd",
+                    "--device", "/dev/dri",
+                    "--group-add", "keep-groups",
+                    "--ipc=host",
+                    "--ulimit", "memlock=-1:-1",
+                    "-v", f"{uncensored_dir}:/models:Z",
+                    image,
+                    "convert",
+                    f"/models/{gguf.name}",
+                    f"/models/{output.name}",
+                ]
+                await self._run_stream(cmd, timeout=7200)
+                step += 1
+            else:
+                self._append_job_line("--- Konvertierung uebersprungen, .hgn vorhanden ---")
+
+            self.job["step"] = step
+            self._append_job_line("--- Uncensored-Profil anwenden ---")
+            models_root, cache_root = self._default_roots()
+            profile = uncensored_quick_template(tag, models_root, cache_root)
+            profile_payload = profile_to_dict(profile)
+            self.install_dirs(profile_payload)
+            preview = self.dry_run(profile_payload)
+            if not preview["ok"]:
+                raise DeployError("; ".join(preview["errors"]))
+            await self.apply(profile_payload)
+            await self.start(profile.profile_id)
+            self.job["state"] = "done"
+        except Exception as exc:
+            self.job["state"] = "error"
+            self.job["error"] = str(exc)
+            self._append_job_line(f"ERROR: {exc}")
 
     # ------------------------------------------------------------ helpers
 
@@ -886,6 +1126,24 @@ class DeployRoutes:
         except Exception as exc:
             return self._error(exc, 500)
 
+    async def api_quick_official(self, request: web.Request) -> web.Response:
+        try:
+            self._guard(request)
+            return web.json_response(await self.manager.quick_official())
+        except DeployError as exc:
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
+
+    async def api_quick_uncensored(self, request: web.Request) -> web.Response:
+        try:
+            self._guard(request)
+            return web.json_response(await self.manager.quick_uncensored(await self._payload(request)))
+        except DeployError as exc:
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
+
     def register_routes(self, app: web.Application) -> None:
         app.router.add_get("/dashboard/api/deploy", self.api_status)
         app.router.add_get("/dashboard/api/deploy/template/{kind}", self.api_template)
@@ -904,3 +1162,7 @@ class DeployRoutes:
         app.router.add_post("/dashboard/api/deploy/hf/download", self.api_hf_download)
         app.router.add_post("/dashboard/api/deploy/convert", self.api_convert)
         app.router.add_post("/dashboard/api/deploy/verify", self.api_verify)
+        app.router.add_post("/dashboard/api/deploy/quick/official", self.api_quick_official)
+        app.router.add_post(
+            "/dashboard/api/deploy/quick/uncensored", self.api_quick_uncensored
+        )

@@ -7,12 +7,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from profiles import (
     ENV_FIELDS,
+    OFFICIAL_WEIGHTS_REPO,
     Profile,
     ProfileError,
     custom_template,
+    official_quick_template,
     official_template,
     parse_quadlet,
     render_quadlet,
+    uncensored_quick_template,
     uncensored_template,
     validate_profile,
 )
@@ -218,6 +221,31 @@ class TemplateTests(unittest.TestCase):
         )
         imported = parse_quadlet(render_quadlet(profile))
         self.assertEqual(render_quadlet(imported), render_quadlet(profile))
+
+    def test_official_quick_template_downloads_weights(self):
+        profile = official_quick_template(
+            "0.13.2", Path("/home/tester/halogen/models"), Path("/home/tester/halogen/cache")
+        )
+        self.assertEqual(validate_profile(profile), [])
+        self.assertTrue(profile.downloads_weights)
+        self.assertEqual(profile.env["HALOGEN_DOWNLOAD"], OFFICIAL_WEIGHTS_REPO)
+        self.assert_common_runtime_env(profile)
+        models = next(v for v in profile.volumes if v[1] == "/models")
+        self.assertNotIn("ro", models[2])
+
+    def test_uncensored_quick_template_uses_converted_hgn(self):
+        profile = uncensored_quick_template(
+            "0.13.2", Path("/home/tester/halogen/models"), Path("/home/tester/halogen/cache")
+        )
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(profile.model_id, "qwen3.8-flash-uncensored")
+        self.assertEqual(
+            profile.env["HALOGEN_CHECKPOINT"], "/models/qwen3.8-flash-uncensored.hgn"
+        )
+        self.assertEqual(profile.env["HALOGEN_TOKENIZER"], "/models/tokenizer")
+        self.assert_common_runtime_env(profile)
+        models = next(v for v in profile.volumes if v[1] == "/models")
+        self.assertIn("ro", models[2])
 
     def test_custom_template_valid_and_readonly(self):
         profile = custom_template(

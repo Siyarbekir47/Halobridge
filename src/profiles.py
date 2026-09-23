@@ -382,6 +382,45 @@ def uncensored_template(image_tag: str, models_root: Path, cache_root: Path) -> 
     )
 
 
+def official_quick_template(image_tag: str, models_root: Path, cache_root: Path) -> Profile:
+    """One-click official install: first start downloads weights into /models."""
+    env = {
+        "HALOGEN_MODEL_ID": "qwen3.8-flash",
+        "HALOGEN_DOWNLOAD": OFFICIAL_WEIGHTS_REPO,
+        **_COMMON_RUNTIME_ENV,
+    }
+    return Profile(
+        profile_id="official",
+        image=f"{OFFICIAL_IMAGE_REPO}:{image_tag}",
+        volumes=[
+            (str(models_root), CONTAINER_MODELS_PATH, "Z"),
+            (str(cache_root), CONTAINER_CACHE_PATH, "Z"),
+        ],
+        host_port=8831,
+        env=env,
+    )
+
+
+def uncensored_quick_template(image_tag: str, models_root: Path, cache_root: Path) -> Profile:
+    """One-click uncensored install after the converted .hgn and tokenizer are present."""
+    env = {
+        "HALOGEN_MODEL_ID": "qwen3.8-flash-uncensored",
+        "HALOGEN_CHECKPOINT": f"/models/{UNCENSORED_DEFAULT_OUTPUT}",
+        "HALOGEN_TOKENIZER": "/models/tokenizer",
+        **_COMMON_RUNTIME_ENV,
+    }
+    return Profile(
+        profile_id="uncensored",
+        image=f"{OFFICIAL_IMAGE_REPO}:{image_tag}",
+        volumes=[
+            (str(models_root / "uncensored"), CONTAINER_MODELS_PATH, "ro,Z"),
+            (str(cache_root / "uncensored"), CONTAINER_CACHE_PATH, "Z"),
+        ],
+        host_port=8831,
+        env=env,
+    )
+
+
 def custom_template(image_tag: str, models_root: Path, cache_root: Path) -> Profile:
     """Template for a user-provided model (GGUF or .hgn); no auto-download."""
     return Profile(
