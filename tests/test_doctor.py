@@ -29,7 +29,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
         with redirect_stdout(out):
             code = await doctor.run(config)
         self.assertEqual(code, 1)
-        self.assertIn("Keine Modelle", out.getvalue())
+        self.assertIn("No models found", out.getvalue())
 
     async def test_explicit_model_and_token_passes(self):
         config = Config(
@@ -45,7 +45,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
         with redirect_stdout(out):
             code = await doctor.run(config)
         self.assertEqual(code, 0)
-        self.assertIn("Token-Gate aktiv", out.getvalue())
+        self.assertIn("Token gate active", out.getvalue())
         self.assertIn("model-a -> svc-a.service", out.getvalue())
 
 

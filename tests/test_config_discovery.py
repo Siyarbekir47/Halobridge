@@ -187,7 +187,7 @@ class DiscoveryTests(TempCase):
         self._write("dup.container", good_quadlet(container="halogen-dup", model="m-a"))
         models, skipped = discover(self.root, REPO)
         self.assertEqual(set(models), {"m-a", "m-b"})
-        self.assertTrue(any("bereits" in s for s in skipped))
+        self.assertTrue(any("already used by" in s for s in skipped))
 
     def test_discover_missing_dir(self):
         models, skipped = discover(self.root / "nope", REPO)

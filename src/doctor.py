@@ -92,14 +92,14 @@ async def run(config: settings.Config) -> int:
     if sys.version_info >= (3, 11):
         report.ok(f"Python {platform.python_version()}")
     else:
-        report.fail(f"Python >= 3.11 erforderlich, gefunden {platform.python_version()}")
+        report.fail(f"Python >= 3.11 required, found {platform.python_version()}")
 
     if importlib.util.find_spec("aiohttp") is None:
-        report.fail("aiohttp ist nicht installiert")
+        report.fail("aiohttp is not installed")
     else:
-        report.ok("aiohttp installiert")
+        report.ok("aiohttp installed")
 
-    report.ok(f"Config: {config.source or 'Defaults (keine Datei)'}")
+    report.ok(f"Config: {config.source or 'Defaults (no file)'}")
     report.ok(
         f"Router: bind={', '.join(config.router.bind)} port={config.router.port} "
         f"backend={config.router.backend_url}"
@@ -117,63 +117,63 @@ async def run(config: settings.Config) -> int:
                 )
             )
         else:
-            report.warn(f"Discovery: keine Modelle in {config.models.quadlet_dir} gefunden")
+            report.warn(f"Discovery: no models found in {config.models.quadlet_dir}")
         for reason in skipped:
-            report.warn(f"Discovery übersprungen: {reason}")
+            report.warn(f"Discovery skipped: {reason}")
     else:
-        report.ok("Discovery deaktiviert")
+        report.ok("Discovery disabled")
 
     models = {spec.model_id: spec.service for spec in specs.values()}
     models.update(config.models.explicit)
     if models:
-        report.ok(f"Modell-Map: {', '.join(f'{m} -> {s}' for m, s in models.items())}")
+        report.ok(f"Model map: {', '.join(f'{m} -> {s}' for m, s in models.items())}")
     else:
         report.fail(
-            "Keine Modelle gefunden. models.auto_discover/quadlet_dir prüfen "
-            "oder models.explicit setzen."
+            "No models found. Check models.auto_discover/quadlet_dir "
+            "or set models.explicit."
         )
 
     if config.models.explicit:
-        report.ok("Explizite Modell-Overrides vorhanden")
+        report.ok("Explicit model overrides present")
 
     if _writable(config.dashboard.state_dir):
-        report.ok(f"State-Verzeichnis beschreibbar: {config.dashboard.state_dir}")
+        report.ok(f"State directory writable: {config.dashboard.state_dir}")
     else:
-        report.fail(f"State-Verzeichnis nicht beschreibbar: {config.dashboard.state_dir}")
+        report.fail(f"State directory not writable: {config.dashboard.state_dir}")
 
     if config.updates.enabled:
         if _writable(config.updates.backup_dir):
-            report.ok(f"Backup-Verzeichnis beschreibbar: {config.updates.backup_dir}")
+            report.ok(f"Backup directory writable: {config.updates.backup_dir}")
         else:
             report.fail(
-                f"Backup-Verzeichnis nicht beschreibbar: {config.updates.backup_dir}"
+                f"Backup directory not writable: {config.updates.backup_dir}"
             )
     else:
-        report.warn("Updates sind deaktiviert")
+        report.warn("Updates are disabled")
 
     podman = shutil.which("podman")
     systemctl = shutil.which("systemctl")
     if podman:
-        report.ok(f"podman gefunden: {podman}")
+        report.ok(f"podman found: {podman}")
     else:
-        report.warn("podman nicht gefunden; Modell-Updates sind nicht möglich")
+        report.warn("podman not found; model updates are not possible")
 
     if systemctl:
-        report.ok(f"systemctl gefunden: {systemctl}")
+        report.ok(f"systemctl found: {systemctl}")
     else:
-        report.warn("systemctl nicht gefunden; Modellwechsel/Updates sind nicht möglich")
+        report.warn("systemctl not found; model switching/updates are not possible")
 
     if shutil.which("journalctl"):
-        report.ok("journalctl gefunden; Engine-Telemetrie möglich")
+        report.ok("journalctl found; engine telemetry possible")
     else:
-        report.warn("journalctl nicht gefunden; Engine-Telemetrie eingeschränkt")
+        report.warn("journalctl not found; engine telemetry limited")
 
     if config.dashboard.gpu_card == "auto":
         cards = _gpu_cards()
         if cards:
-            report.ok(f"GPU-Karte automatisch erkannt: {cards[0].name}")
+            report.ok(f"GPU card automatically detected: {cards[0].name}")
         else:
-            report.warn("Keine GPU-Sysfs-Karte gefunden")
+            report.warn("No GPU sysfs card found")
     else:
         path = (
             config.dashboard.gpu_card
@@ -181,27 +181,27 @@ async def run(config: settings.Config) -> int:
             else f"/sys/class/drm/{config.dashboard.gpu_card}/device/gpu_busy_percent"
         )
         if _read_int(path) is not None:
-            report.ok(f"GPU-Sysfs gelesen: {path}")
+            report.ok(f"GPU sysfs read: {path}")
         else:
-            report.warn(f"GPU-Sysfs nicht lesbar: {path}")
+            report.warn(f"GPU sysfs not readable: {path}")
 
     non_local = [address for address in config.router.bind if not _is_local_bind(address)]
     if non_local and not config.security.auth_token:
         report.warn(
-            "Router ist nicht nur lokal gebunden, aber security.auth_token ist leer. "
-            "Token-Gate empfohlen."
+            "Router is bound beyond localhost but security.auth_token is empty. "
+            "Token gate recommended."
         )
     elif config.security.auth_token:
-        report.ok("Token-Gate aktiv")
+        report.ok("Token gate active")
     else:
-        report.ok("Bind ist lokal; Token-Gate optional")
+        report.ok("Bind is local; token gate optional")
 
     if config.dashboard.public_endpoint:
         if config.dashboard.public_endpoint.startswith("https://"):
             report.ok(f"Public Endpoint: {config.dashboard.public_endpoint}")
         else:
             report.warn(
-                f"Public Endpoint ist nicht HTTPS: {config.dashboard.public_endpoint}"
+                f"Public Endpoint is not HTTPS: {config.dashboard.public_endpoint}"
             )
 
     session = ClientSession(timeout=ClientTimeout(total=3))
@@ -210,14 +210,14 @@ async def run(config: settings.Config) -> int:
             if response.status == 200:
                 health = await response.json()
                 model = health.get("model") if isinstance(health, dict) else None
-                report.ok(f"Backend erreichbar: {config.router.backend_url} ({model or 'kein Modell gemeldet'})")
+                report.ok(f"Backend reachable: {config.router.backend_url} ({model or 'no model reported'})")
             else:
                 report.warn(
-                    f"Backend nicht erreichbar: HTTP {response.status} ({config.router.backend_url})"
+                    f"Backend not reachable: HTTP {response.status} ({config.router.backend_url})"
                 )
     except Exception as error:
         report.warn(
-            f"Backend nicht erreichbar: {type(error).__name__} ({config.router.backend_url})"
+            f"Backend not reachable: {type(error).__name__} ({config.router.backend_url})"
         )
     finally:
         await session.close()

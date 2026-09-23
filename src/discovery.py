@@ -57,28 +57,28 @@ def _container_section(text: str) -> dict[str, list[str]]:
 def parse_quadlet(path: Path, image_repo: str) -> tuple[ModelSpec | None, str | None]:
     """Parse one quadlet. Return (spec, None) or (None, skip_reason)."""
     if path.is_symlink():
-        return None, f"{path.name}: Symlink ignoriert"
+        return None, f"{path.name}: symlink ignored"
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
-        return None, f"{path.name}: nicht lesbar ({type(error).__name__})"
+        return None, f"{path.name}: not readable ({type(error).__name__})"
 
     section = _container_section(text)
     images = section.get("Image", [])
     if len(images) != 1:
-        return None, f"{path.name}: genau eine Image-Zeile erwartet, gefunden {len(images)}"
+        return None, f"{path.name}: expected exactly one Image line, found {len(images)}"
 
     image = images[0]
     prefix = image_repo.rstrip("/") + ":"
     if not image.startswith(prefix):
-        return None, f"{path.name}: Image gehört nicht zu {image_repo}"
+        return None, f"{path.name}: image does not belong to {image_repo}"
     version = normalize_version(image[len(prefix):])
     if version is None:
-        return None, f"{path.name}: keine stabile Version im Image-Tag"
+        return None, f"{path.name}: no stable version in image tag"
 
     names = section.get("ContainerName", [])
     if len(names) != 1 or not names[0]:
-        return None, f"{path.name}: genau ein ContainerName erwartet"
+        return None, f"{path.name}: expected exactly one ContainerName"
     container = names[0]
 
     model_id = None
@@ -87,10 +87,10 @@ def parse_quadlet(path: Path, image_repo: str) -> tuple[ModelSpec | None, str | 
             candidate = value.split("=", 1)[1].strip()
             if candidate:
                 if model_id is not None and model_id != candidate:
-                    return None, f"{path.name}: mehrere unterschiedliche HALOGEN_MODEL_ID"
+                    return None, f"{path.name}: multiple different HALOGEN_MODEL_ID values"
                 model_id = candidate
     if not model_id:
-        return None, f"{path.name}: HALOGEN_MODEL_ID fehlt"
+        return None, f"{path.name}: HALOGEN_MODEL_ID missing"
 
     cache_path = None
     for value in section.get("Volume", []):
@@ -120,7 +120,7 @@ def discover(quadlet_dir: Path, image_repo: str) -> tuple[dict[str, ModelSpec], 
     models: dict[str, ModelSpec] = {}
     skipped: list[str] = []
     if not quadlet_dir.is_dir():
-        return models, [f"Quadlet-Verzeichnis nicht gefunden: {quadlet_dir}"]
+        return models, [f"Quadlet directory not found: {quadlet_dir}"]
 
     for path in sorted(quadlet_dir.glob("*.container")):
         spec, reason = parse_quadlet(path, image_repo)
@@ -130,8 +130,8 @@ def discover(quadlet_dir: Path, image_repo: str) -> tuple[dict[str, ModelSpec], 
             continue
         if spec.model_id in models:
             skipped.append(
-                f"{path.name}: Modell-ID {spec.model_id} bereits durch "
-                f"{models[spec.model_id].quadlet.name} belegt"
+                f"{path.name}: model id {spec.model_id} already used by "
+                f"{models[spec.model_id].quadlet.name}"
             )
             continue
         models[spec.model_id] = spec
