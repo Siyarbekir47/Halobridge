@@ -246,11 +246,15 @@
   "job_state_running": "running",
   "job_state_done": "done",
   "job_state_error": "error",
+  "job_state_cancelled": "cancelled",
+  "job_cancel": "Cancel",
+  "job_cancel_confirm": "Really cancel?",
   "deploy_f_download": "Download repo (empty = off)",
   "quick_title": "One-click install",
   "quick_official": "Install official model",
   "quick_uncensored": "Install uncensored model",
-  "quick_note": "Official downloads about 118 GiB on first start. Uncensored downloads the GGUF, converts it, then starts. Halobridge serves one backend at a time: installing pauses the currently active model and starts the new one afterwards.",
+  "quick_note": "Official downloads about 118 GiB on first start. Uncensored downloads the GGUF, converts it, then starts. Halobridge serves one backend at a time: installing pauses the currently active model and starts the new one afterwards. On failure it rolls back to the previous model automatically.",
   "quick_confirm": "Stop active model & install?",
+  "job_quick_official": "Official setup",
   "job_quick_uncensored": "Uncensored setup"
 }

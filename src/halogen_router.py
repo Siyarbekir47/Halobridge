@@ -312,7 +312,7 @@ class ModelManager:
             timeout=self.stop_timeout,
         )
 
-    async def start_service(self, model: str) -> None:
+    async def start_service(self, model: str, start_timeout: Optional[float] = None) -> None:
         service = self.models[model]
 
         await self.run_command(
@@ -332,7 +332,7 @@ class ModelManager:
             timeout=self.start_timeout,
         )
 
-        await self.wait_for_backend(model)
+        await self.wait_for_backend(model, timeout=start_timeout)
 
     async def stop_all_model_services(self) -> None:
         for model, service in self.models.items():
@@ -452,6 +452,7 @@ class ModelManager:
         self,
         target_model: str,
         hook: Optional[Callable[[], Awaitable[None]]] = None,
+        start_timeout: Optional[float] = None,
     ) -> None:
         """Stop the current backend and release the GPU, run an optional async
         ``hook`` (e.g. a one-shot convert container), then start
@@ -460,8 +461,13 @@ class ModelManager:
         Uses the same switch lock as :meth:`reserve_request`, so request
         admission stays closed for the whole operation and in-flight requests
         are drained first. The hook runs after the GPU is free and before the
-        target service is started. This lets a quick install take over a busy
-        host instead of being blocked by the active backend.
+        target service is started.
+
+        If the target fails to start (or the task is cancelled), the host is
+        rolled back to the previously active model so a failed takeover never
+        leaves the machine without a backend. ``start_timeout`` bounds how long
+        we wait for the target to become healthy before giving up and rolling
+        back.
         """
         async with self.condition:
             self._check_maintenance()
@@ -473,8 +479,8 @@ class ModelManager:
             while self.active_requests > 0:
                 await self.condition.wait()
 
+        old_model = self.current_model
         try:
-            old_model = self.current_model
             await self.wait_for_backend_idle()
             if old_model in self.models:
                 await self.stop_service(old_model)
@@ -483,12 +489,31 @@ class ModelManager:
             await self.wait_for_gtt_release()
             if hook is not None:
                 await hook()
-            await self.start_service(target_model)
-        except Exception as exc:
+            await self.start_service(target_model, start_timeout=start_timeout)
+        except BaseException as exc:
+            cancelled = isinstance(exc, asyncio.CancelledError)
+            LOG.warning(
+                "Switch auf %s fehlgeschlagen (%s); Rollback auf %s",
+                target_model,
+                "abgebrochen" if cancelled else exc,
+                old_model,
+            )
+            try:
+                if target_model in self.models and await self.service_is_active(
+                    self.models[target_model]
+                ):
+                    await self.stop_service(target_model)
+                await self.wait_for_gtt_release()
+                if old_model in self.models:
+                    await self.start_service(old_model)
+            except Exception:
+                LOG.exception("Rollback auf %s fehlgeschlagen", old_model)
             async with self.condition:
                 self.switching = False
                 self.switch_target = None
                 self.condition.notify_all()
+            if cancelled:
+                raise
             raise RouterError(
                 f"Switch auf {target_model} fehlgeschlagen: {exc}"
             ) from exc

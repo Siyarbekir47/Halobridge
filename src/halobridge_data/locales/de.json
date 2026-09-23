@@ -246,11 +246,15 @@
   "job_state_running": "laeuft",
   "job_state_done": "fertig",
   "job_state_error": "Fehler",
+  "job_state_cancelled": "abgebrochen",
+  "job_cancel": "Abbrechen",
+  "job_cancel_confirm": "Wirklich abbrechen?",
   "deploy_f_download": "Download-Repo (leer = aus)",
   "quick_title": "1-Klick-Installation",
   "quick_official": "Offizielles Modell installieren",
   "quick_uncensored": "Uncensored installieren",
-  "quick_note": "Official lädt beim ersten Start ca. 118 GiB. Uncensored lädt das GGUF, konvertiert es und startet danach. Halobridge bedient immer nur ein Backend: Beim Installieren wird das gerade aktive Modell angehalten und danach das neue gestartet.",
+  "quick_note": "Official lädt beim ersten Start ca. 118 GiB. Uncensored lädt das GGUF, konvertiert es und startet danach. Halobridge bedient immer nur ein Backend: Beim Installieren wird das gerade aktive Modell angehalten und danach das neue gestartet. Bei Fehlern wird automatisch auf das vorherige Modell zurückgeschaltet.",
   "quick_confirm": "Aktives Modell stoppen & installieren?",
+  "job_quick_official": "Official-Setup",
   "job_quick_uncensored": "Uncensored-Setup"
 }

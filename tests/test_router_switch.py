@@ -39,8 +39,9 @@ class SwitchWithHookTests(unittest.IsolatedAsyncioTestCase):
             side_effect=lambda: self.calls.append("gtt")
         )
         self.manager.start_service = AsyncMock(
-            side_effect=lambda m: self.calls.append(("start", m))
+            side_effect=lambda m, start_timeout=None: self.calls.append(("start", m))
         )
+        self.manager.service_is_active = AsyncMock(return_value=False)
 
     async def test_stops_old_then_hook_then_starts_new(self):
         self.manager.current_model = OFFICIAL
@@ -83,6 +84,24 @@ class SwitchWithHookTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.manager.switching)
         self.assertIsNone(self.manager.switch_target)
         self.assertEqual(self.manager.current_model, OFFICIAL)
+
+    async def test_rollback_restarts_old_model_on_start_failure(self):
+        self.manager.current_model = OFFICIAL
+        self.manager.service_is_active = AsyncMock(return_value=True)
+
+        async def start_side(model, start_timeout=None):
+            self.calls.append(("start", model))
+            if model == UNCENSORED:
+                raise RuntimeError("boom")
+
+        self.manager.start_service = AsyncMock(side_effect=start_side)
+        with self.assertRaises(RouterError):
+            await self.manager.switch_with_hook(UNCENSORED)
+        # target start failed, then old model was restarted as rollback
+        self.assertIn(("start", OFFICIAL), self.calls)
+        self.assertEqual(self.calls.count(("start", UNCENSORED)), 1)
+        self.assertEqual(self.manager.current_model, OFFICIAL)
+        self.assertFalse(self.manager.switching)
 
     async def test_waits_for_active_requests_to_drain(self):
         self.manager.current_model = OFFICIAL

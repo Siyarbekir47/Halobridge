@@ -51,6 +51,12 @@ logger = logging.getLogger("halobridge.deploy")
 PROFILE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 QUADLET_FILENAME_RE = re.compile(r"^halogen-[a-z0-9][a-z0-9-]{0,31}\.container$")
 
+# How long a quick-install takeover waits for the new backend to become healthy
+# before giving up and rolling back to the previous model. Kept above the normal
+# 2-3 min model load so a healthy start finishes, but bounded so a broken one
+# recovers instead of freezing the host for the full router start timeout.
+QUICK_START_TIMEOUT = 300
+
 
 class DeployError(ValueError):
     """Raised for a rejected deployment; the message is safe to show the user."""
@@ -554,6 +560,10 @@ class DeployManager:
             process.kill()
             await process.wait()
             raise DeployError(f"Zeitueberschreitung bei: {argv[0]}")
+        except asyncio.CancelledError:
+            process.kill()
+            await process.wait()
+            raise
         if returncode != 0:
             raise DeployError(f"{argv[0]} fehlgeschlagen (Exit {returncode})")
 
@@ -575,24 +585,70 @@ class DeployManager:
         self._require_enabled()
         if await self._service_is_active("halogen-official.service"):
             return {"ok": True, "already": True, "service": "halogen-official.service"}
-        target = self.quadlet_dir / "halogen-official.container"
-        if not target.exists():
-            tag = self._suggested_tag()
-            models_root, cache_root = self._default_roots()
-            profile = official_quick_template(tag, models_root, cache_root)
-            payload = profile_to_dict(profile)
-            self.install_dirs(payload)
-            preview = self.dry_run(payload)
-            if not preview["ok"]:
-                raise DeployError("; ".join(preview["errors"]))
-            await self.apply(payload)
-        # Refresh discovery so the router knows the official model, then switch
-        # onto it. The switch stops any other active backend and frees the GPU
-        # first, so a busy host is taken over instead of blocking the install.
-        self.reload_discovery()
-        model_id = parse_quadlet(target.read_text(encoding="utf-8"), target).model_id
-        await self.manager.switch_with_hook(model_id)
-        return {"ok": True, "profile": "official", "model": model_id, "switched": True}
+        self._start_pipeline_job("quick-official", 2)
+        self._job_task = asyncio.create_task(self._run_quick_official())
+        return {"ok": True, "kind": "quick-official"}
+
+    async def _run_quick_official(self) -> None:
+        try:
+            self.job["step"] = 1
+            self._append_job_line("--- Official-Profil anwenden ---")
+            target = self.quadlet_dir / "halogen-official.container"
+            if not target.exists():
+                tag = self._suggested_tag()
+                models_root, cache_root = self._default_roots()
+                profile = official_quick_template(tag, models_root, cache_root)
+                payload = profile_to_dict(profile)
+                self.install_dirs(payload)
+                preview = self.dry_run(payload)
+                if not preview["ok"]:
+                    raise DeployError("; ".join(preview["errors"]))
+                await self.apply(payload)
+            self.reload_discovery()
+            model_id = parse_quadlet(target.read_text(encoding="utf-8"), target).model_id
+            self.job["step"] = 2
+            self._append_job_line("--- Aktives Backend stoppen und Official starten ---")
+            await self._switch_with_heartbeat(model_id, "warte auf Official")
+            self.job["state"] = "done"
+        except asyncio.CancelledError:
+            self.job["state"] = "cancelled"
+            self._append_job_line("--- Abgebrochen ---")
+            raise
+        except Exception as exc:
+            self.job["state"] = "error"
+            self.job["error"] = str(exc)
+            self._append_job_line(f"ERROR: {exc}")
+
+    async def _switch_with_heartbeat(
+        self, model_id: str, label: str, hook=None
+    ) -> None:
+        """Run the takeover switch while emitting a heartbeat line every 10s so
+        the dashboard shows liveness during the (possibly long) backend start.
+        The switch itself rolls back to the previous backend on failure."""
+        stop = asyncio.Event()
+        hb = asyncio.create_task(self._heartbeat(stop, label))
+        try:
+            await self.manager.switch_with_hook(
+                model_id, hook, start_timeout=QUICK_START_TIMEOUT
+            )
+        finally:
+            stop.set()
+            hb.cancel()
+
+    async def _heartbeat(self, stop: asyncio.Event, label: str) -> None:
+        start = time.time()
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), 10)
+            except asyncio.TimeoutError:
+                self._append_job_line(f"... {label} ({int(time.time() - start)}s)")
+
+    def cancel_job(self) -> dict:
+        if self.job is None or self.job["state"] != "running":
+            return {"ok": False, "reason": "kein laufender Job"}
+        if self._job_task is not None and not self._job_task.done():
+            self._job_task.cancel()
+        return {"ok": True}
 
     async def quick_uncensored(self, payload: dict) -> dict:
         self._require_enabled()
@@ -606,19 +662,29 @@ class DeployManager:
         uncensored_dir.mkdir(parents=True, exist_ok=True)
         gguf = uncensored_dir / UNCENSORED_DEFAULT_GGUF_NAME
         output = uncensored_dir / UNCENSORED_DEFAULT_OUTPUT
+        tokenizer_dir = uncensored_dir / "tokenizer"
+        need_gguf = not output.exists()
+        # The tokenizer is needed at runtime even when the .hgn already exists,
+        # so a partial earlier install (weights but no tokenizer) is repaired.
+        need_tokenizer = not tokenizer_dir.is_dir() or not any(tokenizer_dir.iterdir())
         # A token is only needed when we still have to download the GGUF.
-        if not output.exists() and not token:
+        if need_gguf and not token:
             raise DeployError(
                 "HF-Token fehlt. Ein fine-graunes Token mit Read-Recht reicht."
             )
         hf = self._hf_executable()
-        if output.exists():
-            steps = 2  # apply profile + switch
-        else:
-            steps = 5 if hf else 6  # (+ install HF CLI)
+        steps = 2  # apply profile + switch
+        if (need_gguf or need_tokenizer) and not hf:
+            steps += 1
+        if need_gguf:
+            steps += 2  # gguf + draft head
+        if need_tokenizer:
+            steps += 1
         self._start_pipeline_job("quick-uncensored", steps)
         self._job_task = asyncio.create_task(
-            self._run_quick_uncensored(token, tag, uncensored_dir, gguf, output)
+            self._run_quick_uncensored(
+                token, tag, uncensored_dir, gguf, output, need_gguf, need_tokenizer
+            )
         )
         return {"ok": True, "kind": "quick-uncensored"}
 
@@ -629,10 +695,12 @@ class DeployManager:
         uncensored_dir: Path,
         gguf: Path,
         output: Path,
+        need_gguf: bool,
+        need_tokenizer: bool,
     ) -> None:
         try:
             step = 1
-            if not output.exists():
+            if need_gguf or need_tokenizer:
                 if not self._hf_executable():
                     self.job["step"] = step
                     self._append_job_line(f"--- {step}: HF-CLI installieren ---")
@@ -645,46 +713,48 @@ class DeployManager:
                 if not hf:
                     raise DeployError("HF-CLI fehlt nach Installation.")
 
-                self.job["step"] = step
-                self._append_job_line(f"--- {step}: Uncensored-GGUF herunterladen ---")
-                await self._run_stream(
-                    [hf, "download", UNCENSORED_HF_REPO, "--local-dir", str(uncensored_dir)],
-                    {"HF_TOKEN": token},
-                    timeout=21600,
-                    token=token,
-                )
-                step += 1
+                if need_gguf:
+                    self.job["step"] = step
+                    self._append_job_line(f"--- {step}: Uncensored-GGUF herunterladen ---")
+                    await self._run_stream(
+                        [hf, "download", UNCENSORED_HF_REPO, "--local-dir", str(uncensored_dir)],
+                        {"HF_TOKEN": token},
+                        timeout=21600,
+                        token=token,
+                    )
+                    step += 1
 
-                self.job["step"] = step
-                self._append_job_line("--- Draft-Head herunterladen ---")
-                await self._run_stream(
-                    [
-                        hf,
-                        "download",
-                        OFFICIAL_WEIGHTS_REPO,
-                        "qwen38-flash-next-mtp.hgn",
-                        "--local-dir",
-                        str(uncensored_dir),
-                    ],
-                    timeout=3600,
-                )
-                step += 1
+                    self.job["step"] = step
+                    self._append_job_line("--- Draft-Head herunterladen ---")
+                    await self._run_stream(
+                        [
+                            hf,
+                            "download",
+                            OFFICIAL_WEIGHTS_REPO,
+                            "qwen38-flash-next-mtp.hgn",
+                            "--local-dir",
+                            str(uncensored_dir),
+                        ],
+                        timeout=3600,
+                    )
+                    step += 1
 
-                self.job["step"] = step
-                self._append_job_line("--- Tokenizer herunterladen ---")
-                await self._run_stream(
-                    [
-                        hf,
-                        "download",
-                        OFFICIAL_WEIGHTS_REPO,
-                        "--include",
-                        "tokenizer/*",
-                        "--local-dir",
-                        str(uncensored_dir),
-                    ],
-                    timeout=3600,
-                )
-                step += 1
+                if need_tokenizer:
+                    self.job["step"] = step
+                    self._append_job_line("--- Tokenizer herunterladen ---")
+                    await self._run_stream(
+                        [
+                            hf,
+                            "download",
+                            OFFICIAL_WEIGHTS_REPO,
+                            "--include",
+                            "tokenizer/*",
+                            "--local-dir",
+                            str(uncensored_dir),
+                        ],
+                        timeout=3600,
+                    )
+                    step += 1
 
             # Apply the profile and refresh discovery while the current backend
             # keeps serving; this does not touch the GPU.
@@ -703,7 +773,8 @@ class DeployManager:
 
             # Switch onto uncensored: stop the active backend, free the GPU,
             # convert (if needed), then start uncensored. The convert runs as
-            # the switch hook so it has the GPU to itself.
+            # the switch hook so it has the GPU to itself. On failure or cancel
+            # the switch rolls back to the previous backend.
             self.job["step"] = step
             self._append_job_line("--- Aktives Backend stoppen und Uncensored starten ---")
             image = f"ghcr.io/peonist-ai/halogen-flash-server:{tag}"
@@ -728,8 +799,14 @@ class DeployManager:
                 ]
                 await self._run_stream(cmd, timeout=7200)
 
-            await self.manager.switch_with_hook(profile.model_id, convert_hook)
+            await self._switch_with_heartbeat(
+                profile.model_id, "warte auf Uncensored", convert_hook
+            )
             self.job["state"] = "done"
+        except asyncio.CancelledError:
+            self.job["state"] = "cancelled"
+            self._append_job_line("--- Abgebrochen ---")
+            raise
         except Exception as exc:
             self.job["state"] = "error"
             self.job["error"] = str(exc)
@@ -1137,6 +1214,15 @@ class DeployRoutes:
         except Exception as exc:
             return self._error(exc, 500)
 
+    async def api_cancel_job(self, request: web.Request) -> web.Response:
+        try:
+            self._guard(request)
+            return web.json_response(self.manager.cancel_job())
+        except DeployError as exc:
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
+
     def register_routes(self, app: web.Application) -> None:
         app.router.add_get("/dashboard/api/deploy", self.api_status)
         app.router.add_get("/dashboard/api/deploy/template/{kind}", self.api_template)
@@ -1150,6 +1236,7 @@ class DeployRoutes:
         app.router.add_post("/dashboard/api/deploy/{profile_id}/start", self.api_start)
         app.router.add_post("/dashboard/api/deploy/reload", self.api_reload)
         app.router.add_get("/dashboard/api/deploy/job", self.api_job)
+        app.router.add_post("/dashboard/api/deploy/job/cancel", self.api_cancel_job)
         app.router.add_get("/dashboard/api/deploy/hf", self.api_hf)
         app.router.add_post("/dashboard/api/deploy/hf/install", self.api_hf_install)
         app.router.add_post("/dashboard/api/deploy/hf/download", self.api_hf_download)

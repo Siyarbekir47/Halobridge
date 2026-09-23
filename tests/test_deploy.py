@@ -444,7 +444,8 @@ class ConvertVerifyJobTests(PosixTestCase):
 
 
 class QuickDeployTests(PosixTestCase):
-    """Quick install takes over the active backend instead of being blocked."""
+    """Quick install runs as a cancelable job that takes over the active backend
+    and rolls back on failure."""
 
     def setUp(self):
         super().setUp()
@@ -455,13 +456,21 @@ class QuickDeployTests(PosixTestCase):
     def tearDown(self):
         self._dir.cleanup()
 
-    def test_quick_official_switches_to_official(self):
+    async def _drive(self, coro):
+        result = await coro
+        if self.deploy._job_task is not None:
+            await self.deploy._job_task
+        return result
+
+    def test_quick_official_starts_job_and_switches(self):
         self.deploy.manager.switch_with_hook = AsyncMock()
         with patch.object(DeployManager, "reload_discovery", return_value={"ok": True}):
-            result = asyncio.run(self.deploy.quick_official())
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["model"], "qwen3.8-flash")
-        self.deploy.manager.switch_with_hook.assert_awaited_once_with("qwen3.8-flash")
+            result = asyncio.run(self._drive(self.deploy.quick_official()))
+        self.assertEqual(result["kind"], "quick-official")
+        self.assertEqual(self.deploy.job["state"], "done")
+        args, kwargs = self.deploy.manager.switch_with_hook.await_args
+        self.assertEqual(args[0], "qwen3.8-flash")
+        self.assertEqual(kwargs.get("start_timeout"), 300)
 
     def test_quick_official_does_not_raise_when_other_backend_active(self):
         async def fake_active(service):
@@ -470,13 +479,26 @@ class QuickDeployTests(PosixTestCase):
         self.deploy._service_is_active = AsyncMock(side_effect=fake_active)
         self.deploy.manager.switch_with_hook = AsyncMock()
         with patch.object(DeployManager, "reload_discovery", return_value={"ok": True}):
-            result = asyncio.run(self.deploy.quick_official())
-        self.assertTrue(result["ok"])
+            result = asyncio.run(self._drive(self.deploy.quick_official()))
+        self.assertEqual(result["kind"], "quick-official")
+        self.assertEqual(self.deploy.job["state"], "done")
         self.deploy.manager.switch_with_hook.assert_awaited_once()
 
     def test_quick_uncensored_requires_token_when_download_needed(self):
         with self.assertRaises(DeployError):
             asyncio.run(self.deploy.quick_uncensored({}))
+
+    def test_quick_uncensored_no_token_needed_when_hgn_exists(self):
+        uncensored_dir = self.tmp / "models" / "uncensored"
+        uncensored_dir.mkdir(parents=True)
+        (uncensored_dir / "qwen3.8-flash-uncensored.hgn").write_text("x")
+        (uncensored_dir / "tokenizer").mkdir()
+        (uncensored_dir / "tokenizer" / "tok.json").write_text("{}")
+        self.deploy._hf_executable = lambda: "hf"
+        self.deploy._run_quick_uncensored = AsyncMock()
+        # No token, but weights + tokenizer already present -> no raise.
+        result = asyncio.run(self._drive(self.deploy.quick_uncensored({})))
+        self.assertEqual(result["kind"], "quick-uncensored")
 
     def test_quick_uncensored_starts_job_when_other_backend_active(self):
         async def fake_active(service):
@@ -484,7 +506,7 @@ class QuickDeployTests(PosixTestCase):
 
         self.deploy._service_is_active = AsyncMock(side_effect=fake_active)
         self.deploy._run_quick_uncensored = AsyncMock()
-        result = asyncio.run(self.deploy.quick_uncensored({"token": "hf_x"}))
+        result = asyncio.run(self._drive(self.deploy.quick_uncensored({"token": "hf_x"})))
         self.assertEqual(result["kind"], "quick-uncensored")
         self.assertEqual(self.deploy.job["state"], "running")
 
@@ -505,22 +527,78 @@ class QuickDeployTests(PosixTestCase):
         self.deploy.apply = AsyncMock()
         switch_calls = []
 
-        async def fake_switch(model, hook=None):
+        async def fake_switch(model, hook=None, start_timeout=None):
             switch_calls.append(model)
             if hook is not None:
                 await hook()
 
         self.deploy.manager.switch_with_hook = fake_switch
-        self.deploy._start_pipeline_job("quick-uncensored", 5)
+        self.deploy._start_pipeline_job("quick-uncensored", 6)
         with patch.object(DeployManager, "reload_discovery", return_value={"ok": True}):
             asyncio.run(
                 self.deploy._run_quick_uncensored(
-                    "tok", "0.13.2", uncensored_dir, gguf, output
+                    "tok", "0.13.2", uncensored_dir, gguf, output, True, True
                 )
             )
         self.assertEqual(switch_calls, ["qwen3.8-flash-uncensored"])
         self.assertTrue(any("convert" in s for s in streams))
         self.assertEqual(self.deploy.job["state"], "done")
+
+    def test_run_quick_uncensored_repairs_missing_tokenizer(self):
+        uncensored_dir = self.tmp / "models" / "uncensored"
+        uncensored_dir.mkdir(parents=True)
+        output = uncensored_dir / "qwen3.8-flash-uncensored.hgn"
+        output.write_text("x")  # weights present, tokenizer missing
+        streams = []
+
+        async def fake_stream(argv, *a, **k):
+            streams.append(list(argv))
+
+        self.deploy._run_stream = fake_stream
+        self.deploy._hf_executable = lambda: "hf"
+        self.deploy.install_dirs = lambda payload: {"ok": True}
+        self.deploy.dry_run = lambda payload: {"ok": True, "errors": []}
+        self.deploy.apply = AsyncMock()
+        self.deploy.manager.switch_with_hook = AsyncMock()
+        self.deploy._start_pipeline_job("quick-uncensored", 3)
+        with patch.object(DeployManager, "reload_discovery", return_value={"ok": True}):
+            asyncio.run(
+                self.deploy._run_quick_uncensored(
+                    "tok",
+                    "0.13.2",
+                    uncensored_dir,
+                    uncensored_dir / "x.gguf",
+                    output,
+                    False,
+                    True,
+                )
+            )
+        joined = [" ".join(s) for s in streams]
+        self.assertTrue(any("tokenizer/*" in j for j in joined))
+        self.assertFalse(any("orcarouter" in j for j in joined))  # no gguf download
+        self.assertEqual(self.deploy.job["state"], "done")
+
+    def test_cancel_job_cancels_running_switch(self):
+        gate = asyncio.Event()
+
+        async def blocking_switch(model, hook=None, start_timeout=None):
+            await gate.wait()
+
+        self.deploy.manager.switch_with_hook = blocking_switch
+        with patch.object(DeployManager, "reload_discovery", return_value={"ok": True}):
+            async def run():
+                await self.deploy.quick_official()
+                await asyncio.sleep(0.05)
+                res = self.deploy.cancel_job()
+                try:
+                    await self.deploy._job_task
+                except asyncio.CancelledError:
+                    pass
+                return res
+
+            res = asyncio.run(run())
+        self.assertTrue(res["ok"])
+        self.assertEqual(self.deploy.job["state"], "cancelled")
 
 
 if __name__ == "__main__":

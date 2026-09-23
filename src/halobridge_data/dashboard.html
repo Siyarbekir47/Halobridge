@@ -166,7 +166,7 @@
 <body>
 <main class="shell">
   <header class="top">
-    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.6</span></span></div>
+    <div class="brand"><h1>Halobridge<span style="color:var(--mint);font-size:inherit">.</span></h1><span>Router &amp; Dashboard for halogen · <span id="appVersion">v0.1.7</span></span></div>
     <div class="controls">
       <label for="langSelect" class="muted" data-i18n="lang_label">Sprache</label>
       <select id="langSelect" data-i18n-attr="aria-label:lang_label"><option value="de">Deutsch</option><option value="en">English</option></select>
@@ -344,7 +344,7 @@
           <button type="button" id="verifyBtn" data-i18n="verify_start">HGN prüfen</button>
         </div>
         <div id="jobBox" hidden>
-          <p><strong id="jobKind"></strong> <span id="jobState" class="badge"></span> <span id="jobElapsed" class="muted"></span></p>
+          <p><strong id="jobKind"></strong> <span id="jobState" class="badge"></span> <span id="jobElapsed" class="muted"></span> <button type="button" id="jobCancelBtn" class="ghost" data-i18n="job_cancel">Abbrechen</button></p>
           <pre id="jobLog" class="deploy-diff"></pre>
         </div>
       </div>
@@ -1060,6 +1060,7 @@ async function pollJob() {
     stateEl.className = 'badge' + (job.state === 'running' ? ' ok' : job.state === 'error' ? ' err' : '');
     $('jobElapsed').textContent = Math.round(job.elapsed) + 's';
     $('jobLog').textContent = (job.lines || []).join('\n') + (job.error ? '\nERROR: ' + job.error : '');
+    $('jobCancelBtn').hidden = job.state !== 'running';
     if (job.state === 'running') {
       jobTimer = setTimeout(pollJob, 2000);
     } else if (job.kind === 'hf-install') {
@@ -1067,6 +1068,14 @@ async function pollJob() {
     }
   } catch { jobTimer = setTimeout(pollJob, 5000); }
 }
+$('jobCancelBtn').addEventListener('click', () => {
+  armDeploy($('jobCancelBtn'), async () => {
+    try {
+      await deployRequest('/dashboard/api/deploy/job/cancel', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
+    } catch (err) { showDeployError(err.message); }
+    finally { resetDeployArm(); }
+  }, t('job_cancel_confirm'));
+});
 $('hfInstallBtn').addEventListener('click', async () => {
   try {
     await deployRequest('/dashboard/api/deploy/hf/install', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}});
