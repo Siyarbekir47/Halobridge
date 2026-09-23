@@ -164,6 +164,24 @@ class RenderImportTests(unittest.TestCase):
 
 
 class TemplateTests(unittest.TestCase):
+    def assert_common_runtime_env(self, profile: Profile) -> None:
+        expected = {
+            "HALOGEN_CTX": "262144",
+            "HALOGEN_KV_SLOTS": "2",
+            "HALOGEN_KV_POOL_POSITIONS": "524288",
+            "HALOGEN_MAX_TOK": "32768",
+            "HALOGEN_MAX_TOKENS_DEFAULT": "8192",
+            "HALOGEN_MAX_TOKENS_CAP": "65536",
+            "HALOGEN_REASONING_EFFORT": "xhigh",
+            "HALOGEN_QUEUE_TIMEOUT": "3600",
+            "HALOGEN_HOST_RESERVE_GIB": "18",
+            "HALOGEN_CACHE_DIR": "/cache",
+            "HALOGEN_CACHE_DISK_GIB": "750",
+            "HALOGEN_CACHE_PRUNE_OLD": "1",
+        }
+        for key, value in expected.items():
+            self.assertEqual(profile.env[key], value)
+
     def test_official_template_valid_and_matches_provisioned_setup(self):
         profile = official_template(
             "0.13.2", Path("/home/tester/halogen/models"), Path("/home/tester/halogen/cache")
@@ -175,7 +193,7 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(
             profile.env["HALOGEN_VISION_TOWER"], "/models/qwen38-flash-next-vision.hgn"
         )
-        self.assertEqual(profile.env["HALOGEN_CACHE_DIR"], "/cache")
+        self.assert_common_runtime_env(profile)
         models = next(v for v in profile.volumes if v[1] == "/models")
         self.assertIn("ro", models[2])
 
@@ -188,6 +206,7 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(
             profile.env["HALOGEN_CHECKPOINT"], "/uncensored/qwen3.8-flash-uncensored.hgn"
         )
+        self.assert_common_runtime_env(profile)
         container_paths = [v[1] for v in profile.volumes]
         self.assertEqual(container_paths, ["/models", "/uncensored", "/cache"])
         uncensored = next(v for v in profile.volumes if v[1] == "/uncensored")
@@ -206,15 +225,20 @@ class TemplateTests(unittest.TestCase):
         )
         self.assertEqual(validate_profile(profile), [])
         self.assertFalse(profile.downloads_weights)
+        self.assert_common_runtime_env(profile)
         models = next(v for v in profile.volumes if v[1] == "/models")
         self.assertIn("ro", models[2])
 
     def test_env_fields_cover_documented_variables(self):
         for key in (
+            "HALOGEN_CTX",
             "HALOGEN_KV_SLOTS",
             "HALOGEN_KV_POOL_POSITIONS",
             "HALOGEN_MAX_TOK",
+            "HALOGEN_MAX_TOKENS_DEFAULT",
+            "HALOGEN_MAX_TOKENS_CAP",
             "HALOGEN_HOST_RESERVE_GIB",
+            "HALOGEN_QUEUE_TIMEOUT",
             "HALOGEN_CACHE_DISK_GIB",
             "HALOGEN_DOWNLOAD",
             "HALOGEN_REASONING_EFFORT",

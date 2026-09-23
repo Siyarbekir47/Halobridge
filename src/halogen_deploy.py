@@ -30,6 +30,8 @@ from profiles import (
     ENV_FIELDS,
     OFFICIAL_WEIGHTS_REPO,
     REPO_ID_RE,
+    UNCENSORED_DEFAULT_GGUF_NAME,
+    UNCENSORED_DEFAULT_OUTPUT,
     UNCENSORED_HF_REPO,
     Profile,
     ProfileError,
@@ -297,10 +299,22 @@ class DeployManager:
 
     # ------------------------------------------------- HF download & convert
 
+    def _hf_executable(self) -> str | None:
+        found = shutil.which("hf")
+        if found:
+            return found
+        local = Path(sys.executable).parent / ("hf.exe" if os.name == "nt" else "hf")
+        if local.is_file() and os.access(local, os.X_OK):
+            return str(local)
+        return None
+
     def hf_status(self) -> dict:
         return {
-            "installed": shutil.which("hf") is not None,
+            "installed": self._hf_executable() is not None,
             "default_repo": UNCENSORED_HF_REPO,
+            "default_file": "",
+            "default_gguf_name": UNCENSORED_DEFAULT_GGUF_NAME,
+            "default_output": UNCENSORED_DEFAULT_OUTPUT,
         }
 
     def job_status(self) -> dict:
@@ -317,7 +331,7 @@ class DeployManager:
 
     def hf_install(self) -> dict:
         self._require_enabled()
-        if shutil.which("hf"):
+        if self._hf_executable():
             raise DeployError("HF-CLI ist bereits installiert.")
         return self._start_job(
             "hf-install",
@@ -345,7 +359,12 @@ class DeployManager:
             raise DeployError(
                 "HF-Token fehlt. Ein fine-graunes Token mit Read-Recht reicht."
             )
-        cmd = ["hf", "download", repo]
+        hf = self._hf_executable()
+        if not hf:
+            raise DeployError(
+                "HF-CLI fehlt. Bitte zuerst installieren oder `hf` in den PATH legen."
+            )
+        cmd = [hf, "download", repo]
         if filename:
             cmd.append(filename)
         cmd += ["--local-dir", str(dest)]

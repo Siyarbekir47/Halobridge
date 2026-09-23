@@ -4,6 +4,7 @@ systemd interaction is mocked; file handling runs against temp directories.
 """
 
 import asyncio
+import os
 import sys
 import tempfile
 import unittest
@@ -356,23 +357,37 @@ class ConvertVerifyJobTests(PosixTestCase):
         self.assertIn("/models/converted.hgn", captured["argv"])
 
     def test_hf_download_requires_token(self):
-        with self.assertRaises(DeployError):
-            self.manager.hf_download({"repo": "orcarouter/x", "dest": str(self.tmp / "d")})
+        with patch.object(self.manager, "_hf_executable", return_value="hf"):
+            with self.assertRaises(DeployError):
+                self.manager.hf_download({"repo": "orcarouter/x", "dest": str(self.tmp / "d")})
 
     def test_hf_download_rejects_bad_repo(self):
-        with self.assertRaises(DeployError):
-            self.manager.hf_download(
-                {"repo": "bad repo", "dest": str(self.tmp / "d"), "token": "t"}
-            )
+        with patch.object(self.manager, "_hf_executable", return_value="hf"):
+            with self.assertRaises(DeployError):
+                self.manager.hf_download(
+                    {"repo": "bad repo", "dest": str(self.tmp / "d"), "token": "t"}
+                )
+
+    def test_hf_download_requires_hf_cli(self):
+        with patch.object(self.manager, "_hf_executable", return_value=None):
+            with self.assertRaises(DeployError):
+                self.manager.hf_download(
+                    {
+                        "repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF",
+                        "dest": str(self.tmp / "models" / "uncensored"),
+                        "token": "hf_secret123",
+                    }
+                )
 
     def test_hf_download_token_never_in_argv(self):
         captured, fake = self._capture_start()
-        with patch.object(self.manager, "_start_job", fake):
-            self.manager.hf_download({
-                "repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF",
-                "dest": str(self.tmp / "models" / "uncensored"),
-                "token": "hf_secret123",
-            })
+        with patch.object(self.manager, "_hf_executable", return_value="hf"):
+            with patch.object(self.manager, "_start_job", fake):
+                self.manager.hf_download({
+                    "repo": "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF",
+                    "dest": str(self.tmp / "models" / "uncensored"),
+                    "token": "hf_secret123",
+                })
         self.assertEqual(captured["kind"], "hf-download")
         self.assertEqual(
             captured["argv"][:3],
@@ -380,6 +395,14 @@ class ConvertVerifyJobTests(PosixTestCase):
         )
         self.assertEqual(captured["env"]["HF_TOKEN"], "hf_secret123")
         self.assertNotIn("hf_secret123", " ".join(captured["argv"]))
+
+    def test_hf_status_detects_venv_local_hf(self):
+        hf = Path(sys.executable).parent / ("hf.exe" if os.name == "nt" else "hf")
+        with patch("halogen_deploy.shutil.which", return_value=None):
+            with patch.object(Path, "is_file", return_value=True):
+                with patch("os.access", return_value=True):
+                    self.assertTrue(self.manager.hf_status()["installed"])
+        self.assertTrue(hf.name.startswith("hf"))
 
     def test_uncensored_template_via_manager(self):
         data = self.manager.template("uncensored")

@@ -228,7 +228,7 @@ def render_quadlet(profile: Profile) -> str:
         "[Service]",
         "Restart=on-failure",
         "RestartSec=10",
-        "TimeoutStartSec=600",
+        "TimeoutStartSec=300",
         "TimeoutStopSec=120",
         "",
     ]
@@ -310,11 +310,18 @@ def profile_to_dict(profile: Profile) -> dict:
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
+UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"
+UNCENSORED_DEFAULT_OUTPUT = "qwen3.8-flash-uncensored.hgn"
 
 _COMMON_RUNTIME_ENV = {
+    "HALOGEN_CTX": "262144",
     "HALOGEN_KV_SLOTS": "2",
     "HALOGEN_KV_POOL_POSITIONS": "524288",
     "HALOGEN_MAX_TOK": "32768",
+    "HALOGEN_MAX_TOKENS_DEFAULT": "8192",
+    "HALOGEN_MAX_TOKENS_CAP": "65536",
+    "HALOGEN_REASONING_EFFORT": "xhigh",
+    "HALOGEN_QUEUE_TIMEOUT": "3600",
     "HALOGEN_HOST_RESERVE_GIB": "18",
     "HALOGEN_CACHE_DIR": "/cache",
     "HALOGEN_CACHE_DISK_GIB": "750",
@@ -388,11 +395,6 @@ def custom_template(image_tag: str, models_root: Path, cache_root: Path) -> Prof
         env={
             "HALOGEN_MODEL_ID": "custom-model",
             "HALOGEN_CHECKPOINT": "/models/model.gguf",
-            "HALOGEN_KV_SLOTS": "2",
-            "HALOGEN_KV_POOL_POSITIONS": "524288",
-            "HALOGEN_MAX_TOK": "32768",
-            "HALOGEN_HOST_RESERVE_GIB": "18",
-            "HALOGEN_CACHE_DISK_GIB": "750",
-            "HALOGEN_CACHE_PRUNE_OLD": "1",
+            **_COMMON_RUNTIME_ENV,
         },
     )

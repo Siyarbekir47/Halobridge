@@ -1002,12 +1002,21 @@ $('deployApply').addEventListener('click', () => {
 });
 // ---------- HF download & convert ----------
 let jobTimer = null;
+let hfDefaults = {};
+let hfAutoGguf = false;
+function syncHfGgufPath() {
+  if (!hfAutoGguf || !hfDefaults.default_gguf_name) return;
+  const dest = $('hfDest').value.trim().replace(/\/$/, '');
+  if (dest) $('convGguf').value = dest + '/' + hfDefaults.default_gguf_name;
+}
 async function refreshHf() {
   try {
     const hf = await deployRequest('/dashboard/api/deploy/hf');
+    hfDefaults = hf || {};
     $('hfStatusLine').textContent = hf.installed ? t('hf_installed') : t('hf_not_installed');
     $('hfInstallBtn').hidden = hf.installed;
     if (!$('hfRepo').value) $('hfRepo').value = hf.default_repo || '';
+    if (!$('hfFile').value) $('hfFile').value = hf.default_file || '';
     if (!$('hfDest').value && deployData.allowed_roots && deployData.allowed_roots.length) {
       $('hfDest').value = String(deployData.allowed_roots[0]).replace(/\/$/, '') + '/halogen/models/uncensored';
     }
@@ -1015,8 +1024,14 @@ async function refreshHf() {
       const tag = (typeof updatesData !== 'undefined' && updatesData && updatesData.latest_version) || '';
       if (tag) $('convImage').value = 'ghcr.io/peonist-ai/halogen-flash-server:' + tag;
     }
+    if (!$('convOut').value) $('convOut').value = hf.default_output || 'qwen3.8-flash-uncensored.hgn';
+    if (!$('convGguf').value && hf.default_gguf_name) {
+      hfAutoGguf = true;
+      syncHfGgufPath();
+    }
   } catch { /* offline */ }
 }
+$('hfDest').addEventListener('input', syncHfGgufPath);
 function startJobPoll() { clearTimeout(jobTimer); pollJob(); }
 async function pollJob() {
   try {
@@ -1029,7 +1044,11 @@ async function pollJob() {
     stateEl.className = 'badge' + (job.state === 'running' ? ' ok' : job.state === 'error' ? ' err' : '');
     $('jobElapsed').textContent = Math.round(job.elapsed) + 's';
     $('jobLog').textContent = (job.lines || []).join('\n') + (job.error ? '\nERROR: ' + job.error : '');
-    if (job.state === 'running') jobTimer = setTimeout(pollJob, 2000);
+    if (job.state === 'running') {
+      jobTimer = setTimeout(pollJob, 2000);
+    } else if (job.kind === 'hf-install') {
+      await refreshHf();
+    }
   } catch { jobTimer = setTimeout(pollJob, 5000); }
 }
 $('hfInstallBtn').addEventListener('click', async () => {
