@@ -32,6 +32,7 @@ from profiles import (
     OFFICIAL_WEIGHTS_REPO,
     REPO_ID_RE,
     UNCENSORED_DEFAULT_GGUF_NAME,
+    UNCENSORED_DEFAULT_GGUF_PATTERN,
     UNCENSORED_DEFAULT_OUTPUT,
     UNCENSORED_HF_REPO,
     Profile,
@@ -890,7 +891,15 @@ class DeployManager:
                     self.job["step"] = step
                     self._append_job_line(f"--- {step}: Download uncensored GGUF ---")
                     await self._run_stream(
-                        [hf, "download", UNCENSORED_HF_REPO, "--local-dir", str(uncensored_dir)],
+                        [
+                            hf,
+                            "download",
+                            UNCENSORED_HF_REPO,
+                            "--include",
+                            UNCENSORED_DEFAULT_GGUF_PATTERN,
+                            "--local-dir",
+                            str(uncensored_dir),
+                        ],
                         _hf_download_env(token),
                         timeout=21600,
                         token=token,

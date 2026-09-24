@@ -651,6 +651,11 @@ class QuickDeployTests(PosixTestCase):
             )
         self.assertEqual(switch_calls, ["qwen3.8-flash-uncensored"])
         self.assertTrue(any("convert" in s for s in streams))
+        gguf_download = next(s for s in streams if "orcarouter" in " ".join(s))
+        self.assertIn("--include", gguf_download)
+        self.assertIn(
+            "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-*.gguf", gguf_download
+        )
         self.assertEqual(self.deploy.job["state"], "done")
 
     def test_run_quick_uncensored_repairs_missing_tokenizer(self):
