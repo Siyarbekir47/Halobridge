@@ -127,6 +127,11 @@ async def run(config: settings.Config) -> int:
     models.update(config.models.explicit)
     if models:
         report.ok(f"Model map: {', '.join(f'{m} -> {s}' for m, s in models.items())}")
+    elif config.deploy.enabled:
+        report.warn(
+            "No models found. The dashboard can start in deployment-only mode "
+            "and install the first model."
+        )
     else:
         report.fail(
             "No models found. Check models.auto_discover/quadlet_dir "

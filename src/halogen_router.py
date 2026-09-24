@@ -1008,13 +1008,15 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
         )
 
     specs, skipped, models = resolve_models(config)
-    if not models:
+    if not models and not config.deploy.enabled:
         raise RouterError(
             "No models found. Check models.auto_discover/quadlet_dir "
             "or set models.explicit."
         )
 
-    default_model = DEFAULT_MODEL if DEFAULT_MODEL in models else next(iter(models))
+    default_model = (
+        DEFAULT_MODEL if DEFAULT_MODEL in models else next(iter(models), DEFAULT_MODEL)
+    )
 
     timeout = ClientTimeout(
         total=None,
@@ -1040,9 +1042,14 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
         gtt_limit_bytes=config.router.gtt_limit_bytes,
     )
     updater = ContainerUpdater(manager, session, models, config=config)
-    await updater.recover_on_startup()
-    if not updater.recovery_required:
-        await manager.initialize()
+    if models:
+        await updater.recover_on_startup()
+        if not updater.recovery_required:
+            await manager.initialize()
+    else:
+        LOG.warning(
+            "No models configured; starting the dashboard in deployment-only mode."
+        )
     dashboard = Dashboard(
         manager=manager,
         session=session,

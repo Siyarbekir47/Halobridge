@@ -8,13 +8,30 @@ from unittest.mock import AsyncMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import halogen_router as router
 from discovery import ModelSpec
-from settings import Config, DashboardConfig, ModelsConfig, SecurityConfig
+from settings import Config, DashboardConfig, DeployConfig, ModelsConfig, SecurityConfig
 
 
 class CreateApplicationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_no_models_raises_clear_error(self):
+    async def test_no_models_starts_deployment_only_mode(self):
         config = Config(
             models=ModelsConfig(auto_discover=False, explicit={}),
+        )
+        with patch.object(router.ContainerUpdater, "recover_on_startup", new=AsyncMock()) as recover, \
+             patch.object(router.ModelManager, "initialize", new=AsyncMock()) as initialize, \
+             patch.object(router.Dashboard, "initialize", new=AsyncMock()), \
+             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None):
+            app = await router.create_application(config)
+        await app["session"].close()
+
+        self.assertEqual(app["models"], {})
+        self.assertIsNone(app["manager"].current_model)
+        recover.assert_not_awaited()
+        initialize.assert_not_awaited()
+
+    async def test_no_models_raises_when_deployment_is_disabled(self):
+        config = Config(
+            models=ModelsConfig(auto_discover=False, explicit={}),
+            deploy=DeployConfig(enabled=False),
         )
         with self.assertRaises(router.RouterError):
             await router.create_application(config)

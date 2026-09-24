@@ -10,7 +10,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import doctor
-from settings import Config, DashboardConfig, ModelsConfig, SecurityConfig, UpdatesConfig
+from settings import Config, DashboardConfig, DeployConfig, ModelsConfig, SecurityConfig, UpdatesConfig
 
 
 class DoctorTests(unittest.IsolatedAsyncioTestCase):
@@ -19,11 +19,24 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
 
-    async def test_no_models_is_a_failure(self):
+    async def test_no_models_is_a_warning_when_deployment_is_enabled(self):
         config = Config(
             models=ModelsConfig(auto_discover=False, explicit={}),
             dashboard=DashboardConfig(state_dir=self.root / "state"),
             updates=UpdatesConfig(enabled=False, backup_dir=self.root / "backup"),
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = await doctor.run(config)
+        self.assertEqual(code, 0)
+        self.assertIn("deployment-only mode", out.getvalue())
+
+    async def test_no_models_is_a_failure_when_deployment_is_disabled(self):
+        config = Config(
+            models=ModelsConfig(auto_discover=False, explicit={}),
+            dashboard=DashboardConfig(state_dir=self.root / "state"),
+            updates=UpdatesConfig(enabled=False, backup_dir=self.root / "backup"),
+            deploy=DeployConfig(enabled=False),
         )
         out = io.StringIO()
         with redirect_stdout(out):
