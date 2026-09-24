@@ -229,6 +229,10 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(validate_profile(profile), [])
         self.assertTrue(profile.downloads_weights)
         self.assertEqual(profile.env["HALOGEN_DOWNLOAD"], OFFICIAL_WEIGHTS_REPO)
+        self.assertEqual(
+            profile.env["HALOGEN_VISION_TOWER"],
+            "/models/qwen38-flash-next-vision.hgn",
+        )
         self.assert_common_runtime_env(profile)
         models = next(v for v in profile.volumes if v[1] == "/models")
         self.assertNotIn("ro", models[2])

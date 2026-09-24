@@ -199,8 +199,10 @@ at it. You do not have to stop the running model by hand first.
 
 - **Official model** — one click installs the official profile and starts it.
   The first start downloads the upstream weights (~118 GiB) through
-  `HALOGEN_DOWNLOAD`; later starts are offline. If a profile already exists,
-  the existing one is started instead of being overwritten.
+  `HALOGEN_DOWNLOAD`; later starts are offline. The downloaded vision tower is
+  enabled by default, so the resulting backend accepts image inputs. If a
+  profile already exists, the existing one is started instead of being
+  overwritten.
 - **Uncensored model** — paste a Hugging Face read token and click once.
   Halobridge downloads the uncensored GGUF, the draft head and tokenizer
   (while the current model keeps serving), then stops the active backend,
@@ -232,7 +234,8 @@ Open **Profile & Deployment** in the dashboard:
 - **New profile from template** — two starting points:
   - *Official model*: preconfigured for the upstream weights repo. The first
     start downloads the weights (~118 GiB) into the models directory through
-    `HALOGEN_DOWNLOAD`; later starts are offline.
+    `HALOGEN_DOWNLOAD`; later starts are offline. The vision tower is enabled
+    by default.
   - *Custom model*: for your own GGUF or `.hgn` files you place in the
     models directory yourself.
 - **Editable parameters** — every field is validated against a typed allowlist
