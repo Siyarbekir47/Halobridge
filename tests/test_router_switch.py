@@ -122,6 +122,19 @@ class SwitchWithHookTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(Exception):
             await self.manager.switch_with_hook(UNCENSORED)
 
+    async def test_initialize_adopts_active_service_without_waiting_for_health(self):
+        self.manager.backend_health = AsyncMock(return_value=None)
+        self.manager.service_is_active = AsyncMock(
+            side_effect=lambda service: service == "halogen-official.service"
+        )
+        self.manager.wait_for_backend = AsyncMock()
+
+        await self.manager.initialize()
+
+        self.assertEqual(self.manager.current_model, OFFICIAL)
+        self.manager.wait_for_backend.assert_not_awaited()
+        self.manager.start_service.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

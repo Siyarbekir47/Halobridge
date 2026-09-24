@@ -14,7 +14,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from halogen_deploy import DeployError, DeployManager
+from halogen_deploy import (
+    QUICK_OFFICIAL_START_TIMEOUT,
+    DeployError,
+    DeployManager,
+)
 from profiles import official_template, parse_quadlet, profile_to_dict, render_quadlet
 
 
@@ -201,6 +205,21 @@ class DeleteRollbackTests(PosixTestCase):
         self.assertFalse((self.tmp / "quadlets" / "halogen-official.container").exists())
         self.assertTrue(Path(result["backup"]).exists())
 
+    def test_backups_in_same_microsecond_do_not_overwrite_each_other(self):
+        target = self.tmp / "quadlets" / "halogen-official.container"
+        original = target.read_bytes()
+        with patch("halogen_deploy.datetime") as clock, patch(
+            "halogen_deploy.time.time_ns", return_value=1
+        ):
+            clock.now.return_value.strftime.return_value = "20260924-121235-123456"
+            first = self.manager._backup_existing(target)
+            target.write_bytes(b"new profile")
+            second = self.manager._backup_existing(target)
+
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.read_bytes(), original)
+        self.assertEqual(second.read_bytes(), b"new profile")
+
     def test_rollback_restores_previous_state(self):
         payload = official_payload(self.tmp)
         payload["env"]["HALOGEN_KV_SLOTS"] = "4"
@@ -208,7 +227,11 @@ class DeleteRollbackTests(PosixTestCase):
         result = asyncio.run(self.manager.rollback("official"))
         target = self.tmp / "quadlets" / "halogen-official.container"
         parsed = parse_quadlet(target.read_text(encoding="utf-8"))
-        self.assertEqual(parsed.env["HALOGEN_KV_SLOTS"], "2")
+        self.assertEqual(
+            parsed.env["HALOGEN_KV_SLOTS"],
+            "2",
+            [(path.name, path.read_bytes()) for path in self.manager._backups_for(target.name)],
+        )
         self.assertTrue(Path(result["restored_from"]).exists())
 
     def test_rollback_without_backup_fails(self):
@@ -470,7 +493,37 @@ class QuickDeployTests(PosixTestCase):
         self.assertEqual(self.deploy.job["state"], "done")
         args, kwargs = self.deploy.manager.switch_with_hook.await_args
         self.assertEqual(args[0], "qwen3.8-flash")
-        self.assertEqual(kwargs.get("start_timeout"), 300)
+        self.assertEqual(
+            kwargs.get("start_timeout"), QUICK_OFFICIAL_START_TIMEOUT
+        )
+
+    def test_service_journal_is_forwarded_to_job_log(self):
+        class Output:
+            def __init__(self):
+                self.lines = iter((b"Downloading shard 1/12\n", b""))
+
+            async def readline(self):
+                return next(self.lines)
+
+        process = SimpleNamespace(
+            stdout=Output(),
+            returncode=0,
+            wait=AsyncMock(return_value=0),
+        )
+        self.deploy._start_pipeline_job("quick-official", 2)
+        with patch("halogen_deploy.shutil.which", return_value="/usr/bin/journalctl"), \
+             patch(
+                 "halogen_deploy.asyncio.create_subprocess_exec",
+                 new=AsyncMock(return_value=process),
+             ) as create:
+            asyncio.run(
+                self.deploy._stream_service_journal(
+                    "halogen-official.service"
+                )
+            )
+
+        self.assertIn("Downloading shard 1/12", self.deploy.job["lines"])
+        self.assertIn("halogen-official.service", create.await_args.args)
 
     def test_quick_official_does_not_raise_when_other_backend_active(self):
         async def fake_active(service):
@@ -483,6 +536,23 @@ class QuickDeployTests(PosixTestCase):
         self.assertEqual(result["kind"], "quick-official")
         self.assertEqual(self.deploy.job["state"], "done")
         self.deploy.manager.switch_with_hook.assert_awaited_once()
+
+    def test_quick_official_tracks_already_running_download(self):
+        self.deploy._service_is_active = AsyncMock(return_value=True)
+        self.deploy.manager.models = {
+            "qwen3.8-flash": "halogen-official.service"
+        }
+        self.deploy.manager.backend_health = AsyncMock(return_value=None)
+        self.deploy.manager.wait_for_backend = AsyncMock()
+        self.deploy._stream_service_journal = AsyncMock()
+
+        result = asyncio.run(self._drive(self.deploy.quick_official()))
+
+        self.assertTrue(result["already_running"])
+        self.assertEqual(self.deploy.job["state"], "done")
+        self.deploy.manager.wait_for_backend.assert_awaited_once_with(
+            "qwen3.8-flash", timeout=QUICK_OFFICIAL_START_TIMEOUT
+        )
 
     def test_quick_uncensored_requires_token_when_download_needed(self):
         with self.assertRaises(DeployError):

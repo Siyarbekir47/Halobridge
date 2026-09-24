@@ -56,6 +56,10 @@ QUADLET_FILENAME_RE = re.compile(r"^halogen-[a-z0-9][a-z0-9-]{0,31}\.container$"
 # 2-3 min model load so a healthy start finishes, but bounded so a broken one
 # recovers instead of freezing the host for the full router start timeout.
 QUICK_START_TIMEOUT = 300
+# The official one-click profile downloads roughly 118 GiB inside the backend
+# container on its first start. Keep that operation bounded, but give normal
+# internet connections enough time to complete it.
+QUICK_OFFICIAL_START_TIMEOUT = 6 * 60 * 60
 
 
 class DeployError(ValueError):
@@ -336,7 +340,7 @@ class DeployManager:
             "active": True,
             "kind": self.job["kind"],
             "state": self.job["state"],
-            "lines": self.job["lines"][-25:],
+            "lines": self.job["lines"][-200:],
             "error": self.job.get("error"),
             "elapsed": round(time.time() - self.job["started"], 1),
             "step": self.job.get("step"),
@@ -584,10 +588,58 @@ class DeployManager:
     async def quick_official(self) -> dict:
         self._require_enabled()
         if await self._service_is_active("halogen-official.service"):
-            return {"ok": True, "already": True, "service": "halogen-official.service"}
+            health = await self.manager.backend_health()
+            if health and health.get("model") == "qwen3.8-flash":
+                return {
+                    "ok": True,
+                    "already": True,
+                    "service": "halogen-official.service",
+                }
+            model_id = next(
+                (
+                    model
+                    for model, service in self.manager.models.items()
+                    if service == "halogen-official.service"
+                ),
+                "qwen3.8-flash",
+            )
+            self._start_pipeline_job("quick-official", 1)
+            self._job_task = asyncio.create_task(
+                self._track_active_official(model_id)
+            )
+            return {
+                "ok": True,
+                "kind": "quick-official",
+                "already_running": True,
+            }
         self._start_pipeline_job("quick-official", 2)
         self._job_task = asyncio.create_task(self._run_quick_official())
         return {"ok": True, "kind": "quick-official"}
+
+    async def _track_active_official(self, model_id: str) -> None:
+        self.job["step"] = 1
+        self._append_job_line("--- Continue active official download/startup ---")
+        stop = asyncio.Event()
+        hb = asyncio.create_task(self._heartbeat(stop, "waiting for official"))
+        service = self.manager.models.get(model_id, "halogen-official.service")
+        journal = asyncio.create_task(self._stream_service_journal(service))
+        try:
+            await self.manager.wait_for_backend(
+                model_id, timeout=QUICK_OFFICIAL_START_TIMEOUT
+            )
+            self.job["state"] = "done"
+        except asyncio.CancelledError:
+            self.job["state"] = "cancelled"
+            self._append_job_line("--- Cancelled ---")
+            raise
+        except Exception as exc:
+            self.job["state"] = "error"
+            self.job["error"] = str(exc)
+        finally:
+            stop.set()
+            hb.cancel()
+            journal.cancel()
+            await asyncio.gather(hb, journal, return_exceptions=True)
 
     async def _run_quick_official(self) -> None:
         try:
@@ -608,7 +660,11 @@ class DeployManager:
             model_id = parse_quadlet(target.read_text(encoding="utf-8"), target).model_id
             self.job["step"] = 2
             self._append_job_line("--- Stop active backend and start official ---")
-            await self._switch_with_heartbeat(model_id, "waiting for official")
+            await self._switch_with_heartbeat(
+                model_id,
+                "waiting for official",
+                start_timeout=QUICK_OFFICIAL_START_TIMEOUT,
+            )
             self.job["state"] = "done"
         except asyncio.CancelledError:
             self.job["state"] = "cancelled"
@@ -617,23 +673,75 @@ class DeployManager:
         except Exception as exc:
             self.job["state"] = "error"
             self.job["error"] = str(exc)
-            self._append_job_line(f"ERROR: {exc}")
 
     async def _switch_with_heartbeat(
-        self, model_id: str, label: str, hook=None
+        self,
+        model_id: str,
+        label: str,
+        hook=None,
+        start_timeout: float = QUICK_START_TIMEOUT,
     ) -> None:
-        """Run the takeover switch while emitting a heartbeat line every 10s so
-        the dashboard shows liveness during the (possibly long) backend start.
-        The switch itself rolls back to the previous backend on failure."""
+        """Run a takeover while forwarding service logs and emitting a heartbeat."""
         stop = asyncio.Event()
         hb = asyncio.create_task(self._heartbeat(stop, label))
+        service = self.manager.models.get(model_id)
+        journal = (
+            asyncio.create_task(self._stream_service_journal(service))
+            if service
+            else None
+        )
         try:
             await self.manager.switch_with_hook(
-                model_id, hook, start_timeout=QUICK_START_TIMEOUT
+                model_id, hook, start_timeout=start_timeout
             )
         finally:
             stop.set()
             hb.cancel()
+            if journal is not None:
+                journal.cancel()
+            await asyncio.gather(
+                *([hb, journal] if journal is not None else [hb]),
+                return_exceptions=True,
+            )
+
+    async def _stream_service_journal(self, service: str) -> None:
+        """Forward new systemd user-unit output into the deployment job log."""
+        journalctl = shutil.which("journalctl")
+        if not journalctl:
+            return
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                journalctl,
+                "--user",
+                "-f",
+                "-n",
+                "0",
+                "-o",
+                "cat",
+                "-u",
+                service,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            assert process.stdout is not None
+            while line := await process.stdout.readline():
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    self._append_job_line(text[:4000])
+            await process.wait()
+        except asyncio.CancelledError:
+            raise
+        except OSError as exc:
+            self._append_job_line(f"Journal output unavailable: {exc}")
+        finally:
+            if process is not None and process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), 3)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
 
     async def _heartbeat(self, stop: asyncio.Event, label: str) -> None:
         start = time.time()
@@ -810,7 +918,6 @@ class DeployManager:
         except Exception as exc:
             self.job["state"] = "error"
             self.job["error"] = str(exc)
-            self._append_job_line(f"ERROR: {exc}")
 
     # ------------------------------------------------------------ helpers
 
@@ -1006,10 +1113,26 @@ class DeployManager:
         if not target.exists():
             return None
         self.backup_root.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        backup = self.backup_root / f"profile-{target.stem}-{stamp}.container"
-        backup.write_bytes(target.read_bytes())
-        return backup
+        # Windows can return the same value for both datetime.now() and
+        # time.time_ns() across several rapid calls. Create the file exclusively
+        # and add an ordered suffix so a rollback can never overwrite the backup
+        # it is about to restore.
+        stamp = (
+            f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}-"
+            f"{time.time_ns():020d}"
+        )
+        contents = target.read_bytes()
+        sequence = 0
+        while True:
+            backup = self.backup_root / (
+                f"profile-{target.stem}-{stamp}-{sequence:04d}.container"
+            )
+            try:
+                with backup.open("xb") as handle:
+                    handle.write(contents)
+                return backup
+            except FileExistsError:
+                sequence += 1
 
     def _backups_for(self, quadlet_name: str) -> list[Path]:
         stem = quadlet_name[: -len(".container")]

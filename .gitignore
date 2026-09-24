@@ -50,4 +50,6 @@ OPENSOURCE_CHECKLIST.md
 *.log
 screenshots/
 playwright-report/
+
+# Private guides and operator notes
 /private/
