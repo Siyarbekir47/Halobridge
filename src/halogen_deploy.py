@@ -56,6 +56,10 @@ QUADLET_FILENAME_RE = re.compile(r"^halogen-[a-z0-9][a-z0-9-]{0,31}\.container$"
 # 2-3 min model load so a healthy start finishes, but bounded so a broken one
 # recovers instead of freezing the host for the full router start timeout.
 QUICK_START_TIMEOUT = 300
+# The official one-click profile downloads roughly 118 GiB inside the backend
+# container on its first start. Keep that operation bounded, but give normal
+# internet connections enough time to complete it.
+QUICK_OFFICIAL_START_TIMEOUT = 6 * 60 * 60
 
 
 class DeployError(ValueError):
@@ -336,7 +340,7 @@ class DeployManager:
             "active": True,
             "kind": self.job["kind"],
             "state": self.job["state"],
-            "lines": self.job["lines"][-25:],
+            "lines": self.job["lines"][-200:],
             "error": self.job.get("error"),
             "elapsed": round(time.time() - self.job["started"], 1),
             "step": self.job.get("step"),
@@ -608,7 +612,11 @@ class DeployManager:
             model_id = parse_quadlet(target.read_text(encoding="utf-8"), target).model_id
             self.job["step"] = 2
             self._append_job_line("--- Stop active backend and start official ---")
-            await self._switch_with_heartbeat(model_id, "waiting for official")
+            await self._switch_with_heartbeat(
+                model_id,
+                "waiting for official",
+                start_timeout=QUICK_OFFICIAL_START_TIMEOUT,
+            )
             self.job["state"] = "done"
         except asyncio.CancelledError:
             self.job["state"] = "cancelled"
@@ -617,23 +625,75 @@ class DeployManager:
         except Exception as exc:
             self.job["state"] = "error"
             self.job["error"] = str(exc)
-            self._append_job_line(f"ERROR: {exc}")
 
     async def _switch_with_heartbeat(
-        self, model_id: str, label: str, hook=None
+        self,
+        model_id: str,
+        label: str,
+        hook=None,
+        start_timeout: float = QUICK_START_TIMEOUT,
     ) -> None:
-        """Run the takeover switch while emitting a heartbeat line every 10s so
-        the dashboard shows liveness during the (possibly long) backend start.
-        The switch itself rolls back to the previous backend on failure."""
+        """Run a takeover while forwarding service logs and emitting a heartbeat."""
         stop = asyncio.Event()
         hb = asyncio.create_task(self._heartbeat(stop, label))
+        service = self.manager.models.get(model_id)
+        journal = (
+            asyncio.create_task(self._stream_service_journal(service))
+            if service
+            else None
+        )
         try:
             await self.manager.switch_with_hook(
-                model_id, hook, start_timeout=QUICK_START_TIMEOUT
+                model_id, hook, start_timeout=start_timeout
             )
         finally:
             stop.set()
             hb.cancel()
+            if journal is not None:
+                journal.cancel()
+            await asyncio.gather(
+                *([hb, journal] if journal is not None else [hb]),
+                return_exceptions=True,
+            )
+
+    async def _stream_service_journal(self, service: str) -> None:
+        """Forward new systemd user-unit output into the deployment job log."""
+        journalctl = shutil.which("journalctl")
+        if not journalctl:
+            return
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                journalctl,
+                "--user",
+                "-f",
+                "-n",
+                "0",
+                "-o",
+                "cat",
+                "-u",
+                service,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            assert process.stdout is not None
+            while line := await process.stdout.readline():
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    self._append_job_line(text[:4000])
+            await process.wait()
+        except asyncio.CancelledError:
+            raise
+        except OSError as exc:
+            self._append_job_line(f"Journal output unavailable: {exc}")
+        finally:
+            if process is not None and process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), 3)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
 
     async def _heartbeat(self, stop: asyncio.Event, label: str) -> None:
         start = time.time()
@@ -810,7 +870,6 @@ class DeployManager:
         except Exception as exc:
             self.job["state"] = "error"
             self.job["error"] = str(exc)
-            self._append_job_line(f"ERROR: {exc}")
 
     # ------------------------------------------------------------ helpers
 

@@ -14,7 +14,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from halogen_deploy import DeployError, DeployManager
+from halogen_deploy import (
+    QUICK_OFFICIAL_START_TIMEOUT,
+    DeployError,
+    DeployManager,
+)
 from profiles import official_template, parse_quadlet, profile_to_dict, render_quadlet
 
 
@@ -470,7 +474,37 @@ class QuickDeployTests(PosixTestCase):
         self.assertEqual(self.deploy.job["state"], "done")
         args, kwargs = self.deploy.manager.switch_with_hook.await_args
         self.assertEqual(args[0], "qwen3.8-flash")
-        self.assertEqual(kwargs.get("start_timeout"), 300)
+        self.assertEqual(
+            kwargs.get("start_timeout"), QUICK_OFFICIAL_START_TIMEOUT
+        )
+
+    def test_service_journal_is_forwarded_to_job_log(self):
+        class Output:
+            def __init__(self):
+                self.lines = iter((b"Downloading shard 1/12\n", b""))
+
+            async def readline(self):
+                return next(self.lines)
+
+        process = SimpleNamespace(
+            stdout=Output(),
+            returncode=0,
+            wait=AsyncMock(return_value=0),
+        )
+        self.deploy._start_pipeline_job("quick-official", 2)
+        with patch("halogen_deploy.shutil.which", return_value="/usr/bin/journalctl"), \
+             patch(
+                 "halogen_deploy.asyncio.create_subprocess_exec",
+                 new=AsyncMock(return_value=process),
+             ) as create:
+            asyncio.run(
+                self.deploy._stream_service_journal(
+                    "halogen-official.service"
+                )
+            )
+
+        self.assertIn("Downloading shard 1/12", self.deploy.job["lines"])
+        self.assertIn("halogen-official.service", create.await_args.args)
 
     def test_quick_official_does_not_raise_when_other_backend_active(self):
         async def fake_active(service):

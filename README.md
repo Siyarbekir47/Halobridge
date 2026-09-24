@@ -215,13 +215,15 @@ install?") and respect the same safety boundaries as the advanced editor
 in-flight requests and waits for GPU memory release before touching the
 hardware, so it never runs two backends on the GPU at once.
 
-The install runs as a streaming job with a heartbeat line every 10 s, so the
-dashboard always shows it is alive. The wait for the new backend to become
-healthy is bounded (5 min); if it does not come up — or you press **Cancel** —
-Halobridge stops the half-started model and rolls back to the previously
-active one, so a failed takeover never leaves the host without a backend or
-frozen. A missing tokenizer is re-downloaded even when the `.hgn` already
-exists, so a partial earlier install is repaired automatically.
+The install runs as a streaming job. Halobridge forwards the backend service
+output from the systemd journal and adds a heartbeat every 10 s, so download
+and startup progress stay visible. A prepared backend has a 5-minute health
+deadline; the first official start gets up to 6 hours because it downloads
+about 118 GiB. If it does not come up — or you press **Cancel** — Halobridge
+stops the half-started model and rolls back to the previously active one, so a
+failed takeover never leaves the host without a backend or frozen. A missing
+tokenizer is re-downloaded even when the `.hgn` already exists, so a partial
+earlier install is repaired automatically.
 
 ### Advanced editor
 

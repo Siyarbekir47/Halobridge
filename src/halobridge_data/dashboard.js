@@ -813,7 +813,10 @@ async function pollJob() {
     stateEl.textContent = t('job_state_' + job.state);
     stateEl.className = 'badge' + (job.state === 'running' ? ' ok' : job.state === 'error' ? ' err' : '');
     $('jobElapsed').textContent = Math.round(job.elapsed) + 's';
-    $('jobLog').textContent = (job.lines || []).join('\n') + (job.error ? '\nERROR: ' + job.error : '');
+    const jobLog = $('jobLog');
+    const followLog = jobLog.scrollHeight - jobLog.scrollTop - jobLog.clientHeight < 48;
+    jobLog.textContent = (job.lines || []).join('\n') + (job.error ? '\nERROR: ' + job.error : '');
+    if (followLog) jobLog.scrollTop = jobLog.scrollHeight;
     $('jobCancelBtn').hidden = job.state !== 'running';
     if (job.state === 'running') {
       jobTimer = setTimeout(pollJob, 2000);
