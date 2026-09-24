@@ -11,6 +11,7 @@ but never deleted by this module.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import difflib
 import json
 import logging
@@ -31,6 +32,7 @@ from profiles import (
     OFFICIAL_WEIGHTS_REPO,
     REPO_ID_RE,
     UNCENSORED_DEFAULT_GGUF_NAME,
+    UNCENSORED_DEFAULT_GGUF_PATTERN,
     UNCENSORED_DEFAULT_OUTPUT,
     UNCENSORED_HF_REPO,
     Profile,
@@ -50,12 +52,24 @@ logger = logging.getLogger("halobridge.deploy")
 
 PROFILE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 QUADLET_FILENAME_RE = re.compile(r"^halogen-[a-z0-9][a-z0-9-]{0,31}\.container$")
+ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
 
 # How long a quick-install takeover waits for the new backend to become healthy
 # before giving up and rolling back to the previous model. Kept above the normal
 # 2-3 min model load so a healthy start finishes, but bounded so a broken one
 # recovers instead of freezing the host for the full router start timeout.
 QUICK_START_TIMEOUT = 300
+# The official one-click profile downloads roughly 118 GiB inside the backend
+# container on its first start. Keep that operation bounded, but give normal
+# internet connections enough time to complete it.
+QUICK_OFFICIAL_START_TIMEOUT = 6 * 60 * 60
+HF_CLI_PACKAGE = "huggingface_hub"
+HF_GATED_ACCESS_MESSAGE = (
+    "Hugging Face denied access to the uncensored repository. Open "
+    "https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF "
+    "in a browser, accept the terms or request access, wait for approval, "
+    "then use a READ token from the same account."
+)
 
 
 class DeployError(ValueError):
@@ -68,6 +82,34 @@ def _is_within(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _hf_access_denied(output: str) -> bool:
+    text = output.lower()
+    return any(
+        marker in text
+        for marker in (
+            "access denied",
+            "requires approval",
+            "gated repo",
+            "cannot access gated",
+            "invalid user token",
+        )
+    )
+
+
+def _hf_download_env(token: str | None = None) -> dict[str, str]:
+    # huggingface_hub/tqdm suppresses progress automatically when stderr is a
+    # pipe. Force log-friendly progress records for the dashboard instead of
+    # terminal cursor updates. A modest interval avoids flooding job history.
+    env = {
+        "HF_HUB_DISABLE_PROGRESS_BARS": "0",
+        "TQDM_POSITION": "-1",
+        "TQDM_MININTERVAL": "2",
+    }
+    if token:
+        env["HF_TOKEN"] = token
+    return env
 
 
 class DeployManager:
@@ -336,7 +378,7 @@ class DeployManager:
             "active": True,
             "kind": self.job["kind"],
             "state": self.job["state"],
-            "lines": self.job["lines"][-25:],
+            "lines": self.job["lines"][-200:],
             "error": self.job.get("error"),
             "elapsed": round(time.time() - self.job["started"], 1),
             "step": self.job.get("step"),
@@ -349,7 +391,7 @@ class DeployManager:
             raise DeployError("HF CLI is already installed.")
         return self._start_job(
             "hf-install",
-            [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
+            [sys.executable, "-m", "pip", "install", "--upgrade", HF_CLI_PACKAGE],
             timeout=900,
         )
 
@@ -383,7 +425,7 @@ class DeployManager:
             cmd.append(filename)
         cmd += ["--local-dir", str(dest)]
         return self._start_job(
-            "hf-download", cmd, {"HF_TOKEN": token}, timeout=21600
+            "hf-download", cmd, _hf_download_env(token), timeout=21600
         )
 
     def convert(self, payload: dict) -> dict:
@@ -490,20 +532,10 @@ class DeployManager:
             self.job["error"] = f"Program not found: {argv[0]}"
             return
 
-        async def pump() -> None:
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if token and token in text:
-                    text = text.replace(token, "[token]")
-                self.job["lines"].append(text)
-                if len(self.job["lines"]) > 200:
-                    del self.job["lines"][:-200]
-
         try:
-            await asyncio.wait_for(pump(), timeout)
+            recent_lines = await asyncio.wait_for(
+                self._pump_process_output(process.stdout, token), timeout
+            )
             returncode = await process.wait()
         except asyncio.TimeoutError:
             process.kill()
@@ -514,7 +546,12 @@ class DeployManager:
             self.job["state"] = "done"
         else:
             self.job["state"] = "error"
-            self.job["error"] = f"Exit {returncode}"
+            output = "\n".join(recent_lines)
+            self.job["error"] = (
+                HF_GATED_ACCESS_MESSAGE
+                if _hf_access_denied(output)
+                else f"Exit {returncode}"
+            )
 
     def _append_job_line(self, text: str) -> None:
         if self.job is None:
@@ -522,6 +559,45 @@ class DeployManager:
         self.job["lines"].append(text)
         if len(self.job["lines"]) > 200:
             del self.job["lines"][:-200]
+
+    async def _pump_process_output(
+        self, stream: asyncio.StreamReader, token: str | None = None
+    ) -> list[str]:
+        """Forward newline and terminal-style carriage-return updates.
+
+        Tools such as ``hf``/tqdm redraw progress bars with ``\r`` instead of
+        emitting newline-terminated records. Reading with ``readline()`` hides
+        those updates until the command finishes, so consume chunks and treat
+        either delimiter as a dashboard log record.
+        """
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        pending = ""
+        recent_lines: list[str] = []
+
+        def emit(raw: str) -> None:
+            text = ANSI_ESCAPE_RE.sub("", raw).replace("\b", "").rstrip()
+            if token and token in text:
+                text = text.replace(token, "[token]")
+            if not text:
+                return
+            self._append_job_line(text)
+            recent_lines.append(text)
+            if len(recent_lines) > 20:
+                del recent_lines[:-20]
+
+        while True:
+            chunk = await stream.read(4096)
+            if not chunk:
+                break
+            pending += decoder.decode(chunk)
+            records = re.split(r"[\r\n]+", pending)
+            pending = records.pop()
+            for record in records:
+                emit(record)
+
+        pending += decoder.decode(b"", final=True)
+        emit(pending)
+        return recent_lines
 
     async def _run_stream(
         self,
@@ -543,18 +619,10 @@ class DeployManager:
         except FileNotFoundError as exc:
             raise DeployError(f"Program not found: {argv[0]} ({exc})")
 
-        async def pump() -> None:
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if token and token in text:
-                    text = text.replace(token, "[token]")
-                self._append_job_line(text)
-
         try:
-            await asyncio.wait_for(pump(), timeout)
+            recent_lines = await asyncio.wait_for(
+                self._pump_process_output(process.stdout, token), timeout
+            )
             returncode = await process.wait()
         except asyncio.TimeoutError:
             process.kill()
@@ -565,6 +633,8 @@ class DeployManager:
             await process.wait()
             raise
         if returncode != 0:
+            if _hf_access_denied("\n".join(recent_lines)):
+                raise DeployError(HF_GATED_ACCESS_MESSAGE)
             raise DeployError(f"{argv[0]} failed (exit {returncode})")
 
     def _start_pipeline_job(self, kind: str, total_steps: int) -> dict:
@@ -584,10 +654,58 @@ class DeployManager:
     async def quick_official(self) -> dict:
         self._require_enabled()
         if await self._service_is_active("halogen-official.service"):
-            return {"ok": True, "already": True, "service": "halogen-official.service"}
+            health = await self.manager.backend_health()
+            if health and health.get("model") == "qwen3.8-flash":
+                return {
+                    "ok": True,
+                    "already": True,
+                    "service": "halogen-official.service",
+                }
+            model_id = next(
+                (
+                    model
+                    for model, service in self.manager.models.items()
+                    if service == "halogen-official.service"
+                ),
+                "qwen3.8-flash",
+            )
+            self._start_pipeline_job("quick-official", 1)
+            self._job_task = asyncio.create_task(
+                self._track_active_official(model_id)
+            )
+            return {
+                "ok": True,
+                "kind": "quick-official",
+                "already_running": True,
+            }
         self._start_pipeline_job("quick-official", 2)
         self._job_task = asyncio.create_task(self._run_quick_official())
         return {"ok": True, "kind": "quick-official"}
+
+    async def _track_active_official(self, model_id: str) -> None:
+        self.job["step"] = 1
+        self._append_job_line("--- Continue active official download/startup ---")
+        stop = asyncio.Event()
+        hb = asyncio.create_task(self._heartbeat(stop, "waiting for official"))
+        service = self.manager.models.get(model_id, "halogen-official.service")
+        journal = asyncio.create_task(self._stream_service_journal(service))
+        try:
+            await self.manager.wait_for_backend(
+                model_id, timeout=QUICK_OFFICIAL_START_TIMEOUT
+            )
+            self.job["state"] = "done"
+        except asyncio.CancelledError:
+            self.job["state"] = "cancelled"
+            self._append_job_line("--- Cancelled ---")
+            raise
+        except Exception as exc:
+            self.job["state"] = "error"
+            self.job["error"] = str(exc)
+        finally:
+            stop.set()
+            hb.cancel()
+            journal.cancel()
+            await asyncio.gather(hb, journal, return_exceptions=True)
 
     async def _run_quick_official(self) -> None:
         try:
@@ -608,7 +726,11 @@ class DeployManager:
             model_id = parse_quadlet(target.read_text(encoding="utf-8"), target).model_id
             self.job["step"] = 2
             self._append_job_line("--- Stop active backend and start official ---")
-            await self._switch_with_heartbeat(model_id, "waiting for official")
+            await self._switch_with_heartbeat(
+                model_id,
+                "waiting for official",
+                start_timeout=QUICK_OFFICIAL_START_TIMEOUT,
+            )
             self.job["state"] = "done"
         except asyncio.CancelledError:
             self.job["state"] = "cancelled"
@@ -617,23 +739,75 @@ class DeployManager:
         except Exception as exc:
             self.job["state"] = "error"
             self.job["error"] = str(exc)
-            self._append_job_line(f"ERROR: {exc}")
 
     async def _switch_with_heartbeat(
-        self, model_id: str, label: str, hook=None
+        self,
+        model_id: str,
+        label: str,
+        hook=None,
+        start_timeout: float = QUICK_START_TIMEOUT,
     ) -> None:
-        """Run the takeover switch while emitting a heartbeat line every 10s so
-        the dashboard shows liveness during the (possibly long) backend start.
-        The switch itself rolls back to the previous backend on failure."""
+        """Run a takeover while forwarding service logs and emitting a heartbeat."""
         stop = asyncio.Event()
         hb = asyncio.create_task(self._heartbeat(stop, label))
+        service = self.manager.models.get(model_id)
+        journal = (
+            asyncio.create_task(self._stream_service_journal(service))
+            if service
+            else None
+        )
         try:
             await self.manager.switch_with_hook(
-                model_id, hook, start_timeout=QUICK_START_TIMEOUT
+                model_id, hook, start_timeout=start_timeout
             )
         finally:
             stop.set()
             hb.cancel()
+            if journal is not None:
+                journal.cancel()
+            await asyncio.gather(
+                *([hb, journal] if journal is not None else [hb]),
+                return_exceptions=True,
+            )
+
+    async def _stream_service_journal(self, service: str) -> None:
+        """Forward new systemd user-unit output into the deployment job log."""
+        journalctl = shutil.which("journalctl")
+        if not journalctl:
+            return
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                journalctl,
+                "--user",
+                "-f",
+                "-n",
+                "0",
+                "-o",
+                "cat",
+                "-u",
+                service,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            assert process.stdout is not None
+            while line := await process.stdout.readline():
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    self._append_job_line(text[:4000])
+            await process.wait()
+        except asyncio.CancelledError:
+            raise
+        except OSError as exc:
+            self._append_job_line(f"Journal output unavailable: {exc}")
+        finally:
+            if process is not None and process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), 3)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
 
     async def _heartbeat(self, stop: asyncio.Event, label: str) -> None:
         start = time.time()
@@ -705,7 +879,7 @@ class DeployManager:
                     self.job["step"] = step
                     self._append_job_line(f"--- {step}: Install HF CLI ---")
                     await self._run_stream(
-                        [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
+                        [sys.executable, "-m", "pip", "install", "--upgrade", HF_CLI_PACKAGE],
                         timeout=900,
                     )
                     step += 1
@@ -717,8 +891,16 @@ class DeployManager:
                     self.job["step"] = step
                     self._append_job_line(f"--- {step}: Download uncensored GGUF ---")
                     await self._run_stream(
-                        [hf, "download", UNCENSORED_HF_REPO, "--local-dir", str(uncensored_dir)],
-                        {"HF_TOKEN": token},
+                        [
+                            hf,
+                            "download",
+                            UNCENSORED_HF_REPO,
+                            "--include",
+                            UNCENSORED_DEFAULT_GGUF_PATTERN,
+                            "--local-dir",
+                            str(uncensored_dir),
+                        ],
+                        _hf_download_env(token),
                         timeout=21600,
                         token=token,
                     )
@@ -735,6 +917,7 @@ class DeployManager:
                             "--local-dir",
                             str(uncensored_dir),
                         ],
+                        _hf_download_env(),
                         timeout=3600,
                     )
                     step += 1
@@ -752,6 +935,7 @@ class DeployManager:
                             "--local-dir",
                             str(uncensored_dir),
                         ],
+                        _hf_download_env(),
                         timeout=3600,
                     )
                     step += 1
@@ -802,6 +986,13 @@ class DeployManager:
             await self._switch_with_heartbeat(
                 profile.model_id, "waiting for uncensored", convert_hook
             )
+            if output.is_file():
+                self._append_job_line("--- Clean up downloaded GGUF ---")
+                for gguf_part in uncensored_dir.glob(UNCENSORED_DEFAULT_GGUF_PATTERN):
+                    gguf_part.unlink()
+                local_hf_cache = uncensored_dir / ".cache"
+                if local_hf_cache.exists():
+                    shutil.rmtree(local_hf_cache)
             self.job["state"] = "done"
         except asyncio.CancelledError:
             self.job["state"] = "cancelled"
@@ -810,7 +1001,6 @@ class DeployManager:
         except Exception as exc:
             self.job["state"] = "error"
             self.job["error"] = str(exc)
-            self._append_job_line(f"ERROR: {exc}")
 
     # ------------------------------------------------------------ helpers
 
@@ -1006,10 +1196,26 @@ class DeployManager:
         if not target.exists():
             return None
         self.backup_root.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        backup = self.backup_root / f"profile-{target.stem}-{stamp}.container"
-        backup.write_bytes(target.read_bytes())
-        return backup
+        # Windows can return the same value for both datetime.now() and
+        # time.time_ns() across several rapid calls. Create the file exclusively
+        # and add an ordered suffix so a rollback can never overwrite the backup
+        # it is about to restore.
+        stamp = (
+            f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}-"
+            f"{time.time_ns():020d}"
+        )
+        contents = target.read_bytes()
+        sequence = 0
+        while True:
+            backup = self.backup_root / (
+                f"profile-{target.stem}-{stamp}-{sequence:04d}.container"
+            )
+            try:
+                with backup.open("xb") as handle:
+                    handle.write(contents)
+                return backup
+            except FileExistsError:
+                sequence += 1
 
     def _backups_for(self, quadlet_name: str) -> list[Path]:
         stem = quadlet_name[: -len(".container")]

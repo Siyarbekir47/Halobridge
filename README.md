@@ -32,70 +32,157 @@ one-click container updates.
 - It does not store prompts, responses, images, tool contents, or secrets.
 - It does not invent token counts when the API does not report usage.
 - It does not update to `latest`, release candidates, or non-stable tags.
-- It does not delete model or cache directories; deployment only writes,
-  backs up, and removes Quadlet files.
+- It does not delete user-managed model or runtime cache directories. After a
+  successful Uncensored quick setup, it removes only the downloaded source
+  GGUF shards and their local Hugging Face metadata; the converted `.hgn`
+  remains in place.
 
 ## Requirements
 
-- Linux host with Podman and systemd user services
-- Python 3.11+
-- One or more Halogen model services defined as Podman Quadlets
-- A reachable Halogen backend on the configured backend URL
+- A Linux host supported by
+  [halogen-flash-server](https://github.com/peonist-ai/halogen-flash-server),
+  with its recommended BIOS/UMA configuration
+- Podman and systemd user services
+- Python 3.11+ and `pipx`
+- Enough local disk space for the selected model (the official download is
+  about 118 GiB, plus cache and working space)
+
+You do **not** need to install Halogen, create a container, download a model or
+write a Quadlet before starting Halobridge. The dashboard can do that from an
+empty host.
 
 ## Quick start
 
-```bash
-git clone https://github.com/Siyarbekir47/Halobridge.git
-cd Halobridge
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-Create a config (optional — safe localhost defaults work without one):
+### 1. Install Halobridge
 
 ```bash
-mkdir -p ~/.config/halobridge
-cp config.example.toml ~/.config/halobridge/halobridge.toml
-$EDITOR ~/.config/halobridge/halobridge.toml
+pipx install git+https://github.com/Siyarbekir47/Halobridge.git
+hash -r
+halobridge --version
 ```
 
-Check the setup:
+No configuration file is required. On a clean host, `halobridge doctor` warns
+that no model exists yet; that is expected until step 3.
 
-```bash
-halobridge doctor
-```
+### 2. Start the dashboard
 
-Start the router and dashboard:
+For access only from the server itself:
 
 ```bash
 halobridge router
 ```
 
-Override the configured bind address for one start (repeat `--bind` to listen
-on more than one address):
+For access from your LAN or VPN:
 
 ```bash
 halobridge router --bind 0.0.0.0
 ```
 
-Binding beyond localhost exposes the API to that network. Use a trusted
-firewall or VPN and configure authentication before doing so.
-
-Open:
+Then open one of these addresses:
 
 ```text
 http://127.0.0.1:8731/dashboard
+http://SERVER-IP:8731/dashboard
 ```
 
-### 60-second version
+Binding to `0.0.0.0` exposes the API and dashboard to networks that can reach
+the host. Prefer a trusted LAN/VPN, and configure the token gate before using
+an untrusted network.
 
-If everything is already installed and configured, this is all you need:
+#### Optional: start automatically with systemd
+
+Stop a foreground Halobridge process with `Ctrl+C`, then create and start a
+systemd user service. This block works with the `pipx` installation above and
+does not require a cloned repository:
 
 ```bash
-pipx install git+https://github.com/Siyarbekir47/Halobridge.git
-halobridge doctor   # shows what is ready and what is missing
-halobridge router   # starts API + dashboard on http://127.0.0.1:8731
+mkdir -p ~/.config/systemd/user
+tee ~/.config/systemd/user/halobridge.service >/dev/null <<'EOF'
+[Unit]
+Description=Halobridge router and dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/halobridge router --bind 0.0.0.0
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now halobridge.service
+sudo loginctl enable-linger "$USER"
+```
+
+`enable-linger` lets the user service start during boot without an interactive
+login. Verify the service and follow its logs with:
+
+```bash
+systemctl --user status halobridge.service --no-pager
+journalctl --user -u halobridge.service -f
+```
+
+For server-local access only, remove `--bind 0.0.0.0` from `ExecStart`.
+
+### 3. Install the official model
+
+In the dashboard:
+
+1. Open **Models**.
+2. Leave **Official model** selected.
+3. Click **Install official model** and confirm.
+4. Keep Halobridge running while the job finishes.
+
+Halobridge creates the Quadlet, pulls the pinned official container image,
+downloads the model on first start and streams the progress into the dashboard.
+The download is about 118 GiB and resumes if interrupted. The tokenizer,
+quality overlay and vision tower come from the official weights repository;
+image input is enabled by default. Later starts reuse the files on disk.
+
+The container engine and model format belong to
+[peonist-ai/halogen-flash-server](https://github.com/peonist-ai/halogen-flash-server).
+Halobridge provides the installation workflow, Quadlet management, router and
+dashboard around that official image.
+
+### 4. Verify it
+
+Check health and model discovery:
+
+```bash
+curl -sS http://127.0.0.1:8731/health
+curl -sS http://127.0.0.1:8731/v1/models
+```
+
+Send a short OpenAI-compatible request:
+
+```bash
+curl -sS --max-time 300 \
+  http://127.0.0.1:8731/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen3.8-flash",
+    "messages": [{"role": "user", "content": "Reply with exactly: Halogen is running."}],
+    "max_tokens": 64,
+    "temperature": 0,
+    "reasoning_effort": "low"
+  }'
+```
+
+If you started Halobridge with `--bind 0.0.0.0`, replace `127.0.0.1` with the
+server's LAN or VPN address when testing from another machine.
+
+### Later starts
+
+The downloaded model stays under `~/halogen`. Starting Halobridge again
+discovers the generated Quadlet and starts or adopts the official backend:
+
+```bash
+halobridge router --bind 0.0.0.0
 ```
 
 ## Configuration
@@ -199,15 +286,23 @@ at it. You do not have to stop the running model by hand first.
 
 - **Official model** — one click installs the official profile and starts it.
   The first start downloads the upstream weights (~118 GiB) through
-  `HALOGEN_DOWNLOAD`; later starts are offline. If a profile already exists,
-  the existing one is started instead of being overwritten.
+  `HALOGEN_DOWNLOAD`; later starts are offline. The downloaded vision tower is
+  enabled by default, so the resulting backend accepts image inputs. If a
+  profile already exists, the existing one is started instead of being
+  overwritten.
 - **Uncensored model** — paste a Hugging Face read token and click once.
-  Halobridge downloads the uncensored GGUF, the draft head and tokenizer
-  (while the current model keeps serving), then stops the active backend,
-  converts to `.hgn` with the GPU to itself, applies the profile and starts
-  uncensored — all as one streaming job with visible steps. If the converted
-  `.hgn` already exists, the download/convert steps are skipped and no token
-  is required.
+  Before the first download, sign in to Hugging Face, open the
+  [gated OrcaRouter repository](https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF),
+  accept its terms or request access, and wait for approval. Then create a
+  READ token from the same account. A valid token alone is not enough if that
+  account has not been granted repository access. Halobridge downloads the
+  uncensored GGUF, the draft head and tokenizer (while the current model keeps
+  serving), then stops the active backend, converts to `.hgn` with the GPU to
+  itself, applies the profile and starts uncensored — all as one streaming job
+  with visible steps. After the new backend passes its health check, the source
+  GGUF shards and their local download metadata are removed automatically.
+  If the converted `.hgn` already exists, the
+  download/convert steps are skipped and no token is required.
 
 Both buttons ask for a confirmation click (labelled "Stop active model &
 install?") and respect the same safety boundaries as the advanced editor
@@ -215,13 +310,38 @@ install?") and respect the same safety boundaries as the advanced editor
 in-flight requests and waits for GPU memory release before touching the
 hardware, so it never runs two backends on the GPU at once.
 
-The install runs as a streaming job with a heartbeat line every 10 s, so the
-dashboard always shows it is alive. The wait for the new backend to become
-healthy is bounded (5 min); if it does not come up — or you press **Cancel** —
-Halobridge stops the half-started model and rolls back to the previously
-active one, so a failed takeover never leaves the host without a backend or
-frozen. A missing tokenizer is re-downloaded even when the `.hgn` already
-exists, so a partial earlier install is repaired automatically.
+The install runs as a streaming job. Halobridge forwards the backend service
+output from the systemd journal and adds a heartbeat every 10 s, so download
+and startup progress stay visible. A prepared backend has a 5-minute health
+deadline; the first official start gets up to 6 hours because it downloads
+about 118 GiB. If it does not come up — or you press **Cancel** — Halobridge
+stops the half-started model and rolls back to the previously active one, so a
+failed takeover never leaves the host without a backend or frozen. A missing
+tokenizer is re-downloaded even when the `.hgn` already exists, so a partial
+earlier install is repaired automatically.
+
+#### Why the checkpoint field is empty after Quick Setup
+
+This is intentional for the official model. Quick Setup sets
+`HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next` and leaves
+`HALOGEN_CHECKPOINT` empty. The official container then downloads and selects
+its standard checkpoint from `/models`, matching the upstream
+[halogen-flash-server Quickstart](https://github.com/peonist-ai/halogen-flash-server#quickstart).
+The empty dashboard field therefore means **automatic official checkpoint
+selection**, not “no checkpoint loaded”. The startup log and `/health` show the
+checkpoint that is actually active.
+
+Halobridge does set `HALOGEN_VISION_TOWER` explicitly because upstream keeps
+image support opt-in. This makes a fresh Official Quick Setup accept images by
+default.
+
+| Checkpoint mode | Advantages | Tradeoffs |
+| --- | --- | --- |
+| Empty / automatic (Official Quick Setup) | Simplest setup; follows the official downloaded layout; fewer paths to maintain | Not suitable when you need to choose between several custom checkpoints |
+| Explicit `HALOGEN_CHECKPOINT` | Deterministically selects one `.hgn` or supported GGUF; useful for custom and converted models | The path must stay correct; a renamed, moved or missing file prevents startup |
+
+For the standard official model, leave the checkpoint field empty. Set it only
+when deliberately running a custom or converted checkpoint.
 
 ### Advanced editor
 
@@ -230,7 +350,8 @@ Open **Profile & Deployment** in the dashboard:
 - **New profile from template** — two starting points:
   - *Official model*: preconfigured for the upstream weights repo. The first
     start downloads the weights (~118 GiB) into the models directory through
-    `HALOGEN_DOWNLOAD`; later starts are offline.
+    `HALOGEN_DOWNLOAD`; later starts are offline. The vision tower is enabled
+    by default.
   - *Custom model*: for your own GGUF or `.hgn` files you place in the
     models directory yourself.
 - **Editable parameters** — every field is validated against a typed allowlist

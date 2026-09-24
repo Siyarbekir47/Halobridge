@@ -311,6 +311,7 @@ OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"
+UNCENSORED_DEFAULT_GGUF_PATTERN = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-*.gguf"
 UNCENSORED_DEFAULT_OUTPUT = "qwen3.8-flash-uncensored.hgn"
 
 _COMMON_RUNTIME_ENV = {
@@ -387,6 +388,7 @@ def official_quick_template(image_tag: str, models_root: Path, cache_root: Path)
     env = {
         "HALOGEN_MODEL_ID": "qwen3.8-flash",
         "HALOGEN_DOWNLOAD": OFFICIAL_WEIGHTS_REPO,
+        "HALOGEN_VISION_TOWER": "/models/qwen38-flash-next-vision.hgn",
         **_COMMON_RUNTIME_ENV,
     }
     return Profile(
