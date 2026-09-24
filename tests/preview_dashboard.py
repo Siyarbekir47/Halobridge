@@ -22,7 +22,7 @@ def create_preview():
                output_tokens=100+i*10, cached_tokens=800 if i % 2 else 0,
                status=200 if i % 9 else 499, duration_ms=3200+i*50)
     async def snapshot():
-        return {'generated_at': time.time(), 'app': {'version': '0.1.9'},
+        return {'generated_at': time.time(), 'app': {'version': '0.1.10'},
                 'api': {'active_model': 'qwen3.8-flash', 'status': 'ok'},
                 'backend': {'status': 'ok', 'in_flight': 0, 'queued': 0, 'context': 262144,
                             'slots': 4, 'max_tokens_default': 8192, 'max_tokens_cap': 65536,

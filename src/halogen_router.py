@@ -1140,12 +1140,33 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
 
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("router", help="Start router and dashboard")
-    sub.add_parser("dashboard", help="Alias for router")
+    for name, help_text in (
+        ("router", "Start router and dashboard"),
+        ("dashboard", "Alias for router"),
+    ):
+        command = sub.add_parser(name, help=help_text)
+        command.add_argument(
+            "--bind",
+            action="append",
+            metavar="ADDRESS",
+            help=(
+                "Override router bind address for this start; "
+                "repeat for multiple addresses"
+            ),
+        )
     sub.add_parser("doctor", help="Check setup")
     sub.add_parser("update-check", help="Check update status without installing")
 
     return parser.parse_args(argv)
+
+
+def apply_cli_overrides(
+    config: settings.Config, args: argparse.Namespace
+) -> settings.Config:
+    bind = getattr(args, "bind", None)
+    if bind:
+        config.router.bind = bind
+    return config
 
 
 async def run_router(config: settings.Config) -> None:
@@ -1228,6 +1249,8 @@ def cli(argv: Optional[list[str]] = None) -> None:
         print(f"Configuration error: {error}", file=sys.stderr)
         raise SystemExit(2)
 
+    apply_cli_overrides(config, args)
+
     if args.check_config:
         print("Configuration is valid.")
         return
@@ -1255,6 +1278,7 @@ async def main(argv: Optional[list[str]] = None) -> None:
     except settings.ConfigError as error:
         print(f"Configuration error: {error}", file=sys.stderr)
         raise SystemExit(2)
+    apply_cli_overrides(config, args)
     if args.check_config:
         print("Configuration is valid.")
         return

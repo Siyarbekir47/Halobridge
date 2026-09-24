@@ -12,6 +12,20 @@ from settings import Config, DashboardConfig, DeployConfig, ModelsConfig, Securi
 
 
 class CreateApplicationTests(unittest.IsolatedAsyncioTestCase):
+    def test_router_bind_cli_override(self):
+        args = router.parse_args(
+            ["router", "--bind", "0.0.0.0", "--bind", "::1"]
+        )
+        config = router.apply_cli_overrides(Config(), args)
+
+        self.assertEqual(config.router.bind, ["0.0.0.0", "::1"])
+
+    def test_dashboard_bind_cli_override(self):
+        args = router.parse_args(["dashboard", "--bind", "192.168.68.72"])
+        config = router.apply_cli_overrides(Config(), args)
+
+        self.assertEqual(config.router.bind, ["192.168.68.72"])
+
     async def test_no_models_starts_deployment_only_mode(self):
         config = Config(
             models=ModelsConfig(auto_discover=False, explicit={}),

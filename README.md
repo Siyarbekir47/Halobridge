@@ -72,6 +72,16 @@ Start the router and dashboard:
 halobridge router
 ```
 
+Override the configured bind address for one start (repeat `--bind` to listen
+on more than one address):
+
+```bash
+halobridge router --bind 0.0.0.0
+```
+
+Binding beyond localhost exposes the API to that network. Use a trusted
+firewall or VPN and configure authentication before doing so.
+
 Open:
 
 ```text
