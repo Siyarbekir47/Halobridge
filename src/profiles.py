@@ -387,6 +387,7 @@ def official_quick_template(image_tag: str, models_root: Path, cache_root: Path)
     env = {
         "HALOGEN_MODEL_ID": "qwen3.8-flash",
         "HALOGEN_DOWNLOAD": OFFICIAL_WEIGHTS_REPO,
+        "HALOGEN_VISION_TOWER": "/models/qwen38-flash-next-vision.hgn",
         **_COMMON_RUNTIME_ENV,
     }
     return Profile(
