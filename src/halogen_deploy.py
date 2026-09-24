@@ -11,6 +11,7 @@ but never deleted by this module.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import difflib
 import json
 import logging
@@ -31,6 +32,7 @@ from profiles import (
     OFFICIAL_WEIGHTS_REPO,
     REPO_ID_RE,
     UNCENSORED_DEFAULT_GGUF_NAME,
+    UNCENSORED_DEFAULT_GGUF_PATTERN,
     UNCENSORED_DEFAULT_OUTPUT,
     UNCENSORED_HF_REPO,
     Profile,
@@ -50,6 +52,7 @@ logger = logging.getLogger("halobridge.deploy")
 
 PROFILE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 QUADLET_FILENAME_RE = re.compile(r"^halogen-[a-z0-9][a-z0-9-]{0,31}\.container$")
+ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
 
 # How long a quick-install takeover waits for the new backend to become healthy
 # before giving up and rolling back to the previous model. Kept above the normal
@@ -60,6 +63,13 @@ QUICK_START_TIMEOUT = 300
 # container on its first start. Keep that operation bounded, but give normal
 # internet connections enough time to complete it.
 QUICK_OFFICIAL_START_TIMEOUT = 6 * 60 * 60
+HF_CLI_PACKAGE = "huggingface_hub"
+HF_GATED_ACCESS_MESSAGE = (
+    "Hugging Face denied access to the uncensored repository. Open "
+    "https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF "
+    "in a browser, accept the terms or request access, wait for approval, "
+    "then use a READ token from the same account."
+)
 
 
 class DeployError(ValueError):
@@ -72,6 +82,34 @@ def _is_within(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _hf_access_denied(output: str) -> bool:
+    text = output.lower()
+    return any(
+        marker in text
+        for marker in (
+            "access denied",
+            "requires approval",
+            "gated repo",
+            "cannot access gated",
+            "invalid user token",
+        )
+    )
+
+
+def _hf_download_env(token: str | None = None) -> dict[str, str]:
+    # huggingface_hub/tqdm suppresses progress automatically when stderr is a
+    # pipe. Force log-friendly progress records for the dashboard instead of
+    # terminal cursor updates. A modest interval avoids flooding job history.
+    env = {
+        "HF_HUB_DISABLE_PROGRESS_BARS": "0",
+        "TQDM_POSITION": "-1",
+        "TQDM_MININTERVAL": "2",
+    }
+    if token:
+        env["HF_TOKEN"] = token
+    return env
 
 
 class DeployManager:
@@ -353,7 +391,7 @@ class DeployManager:
             raise DeployError("HF CLI is already installed.")
         return self._start_job(
             "hf-install",
-            [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
+            [sys.executable, "-m", "pip", "install", "--upgrade", HF_CLI_PACKAGE],
             timeout=900,
         )
 
@@ -387,7 +425,7 @@ class DeployManager:
             cmd.append(filename)
         cmd += ["--local-dir", str(dest)]
         return self._start_job(
-            "hf-download", cmd, {"HF_TOKEN": token}, timeout=21600
+            "hf-download", cmd, _hf_download_env(token), timeout=21600
         )
 
     def convert(self, payload: dict) -> dict:
@@ -494,20 +532,10 @@ class DeployManager:
             self.job["error"] = f"Program not found: {argv[0]}"
             return
 
-        async def pump() -> None:
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if token and token in text:
-                    text = text.replace(token, "[token]")
-                self.job["lines"].append(text)
-                if len(self.job["lines"]) > 200:
-                    del self.job["lines"][:-200]
-
         try:
-            await asyncio.wait_for(pump(), timeout)
+            recent_lines = await asyncio.wait_for(
+                self._pump_process_output(process.stdout, token), timeout
+            )
             returncode = await process.wait()
         except asyncio.TimeoutError:
             process.kill()
@@ -518,7 +546,12 @@ class DeployManager:
             self.job["state"] = "done"
         else:
             self.job["state"] = "error"
-            self.job["error"] = f"Exit {returncode}"
+            output = "\n".join(recent_lines)
+            self.job["error"] = (
+                HF_GATED_ACCESS_MESSAGE
+                if _hf_access_denied(output)
+                else f"Exit {returncode}"
+            )
 
     def _append_job_line(self, text: str) -> None:
         if self.job is None:
@@ -526,6 +559,45 @@ class DeployManager:
         self.job["lines"].append(text)
         if len(self.job["lines"]) > 200:
             del self.job["lines"][:-200]
+
+    async def _pump_process_output(
+        self, stream: asyncio.StreamReader, token: str | None = None
+    ) -> list[str]:
+        """Forward newline and terminal-style carriage-return updates.
+
+        Tools such as ``hf``/tqdm redraw progress bars with ``\r`` instead of
+        emitting newline-terminated records. Reading with ``readline()`` hides
+        those updates until the command finishes, so consume chunks and treat
+        either delimiter as a dashboard log record.
+        """
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        pending = ""
+        recent_lines: list[str] = []
+
+        def emit(raw: str) -> None:
+            text = ANSI_ESCAPE_RE.sub("", raw).replace("\b", "").rstrip()
+            if token and token in text:
+                text = text.replace(token, "[token]")
+            if not text:
+                return
+            self._append_job_line(text)
+            recent_lines.append(text)
+            if len(recent_lines) > 20:
+                del recent_lines[:-20]
+
+        while True:
+            chunk = await stream.read(4096)
+            if not chunk:
+                break
+            pending += decoder.decode(chunk)
+            records = re.split(r"[\r\n]+", pending)
+            pending = records.pop()
+            for record in records:
+                emit(record)
+
+        pending += decoder.decode(b"", final=True)
+        emit(pending)
+        return recent_lines
 
     async def _run_stream(
         self,
@@ -547,18 +619,10 @@ class DeployManager:
         except FileNotFoundError as exc:
             raise DeployError(f"Program not found: {argv[0]} ({exc})")
 
-        async def pump() -> None:
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if token and token in text:
-                    text = text.replace(token, "[token]")
-                self._append_job_line(text)
-
         try:
-            await asyncio.wait_for(pump(), timeout)
+            recent_lines = await asyncio.wait_for(
+                self._pump_process_output(process.stdout, token), timeout
+            )
             returncode = await process.wait()
         except asyncio.TimeoutError:
             process.kill()
@@ -569,6 +633,8 @@ class DeployManager:
             await process.wait()
             raise
         if returncode != 0:
+            if _hf_access_denied("\n".join(recent_lines)):
+                raise DeployError(HF_GATED_ACCESS_MESSAGE)
             raise DeployError(f"{argv[0]} failed (exit {returncode})")
 
     def _start_pipeline_job(self, kind: str, total_steps: int) -> dict:
@@ -813,7 +879,7 @@ class DeployManager:
                     self.job["step"] = step
                     self._append_job_line(f"--- {step}: Install HF CLI ---")
                     await self._run_stream(
-                        [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
+                        [sys.executable, "-m", "pip", "install", "--upgrade", HF_CLI_PACKAGE],
                         timeout=900,
                     )
                     step += 1
@@ -825,8 +891,16 @@ class DeployManager:
                     self.job["step"] = step
                     self._append_job_line(f"--- {step}: Download uncensored GGUF ---")
                     await self._run_stream(
-                        [hf, "download", UNCENSORED_HF_REPO, "--local-dir", str(uncensored_dir)],
-                        {"HF_TOKEN": token},
+                        [
+                            hf,
+                            "download",
+                            UNCENSORED_HF_REPO,
+                            "--include",
+                            UNCENSORED_DEFAULT_GGUF_PATTERN,
+                            "--local-dir",
+                            str(uncensored_dir),
+                        ],
+                        _hf_download_env(token),
                         timeout=21600,
                         token=token,
                     )
@@ -843,6 +917,7 @@ class DeployManager:
                             "--local-dir",
                             str(uncensored_dir),
                         ],
+                        _hf_download_env(),
                         timeout=3600,
                     )
                     step += 1
@@ -860,6 +935,7 @@ class DeployManager:
                             "--local-dir",
                             str(uncensored_dir),
                         ],
+                        _hf_download_env(),
                         timeout=3600,
                     )
                     step += 1
@@ -910,6 +986,13 @@ class DeployManager:
             await self._switch_with_heartbeat(
                 profile.model_id, "waiting for uncensored", convert_hook
             )
+            if output.is_file():
+                self._append_job_line("--- Clean up downloaded GGUF ---")
+                for gguf_part in uncensored_dir.glob(UNCENSORED_DEFAULT_GGUF_PATTERN):
+                    gguf_part.unlink()
+                local_hf_cache = uncensored_dir / ".cache"
+                if local_hf_cache.exists():
+                    shutil.rmtree(local_hf_cache)
             self.job["state"] = "done"
         except asyncio.CancelledError:
             self.job["state"] = "cancelled"

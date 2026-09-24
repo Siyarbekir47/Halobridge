@@ -15,9 +15,11 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from halogen_deploy import (
+    HF_CLI_PACKAGE,
     QUICK_OFFICIAL_START_TIMEOUT,
     DeployError,
     DeployManager,
+    _hf_access_denied,
 )
 from profiles import official_template, parse_quadlet, profile_to_dict, render_quadlet
 
@@ -417,6 +419,40 @@ class ConvertVerifyJobTests(PosixTestCase):
             with self.assertRaises(DeployError):
                 self.manager.hf_download({"repo": "orcarouter/x", "dest": str(self.tmp / "d")})
 
+    def test_hf_install_uses_package_with_built_in_cli(self):
+        captured, fake = self._capture_start()
+        with patch.object(self.manager, "_hf_executable", return_value=None):
+            with patch.object(self.manager, "_start_job", fake):
+                self.manager.hf_install()
+        self.assertEqual(captured["argv"][-1], HF_CLI_PACKAGE)
+        self.assertNotIn("[cli]", captured["argv"][-1])
+
+    def test_hf_access_denied_recognizes_gated_repository_error(self):
+        self.assertTrue(
+            _hf_access_denied(
+                "Error: Access denied. This repository requires approval."
+            )
+        )
+        self.assertFalse(_hf_access_denied("network connection timed out"))
+
+    def test_run_stream_forwards_carriage_return_progress(self):
+        self.manager._start_pipeline_job("test-progress", 1)
+        command = (
+            "import sys; "
+            "sys.stdout.write('Fetching 1%\\rFetching 2%\\r"
+            "\\x1b[32mDone\\x1b[0m\\n'); "
+            "sys.stdout.flush()"
+        )
+
+        asyncio.run(
+            self.manager._run_stream([sys.executable, "-c", command], timeout=30)
+        )
+
+        self.assertEqual(
+            self.manager.job["lines"],
+            ["Fetching 1%", "Fetching 2%", "Done"],
+        )
+
     def test_hf_download_rejects_bad_repo(self):
         with patch.object(self.manager, "_hf_executable", return_value="hf"):
             with self.assertRaises(DeployError):
@@ -450,6 +486,9 @@ class ConvertVerifyJobTests(PosixTestCase):
             ["hf", "download", "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"],
         )
         self.assertEqual(captured["env"]["HF_TOKEN"], "hf_secret123")
+        self.assertEqual(captured["env"]["HF_HUB_DISABLE_PROGRESS_BARS"], "0")
+        self.assertEqual(captured["env"]["TQDM_POSITION"], "-1")
+        self.assertEqual(captured["env"]["TQDM_MININTERVAL"], "2")
         self.assertNotIn("hf_secret123", " ".join(captured["argv"]))
 
     def test_hf_status_detects_venv_local_hf(self):
@@ -583,12 +622,24 @@ class QuickDeployTests(PosixTestCase):
     def test_run_quick_uncensored_switches_with_convert_hook(self):
         uncensored_dir = self.tmp / "models" / "uncensored"
         uncensored_dir.mkdir(parents=True)
-        gguf = uncensored_dir / "x.gguf"
+        gguf_parts = [
+            uncensored_dir
+            / f"Qwen3.8-Flash-Next-Uncensored-IQ4_XS-0000{i}-of-00003.gguf"
+            for i in range(1, 4)
+        ]
+        for part in gguf_parts:
+            part.write_text("gguf")
+        gguf = gguf_parts[0]
         output = uncensored_dir / "qwen3.8-flash-uncensored.hgn"
+        local_hf_cache = uncensored_dir / ".cache" / "huggingface"
+        local_hf_cache.mkdir(parents=True)
+        (local_hf_cache / "metadata").write_text("x")
         streams = []
 
         async def fake_stream(argv, *a, **k):
             streams.append(list(argv))
+            if "convert" in argv:
+                output.write_text("hgn")
 
         self.deploy._run_stream = fake_stream
         self.deploy._hf_executable = lambda: "hf"
@@ -612,7 +663,46 @@ class QuickDeployTests(PosixTestCase):
             )
         self.assertEqual(switch_calls, ["qwen3.8-flash-uncensored"])
         self.assertTrue(any("convert" in s for s in streams))
+        gguf_download = next(s for s in streams if "orcarouter" in " ".join(s))
+        self.assertIn("--include", gguf_download)
+        self.assertIn(
+            "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-*.gguf", gguf_download
+        )
+        self.assertTrue(output.exists())
+        self.assertTrue(all(not part.exists() for part in gguf_parts))
+        self.assertFalse((uncensored_dir / ".cache").exists())
         self.assertEqual(self.deploy.job["state"], "done")
+
+    def test_failed_uncensored_switch_keeps_downloaded_gguf(self):
+        uncensored_dir = self.tmp / "models" / "uncensored"
+        uncensored_dir.mkdir(parents=True)
+        gguf = (
+            uncensored_dir
+            / "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"
+        )
+        gguf.write_text("gguf")
+        output = uncensored_dir / "qwen3.8-flash-uncensored.hgn"
+
+        async def failed_switch(model, hook=None, start_timeout=None):
+            output.write_text("hgn")
+            raise RuntimeError("backend failed")
+
+        self.deploy._hf_executable = lambda: "hf"
+        self.deploy.install_dirs = lambda payload: {"ok": True}
+        self.deploy.dry_run = lambda payload: {"ok": True, "errors": []}
+        self.deploy.apply = AsyncMock()
+        self.deploy.manager.switch_with_hook = failed_switch
+        self.deploy._start_pipeline_job("quick-uncensored", 2)
+
+        with patch.object(DeployManager, "reload_discovery", return_value={"ok": True}):
+            asyncio.run(
+                self.deploy._run_quick_uncensored(
+                    "", "0.13.2", uncensored_dir, gguf, output, False, False
+                )
+            )
+
+        self.assertEqual(self.deploy.job["state"], "error")
+        self.assertTrue(gguf.exists())
 
     def test_run_quick_uncensored_repairs_missing_tokenizer(self):
         uncensored_dir = self.tmp / "models" / "uncensored"

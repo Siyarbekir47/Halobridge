@@ -18,7 +18,7 @@
     <a href="#models" data-view="models"><span aria-hidden="true">▱</span><span data-i18n="nav_models">Models</span></a>
     <a href="#system" data-view="system"><span aria-hidden="true">⚙</span><span data-i18n="nav_system">System</span><span id="systemAttention" class="attention" hidden>!</span></a>
   </nav>
-  <div class="sidebar-bottom"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect"><option value="en">English</option><option value="de">Deutsch</option></select><small>Halobridge <span id="appVersion">v0.1.12</span></small></div>
+  <div class="sidebar-bottom"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect"><option value="en">English</option><option value="de">Deutsch</option></select><small>Halobridge <span id="appVersion">v0.1.17</span></small></div>
 </aside>
 <main class="shell" id="mainContent" tabindex="-1">
   <header class="page-header"><div><p class="eyebrow" data-i18n="workspace_label">LOCAL INFERENCE</p><h1 id="viewTitle" tabindex="-1">Overview</h1><p id="viewDescription" class="muted"></p></div><div class="status" role="status"><i class="dot" id="statusDot"></i><span id="connection" data-i18n="conn_connecting">Connecting …</span></div></header>
@@ -98,6 +98,7 @@
         <div class="deploy-fields">
           <label id="quickTokenField" hidden><span data-i18n="hf_token">HF token — READ only required</span><input id="quickHfToken" type="password" autocomplete="off" autocapitalize="off"></label>
         </div>
+        <p id="quickHfAccessHint" class="warning" hidden><span data-i18n="hf_access_required">Before downloading, accept the repository terms or request access while signed in to the same Hugging Face account as the token.</span> <a href="https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF" target="_blank" rel="noopener noreferrer" data-i18n="hf_access_link">Open gated repository</a></p>
         <div class="deploy-actions">
           <button type="button" id="quickOfficialBtn" class="primary" data-i18n="quick_official">Install official model</button>
           <button type="button" id="quickUncensoredBtn" hidden data-i18n="quick_uncensored">Install uncensored model</button>
@@ -145,6 +146,7 @@
           <label><span data-i18n="hf_dest">Destination directory (host)</span><input id="hfDest" type="text"></label>
           <label><span data-i18n="hf_token">HF token — READ only required</span><input id="hfToken" type="password" autocomplete="off" autocapitalize="off"></label>
         </div>
+        <p class="warning"><span data-i18n="hf_access_required">Before downloading, accept the repository terms or request access while signed in to the same Hugging Face account as the token.</span> <a href="https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF" target="_blank" rel="noopener noreferrer" data-i18n="hf_access_link">Open gated repository</a></p>
         <p class="muted" data-i18n="hf_token_note">Never stored: passed to the download only as an environment variable and filtered from all output.</p>
         <button type="button" id="hfDownloadBtn" data-i18n="hf_download">Start download</button>
         <p class="list-title" data-i18n="conv_title">GGUF → HGN convert (lossless, ~10 min)</p>

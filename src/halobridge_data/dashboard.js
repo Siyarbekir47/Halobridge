@@ -75,6 +75,7 @@ $('assetsTab').addEventListener('click', () => modelTab(true));
 $('quickModel').addEventListener('change', () => {
   const uncensored = $('quickModel').value === 'uncensored';
   $('quickTokenField').hidden = !uncensored;
+  $('quickHfAccessHint').hidden = !uncensored;
   $('quickOfficialBtn').hidden = uncensored;
   $('quickUncensoredBtn').hidden = !uncensored;
   resetDeployArm();
