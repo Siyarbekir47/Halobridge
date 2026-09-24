@@ -37,65 +37,110 @@ one-click container updates.
 
 ## Requirements
 
-- Linux host with Podman and systemd user services
-- Python 3.11+
-- One or more Halogen model services defined as Podman Quadlets
-- A reachable Halogen backend on the configured backend URL
+- A Linux host supported by
+  [halogen-flash-server](https://github.com/peonist-ai/halogen-flash-server),
+  with its recommended BIOS/UMA configuration
+- Podman and systemd user services
+- Python 3.11+ and `pipx`
+- Enough local disk space for the selected model (the official download is
+  about 118 GiB, plus cache and working space)
+
+You do **not** need to install Halogen, create a container, download a model or
+write a Quadlet before starting Halobridge. The dashboard can do that from an
+empty host.
 
 ## Quick start
 
-```bash
-git clone https://github.com/Siyarbekir47/Halobridge.git
-cd Halobridge
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-Create a config (optional — safe localhost defaults work without one):
+### 1. Install Halobridge
 
 ```bash
-mkdir -p ~/.config/halobridge
-cp config.example.toml ~/.config/halobridge/halobridge.toml
-$EDITOR ~/.config/halobridge/halobridge.toml
+pipx install git+https://github.com/Siyarbekir47/Halobridge.git
+hash -r
+halobridge --version
 ```
 
-Check the setup:
+No configuration file is required. On a clean host, `halobridge doctor` warns
+that no model exists yet; that is expected until step 3.
 
-```bash
-halobridge doctor
-```
+### 2. Start the dashboard
 
-Start the router and dashboard:
+For access only from the server itself:
 
 ```bash
 halobridge router
 ```
 
-Override the configured bind address for one start (repeat `--bind` to listen
-on more than one address):
+For access from your LAN or VPN:
 
 ```bash
 halobridge router --bind 0.0.0.0
 ```
 
-Binding beyond localhost exposes the API to that network. Use a trusted
-firewall or VPN and configure authentication before doing so.
-
-Open:
+Then open one of these addresses:
 
 ```text
 http://127.0.0.1:8731/dashboard
+http://SERVER-IP:8731/dashboard
 ```
 
-### 60-second version
+Binding to `0.0.0.0` exposes the API and dashboard to networks that can reach
+the host. Prefer a trusted LAN/VPN, and configure the token gate before using
+an untrusted network.
 
-If everything is already installed and configured, this is all you need:
+### 3. Install the official model
+
+In the dashboard:
+
+1. Open **Models**.
+2. Leave **Official model** selected.
+3. Click **Install official model** and confirm.
+4. Keep Halobridge running while the job finishes.
+
+Halobridge creates the Quadlet, pulls the pinned official container image,
+downloads the model on first start and streams the progress into the dashboard.
+The download is about 118 GiB and resumes if interrupted. The tokenizer,
+quality overlay and vision tower come from the official weights repository;
+image input is enabled by default. Later starts reuse the files on disk.
+
+The container engine and model format belong to
+[peonist-ai/halogen-flash-server](https://github.com/peonist-ai/halogen-flash-server).
+Halobridge provides the installation workflow, Quadlet management, router and
+dashboard around that official image.
+
+### 4. Verify it
+
+Check health and model discovery:
 
 ```bash
-pipx install git+https://github.com/Siyarbekir47/Halobridge.git
-halobridge doctor   # shows what is ready and what is missing
-halobridge router   # starts API + dashboard on http://127.0.0.1:8731
+curl -sS http://127.0.0.1:8731/health
+curl -sS http://127.0.0.1:8731/v1/models
+```
+
+Send a short OpenAI-compatible request:
+
+```bash
+curl -sS --max-time 300 \
+  http://127.0.0.1:8731/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen3.8-flash",
+    "messages": [{"role": "user", "content": "Reply with exactly: Halogen is running."}],
+    "max_tokens": 64,
+    "temperature": 0,
+    "reasoning_effort": "low"
+  }'
+```
+
+If you started Halobridge with `--bind 0.0.0.0`, replace `127.0.0.1` with the
+server's LAN or VPN address when testing from another machine.
+
+### Later starts
+
+The downloaded model stays under `~/halogen`. Starting Halobridge again
+discovers the generated Quadlet and starts or adopts the official backend:
+
+```bash
+halobridge router --bind 0.0.0.0
 ```
 
 ## Configuration
@@ -226,6 +271,29 @@ stops the half-started model and rolls back to the previously active one, so a
 failed takeover never leaves the host without a backend or frozen. A missing
 tokenizer is re-downloaded even when the `.hgn` already exists, so a partial
 earlier install is repaired automatically.
+
+#### Why the checkpoint field is empty after Quick Setup
+
+This is intentional for the official model. Quick Setup sets
+`HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next` and leaves
+`HALOGEN_CHECKPOINT` empty. The official container then downloads and selects
+its standard checkpoint from `/models`, matching the upstream
+[halogen-flash-server Quickstart](https://github.com/peonist-ai/halogen-flash-server#quickstart).
+The empty dashboard field therefore means **automatic official checkpoint
+selection**, not “no checkpoint loaded”. The startup log and `/health` show the
+checkpoint that is actually active.
+
+Halobridge does set `HALOGEN_VISION_TOWER` explicitly because upstream keeps
+image support opt-in. This makes a fresh Official Quick Setup accept images by
+default.
+
+| Checkpoint mode | Advantages | Tradeoffs |
+| --- | --- | --- |
+| Empty / automatic (Official Quick Setup) | Simplest setup; follows the official downloaded layout; fewer paths to maintain | Not suitable when you need to choose between several custom checkpoints |
+| Explicit `HALOGEN_CHECKPOINT` | Deterministically selects one `.hgn` or supported GGUF; useful for custom and converted models | The path must stay correct; a renamed, moved or missing file prevents startup |
+
+For the standard official model, leave the checkpoint field empty. Set it only
+when deliberately running a custom or converted checkpoint.
 
 ### Advanced editor
 
