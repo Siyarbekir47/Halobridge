@@ -254,7 +254,7 @@
   "quick_title": "Install a model",
   "quick_official": "Install official model",
   "quick_uncensored": "Install uncensored model",
-  "quick_note": "Official downloads about 118 GiB on first start. Uncensored downloads the GGUF, converts it, then starts. Halobridge serves one backend at a time: installing pauses the currently active model and starts the new one afterwards. On failure it rolls back to the previous model automatically.",
+  "quick_note": "Official downloads about 118 GiB on first start. Uncensored downloads the GGUF, converts it, starts, then removes the source GGUF after a successful health check. Halobridge serves one backend at a time: installing pauses the currently active model and starts the new one afterwards. On failure it rolls back to the previous model automatically.",
   "quick_confirm": "Stop active model & install?",
   "job_quick_official": "Official setup",
   "job_quick_uncensored": "Uncensored setup",

@@ -622,12 +622,24 @@ class QuickDeployTests(PosixTestCase):
     def test_run_quick_uncensored_switches_with_convert_hook(self):
         uncensored_dir = self.tmp / "models" / "uncensored"
         uncensored_dir.mkdir(parents=True)
-        gguf = uncensored_dir / "x.gguf"
+        gguf_parts = [
+            uncensored_dir
+            / f"Qwen3.8-Flash-Next-Uncensored-IQ4_XS-0000{i}-of-00003.gguf"
+            for i in range(1, 4)
+        ]
+        for part in gguf_parts:
+            part.write_text("gguf")
+        gguf = gguf_parts[0]
         output = uncensored_dir / "qwen3.8-flash-uncensored.hgn"
+        local_hf_cache = uncensored_dir / ".cache" / "huggingface"
+        local_hf_cache.mkdir(parents=True)
+        (local_hf_cache / "metadata").write_text("x")
         streams = []
 
         async def fake_stream(argv, *a, **k):
             streams.append(list(argv))
+            if "convert" in argv:
+                output.write_text("hgn")
 
         self.deploy._run_stream = fake_stream
         self.deploy._hf_executable = lambda: "hf"
@@ -656,7 +668,41 @@ class QuickDeployTests(PosixTestCase):
         self.assertIn(
             "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-*.gguf", gguf_download
         )
+        self.assertTrue(output.exists())
+        self.assertTrue(all(not part.exists() for part in gguf_parts))
+        self.assertFalse((uncensored_dir / ".cache").exists())
         self.assertEqual(self.deploy.job["state"], "done")
+
+    def test_failed_uncensored_switch_keeps_downloaded_gguf(self):
+        uncensored_dir = self.tmp / "models" / "uncensored"
+        uncensored_dir.mkdir(parents=True)
+        gguf = (
+            uncensored_dir
+            / "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"
+        )
+        gguf.write_text("gguf")
+        output = uncensored_dir / "qwen3.8-flash-uncensored.hgn"
+
+        async def failed_switch(model, hook=None, start_timeout=None):
+            output.write_text("hgn")
+            raise RuntimeError("backend failed")
+
+        self.deploy._hf_executable = lambda: "hf"
+        self.deploy.install_dirs = lambda payload: {"ok": True}
+        self.deploy.dry_run = lambda payload: {"ok": True, "errors": []}
+        self.deploy.apply = AsyncMock()
+        self.deploy.manager.switch_with_hook = failed_switch
+        self.deploy._start_pipeline_job("quick-uncensored", 2)
+
+        with patch.object(DeployManager, "reload_discovery", return_value={"ok": True}):
+            asyncio.run(
+                self.deploy._run_quick_uncensored(
+                    "", "0.13.2", uncensored_dir, gguf, output, False, False
+                )
+            )
+
+        self.assertEqual(self.deploy.job["state"], "error")
+        self.assertTrue(gguf.exists())
 
     def test_run_quick_uncensored_repairs_missing_tokenizer(self):
         uncensored_dir = self.tmp / "models" / "uncensored"

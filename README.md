@@ -257,7 +257,9 @@ at it. You do not have to stop the running model by hand first.
   uncensored GGUF, the draft head and tokenizer (while the current model keeps
   serving), then stops the active backend, converts to `.hgn` with the GPU to
   itself, applies the profile and starts uncensored — all as one streaming job
-  with visible steps. If the converted `.hgn` already exists, the
+  with visible steps. After the new backend passes its health check, the source
+  GGUF shards and their local download metadata are removed automatically.
+  If the converted `.hgn` already exists, the
   download/convert steps are skipped and no token is required.
 
 Both buttons ask for a confirmation click (labelled "Stop active model &

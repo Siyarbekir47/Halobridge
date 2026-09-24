@@ -986,6 +986,13 @@ class DeployManager:
             await self._switch_with_heartbeat(
                 profile.model_id, "waiting for uncensored", convert_hook
             )
+            if output.is_file():
+                self._append_job_line("--- Clean up downloaded GGUF ---")
+                for gguf_part in uncensored_dir.glob(UNCENSORED_DEFAULT_GGUF_PATTERN):
+                    gguf_part.unlink()
+                local_hf_cache = uncensored_dir / ".cache"
+                if local_hf_cache.exists():
+                    shutil.rmtree(local_hf_cache)
             self.job["state"] = "done"
         except asyncio.CancelledError:
             self.job["state"] = "cancelled"
