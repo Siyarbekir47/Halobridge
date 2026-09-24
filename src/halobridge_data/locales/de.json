@@ -228,6 +228,8 @@
   "hf_file": "Datei (leer = ganzes Repo)",
   "hf_dest": "Zielverzeichnis (Host)",
   "hf_token": "HF-Token — nur READ benoetigt",
+  "hf_access_required": "Vor dem Download die Bedingungen des Repositories akzeptieren oder Zugriff beantragen. Dabei muss dasselbe Hugging-Face-Konto wie für das Token angemeldet sein.",
+  "hf_access_link": "Gesperrtes Repository öffnen",
   "hf_token_note": "Wird nicht gespeichert: nur als Umgebungsvariable an den Download uebergeben und aus allen Ausgaben gefiltert.",
   "hf_token_required": "HF-Token fehlt. Ein fine-graunes Token mit Read-Recht ist erforderlich.",
   "hf_download": "Download starten",

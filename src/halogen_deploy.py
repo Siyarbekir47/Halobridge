@@ -60,6 +60,13 @@ QUICK_START_TIMEOUT = 300
 # container on its first start. Keep that operation bounded, but give normal
 # internet connections enough time to complete it.
 QUICK_OFFICIAL_START_TIMEOUT = 6 * 60 * 60
+HF_CLI_PACKAGE = "huggingface_hub"
+HF_GATED_ACCESS_MESSAGE = (
+    "Hugging Face denied access to the uncensored repository. Open "
+    "https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF "
+    "in a browser, accept the terms or request access, wait for approval, "
+    "then use a READ token from the same account."
+)
 
 
 class DeployError(ValueError):
@@ -72,6 +79,20 @@ def _is_within(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _hf_access_denied(output: str) -> bool:
+    text = output.lower()
+    return any(
+        marker in text
+        for marker in (
+            "access denied",
+            "requires approval",
+            "gated repo",
+            "cannot access gated",
+            "invalid user token",
+        )
+    )
 
 
 class DeployManager:
@@ -353,7 +374,7 @@ class DeployManager:
             raise DeployError("HF CLI is already installed.")
         return self._start_job(
             "hf-install",
-            [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
+            [sys.executable, "-m", "pip", "install", "--upgrade", HF_CLI_PACKAGE],
             timeout=900,
         )
 
@@ -518,7 +539,12 @@ class DeployManager:
             self.job["state"] = "done"
         else:
             self.job["state"] = "error"
-            self.job["error"] = f"Exit {returncode}"
+            output = "\n".join(self.job["lines"][-20:])
+            self.job["error"] = (
+                HF_GATED_ACCESS_MESSAGE
+                if _hf_access_denied(output)
+                else f"Exit {returncode}"
+            )
 
     def _append_job_line(self, text: str) -> None:
         if self.job is None:
@@ -547,6 +573,8 @@ class DeployManager:
         except FileNotFoundError as exc:
             raise DeployError(f"Program not found: {argv[0]} ({exc})")
 
+        recent_lines: list[str] = []
+
         async def pump() -> None:
             while True:
                 line = await process.stdout.readline()
@@ -556,6 +584,9 @@ class DeployManager:
                 if token and token in text:
                     text = text.replace(token, "[token]")
                 self._append_job_line(text)
+                recent_lines.append(text)
+                if len(recent_lines) > 20:
+                    del recent_lines[:-20]
 
         try:
             await asyncio.wait_for(pump(), timeout)
@@ -569,6 +600,8 @@ class DeployManager:
             await process.wait()
             raise
         if returncode != 0:
+            if _hf_access_denied("\n".join(recent_lines)):
+                raise DeployError(HF_GATED_ACCESS_MESSAGE)
             raise DeployError(f"{argv[0]} failed (exit {returncode})")
 
     def _start_pipeline_job(self, kind: str, total_steps: int) -> dict:
@@ -813,7 +846,7 @@ class DeployManager:
                     self.job["step"] = step
                     self._append_job_line(f"--- {step}: Install HF CLI ---")
                     await self._run_stream(
-                        [sys.executable, "-m", "pip", "install", "--upgrade", "huggingface_hub[cli]"],
+                        [sys.executable, "-m", "pip", "install", "--upgrade", HF_CLI_PACKAGE],
                         timeout=900,
                     )
                     step += 1

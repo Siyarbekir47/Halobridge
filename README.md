@@ -249,12 +249,16 @@ at it. You do not have to stop the running model by hand first.
   profile already exists, the existing one is started instead of being
   overwritten.
 - **Uncensored model** — paste a Hugging Face read token and click once.
-  Halobridge downloads the uncensored GGUF, the draft head and tokenizer
-  (while the current model keeps serving), then stops the active backend,
-  converts to `.hgn` with the GPU to itself, applies the profile and starts
-  uncensored — all as one streaming job with visible steps. If the converted
-  `.hgn` already exists, the download/convert steps are skipped and no token
-  is required.
+  Before the first download, sign in to Hugging Face, open the
+  [gated OrcaRouter repository](https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF),
+  accept its terms or request access, and wait for approval. Then create a
+  READ token from the same account. A valid token alone is not enough if that
+  account has not been granted repository access. Halobridge downloads the
+  uncensored GGUF, the draft head and tokenizer (while the current model keeps
+  serving), then stops the active backend, converts to `.hgn` with the GPU to
+  itself, applies the profile and starts uncensored — all as one streaming job
+  with visible steps. If the converted `.hgn` already exists, the
+  download/convert steps are skipped and no token is required.
 
 Both buttons ask for a confirmation click (labelled "Stop active model &
 install?") and respect the same safety boundaries as the advanced editor

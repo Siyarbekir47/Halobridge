@@ -44,6 +44,7 @@
   "no running job": "kein laufender Job",
   "--- {p0}: Install HF CLI ---": "--- {p0}: HF-CLI installieren ---",
   "HF CLI is missing after installation.": "HF-CLI fehlt nach Installation.",
+  "Hugging Face denied access to the uncensored repository. Open https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF in a browser, accept the terms or request access, wait for approval, then use a READ token from the same account.": "Hugging Face hat den Zugriff auf das Uncensored-Repository verweigert. Öffne https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF im Browser, akzeptiere die Bedingungen oder beantrage Zugriff, warte auf die Freigabe und verwende danach ein READ-Token desselben Kontos.",
   "--- {p0}: Download uncensored GGUF ---": "--- {p0}: Uncensored-GGUF herunterladen ---",
   "--- Download draft head ---": "--- Draft-Head herunterladen ---",
   "--- Download tokenizer ---": "--- Tokenizer herunterladen ---",

@@ -15,9 +15,11 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from halogen_deploy import (
+    HF_CLI_PACKAGE,
     QUICK_OFFICIAL_START_TIMEOUT,
     DeployError,
     DeployManager,
+    _hf_access_denied,
 )
 from profiles import official_template, parse_quadlet, profile_to_dict, render_quadlet
 
@@ -416,6 +418,22 @@ class ConvertVerifyJobTests(PosixTestCase):
         with patch.object(self.manager, "_hf_executable", return_value="hf"):
             with self.assertRaises(DeployError):
                 self.manager.hf_download({"repo": "orcarouter/x", "dest": str(self.tmp / "d")})
+
+    def test_hf_install_uses_package_with_built_in_cli(self):
+        captured, fake = self._capture_start()
+        with patch.object(self.manager, "_hf_executable", return_value=None):
+            with patch.object(self.manager, "_start_job", fake):
+                self.manager.hf_install()
+        self.assertEqual(captured["argv"][-1], HF_CLI_PACKAGE)
+        self.assertNotIn("[cli]", captured["argv"][-1])
+
+    def test_hf_access_denied_recognizes_gated_repository_error(self):
+        self.assertTrue(
+            _hf_access_denied(
+                "Error: Access denied. This repository requires approval."
+            )
+        )
+        self.assertFalse(_hf_access_denied("network connection timed out"))
 
     def test_hf_download_rejects_bad_repo(self):
         with patch.object(self.manager, "_hf_executable", return_value="hf"):
