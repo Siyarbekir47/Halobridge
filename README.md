@@ -12,6 +12,13 @@ one-click container updates.
 > halogen-flash-server engine; it talks to the official container image over
 > HTTP and manages local Podman Quadlet files.
 
+
+<p align="center">
+  <img width="1907" height="905" alt="1_1" src="https://github.com/user-attachments/assets/245536b5-73af-47e0-89b0-1428cd18b000" />
+</p>
+
+<p align="center"><em>Overview — active model, request volume, token usage and cache efficiency at a glance.</em></p>
+
 ## What it does
 
 - Routes OpenAI-compatible requests to the currently active local Halogen model.
@@ -270,6 +277,19 @@ Important accounting rules:
 - Reasoning tokens are part of output tokens.
 - Engine logs are independent and are not joined to router requests by timestamp.
 
+
+### Request history
+
+The **Requests** workspace shows completed requests with client/model, reported
+input and output tokens, duration and status. Individual rows can be expanded for
+more detail without storing prompt or response contents.
+
+<p align="center">
+<img width="1907" height="905" alt="1_2" src="https://github.com/user-attachments/assets/aaa5e3cc-d4b6-4fb3-a8fb-ba112d23a89d" />
+</p>
+
+<p align="center"><em>Requests — per-request token usage, latency, client/model and completion status.</em></p>
+
 ## Profiles & deployment
 
 If Halogen is not installed yet, the dashboard can install and manage it. If
@@ -283,6 +303,13 @@ configuration. Halobridge serves one backend at a time, so installing a model
 takes over the host: the currently active backend is drained and stopped, the
 GPU is released, the new model is installed and started, and the router points
 at it. You do not have to stop the running model by hand first.
+
+
+<p align="center">
+<img width="1907" height="905" alt="1_3" src="https://github.com/user-attachments/assets/a1f8c71e-9296-4045-abe6-dd27f919e183" />
+</p>
+
+<p align="center"><em>Models — installed profiles, active backend state and one-click model installation.</em></p>
 
 - **Official model** — one click installs the official profile and starts it.
   The first start downloads the upstream weights (~118 GiB) through
@@ -376,6 +403,19 @@ Safety boundaries:
 - Mutations require the dashboard session plus the `X-Halogen-Action: deploy`
   header and same-origin checks.
 - Set `[deploy] enabled = false` to disable the whole deployment surface.
+
+### System workspace
+
+The **System** workspace summarizes host and engine state, including RAM, GPU
+load, KV-pool usage, configured context/slots, generation and prefill throughput,
+engine version, and update state. Engine measurements come from local completion
+logs and are intentionally kept separate from router request accounting.
+
+<p align="center">
+<img width="1907" height="905" alt="1_4" src="https://github.com/user-attachments/assets/dabf1f93-1508-4095-ad4c-7c56670fd8b3" />
+</p>
+
+<p align="center"><em>System — host resources, engine telemetry, runtime configuration and update status.</em></p>
 
 ## Updates
 
