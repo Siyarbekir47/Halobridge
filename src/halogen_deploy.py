@@ -11,6 +11,7 @@ but never deleted by this module.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import difflib
 import json
 import logging
@@ -50,6 +51,7 @@ logger = logging.getLogger("halobridge.deploy")
 
 PROFILE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 QUADLET_FILENAME_RE = re.compile(r"^halogen-[a-z0-9][a-z0-9-]{0,31}\.container$")
+ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
 
 # How long a quick-install takeover waits for the new backend to become healthy
 # before giving up and rolling back to the previous model. Kept above the normal
@@ -515,20 +517,10 @@ class DeployManager:
             self.job["error"] = f"Program not found: {argv[0]}"
             return
 
-        async def pump() -> None:
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if token and token in text:
-                    text = text.replace(token, "[token]")
-                self.job["lines"].append(text)
-                if len(self.job["lines"]) > 200:
-                    del self.job["lines"][:-200]
-
         try:
-            await asyncio.wait_for(pump(), timeout)
+            recent_lines = await asyncio.wait_for(
+                self._pump_process_output(process.stdout, token), timeout
+            )
             returncode = await process.wait()
         except asyncio.TimeoutError:
             process.kill()
@@ -539,7 +531,7 @@ class DeployManager:
             self.job["state"] = "done"
         else:
             self.job["state"] = "error"
-            output = "\n".join(self.job["lines"][-20:])
+            output = "\n".join(recent_lines)
             self.job["error"] = (
                 HF_GATED_ACCESS_MESSAGE
                 if _hf_access_denied(output)
@@ -552,6 +544,45 @@ class DeployManager:
         self.job["lines"].append(text)
         if len(self.job["lines"]) > 200:
             del self.job["lines"][:-200]
+
+    async def _pump_process_output(
+        self, stream: asyncio.StreamReader, token: str | None = None
+    ) -> list[str]:
+        """Forward newline and terminal-style carriage-return updates.
+
+        Tools such as ``hf``/tqdm redraw progress bars with ``\r`` instead of
+        emitting newline-terminated records. Reading with ``readline()`` hides
+        those updates until the command finishes, so consume chunks and treat
+        either delimiter as a dashboard log record.
+        """
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        pending = ""
+        recent_lines: list[str] = []
+
+        def emit(raw: str) -> None:
+            text = ANSI_ESCAPE_RE.sub("", raw).replace("\b", "").rstrip()
+            if token and token in text:
+                text = text.replace(token, "[token]")
+            if not text:
+                return
+            self._append_job_line(text)
+            recent_lines.append(text)
+            if len(recent_lines) > 20:
+                del recent_lines[:-20]
+
+        while True:
+            chunk = await stream.read(4096)
+            if not chunk:
+                break
+            pending += decoder.decode(chunk)
+            records = re.split(r"[\r\n]+", pending)
+            pending = records.pop()
+            for record in records:
+                emit(record)
+
+        pending += decoder.decode(b"", final=True)
+        emit(pending)
+        return recent_lines
 
     async def _run_stream(
         self,
@@ -573,23 +604,10 @@ class DeployManager:
         except FileNotFoundError as exc:
             raise DeployError(f"Program not found: {argv[0]} ({exc})")
 
-        recent_lines: list[str] = []
-
-        async def pump() -> None:
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if token and token in text:
-                    text = text.replace(token, "[token]")
-                self._append_job_line(text)
-                recent_lines.append(text)
-                if len(recent_lines) > 20:
-                    del recent_lines[:-20]
-
         try:
-            await asyncio.wait_for(pump(), timeout)
+            recent_lines = await asyncio.wait_for(
+                self._pump_process_output(process.stdout, token), timeout
+            )
             returncode = await process.wait()
         except asyncio.TimeoutError:
             process.kill()

@@ -435,6 +435,24 @@ class ConvertVerifyJobTests(PosixTestCase):
         )
         self.assertFalse(_hf_access_denied("network connection timed out"))
 
+    def test_run_stream_forwards_carriage_return_progress(self):
+        self.manager._start_pipeline_job("test-progress", 1)
+        command = (
+            "import sys; "
+            "sys.stdout.write('Fetching 1%\\rFetching 2%\\r"
+            "\\x1b[32mDone\\x1b[0m\\n'); "
+            "sys.stdout.flush()"
+        )
+
+        asyncio.run(
+            self.manager._run_stream([sys.executable, "-c", command], timeout=30)
+        )
+
+        self.assertEqual(
+            self.manager.job["lines"],
+            ["Fetching 1%", "Fetching 2%", "Done"],
+        )
+
     def test_hf_download_rejects_bad_repo(self):
         with patch.object(self.manager, "_hf_executable", return_value="hf"):
             with self.assertRaises(DeployError):
