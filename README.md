@@ -32,8 +32,10 @@ one-click container updates.
 - It does not store prompts, responses, images, tool contents, or secrets.
 - It does not invent token counts when the API does not report usage.
 - It does not update to `latest`, release candidates, or non-stable tags.
-- It does not delete model or cache directories; deployment only writes,
-  backs up, and removes Quadlet files.
+- It does not delete user-managed model or runtime cache directories. After a
+  successful Uncensored quick setup, it removes only the downloaded source
+  GGUF shards and their local Hugging Face metadata; the converted `.hgn`
+  remains in place.
 
 ## Requirements
 
@@ -86,6 +88,46 @@ http://SERVER-IP:8731/dashboard
 Binding to `0.0.0.0` exposes the API and dashboard to networks that can reach
 the host. Prefer a trusted LAN/VPN, and configure the token gate before using
 an untrusted network.
+
+#### Optional: start automatically with systemd
+
+Stop a foreground Halobridge process with `Ctrl+C`, then create and start a
+systemd user service. This block works with the `pipx` installation above and
+does not require a cloned repository:
+
+```bash
+mkdir -p ~/.config/systemd/user
+tee ~/.config/systemd/user/halobridge.service >/dev/null <<'EOF'
+[Unit]
+Description=Halobridge router and dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/halobridge router --bind 0.0.0.0
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now halobridge.service
+sudo loginctl enable-linger "$USER"
+```
+
+`enable-linger` lets the user service start during boot without an interactive
+login. Verify the service and follow its logs with:
+
+```bash
+systemctl --user status halobridge.service --no-pager
+journalctl --user -u halobridge.service -f
+```
+
+For server-local access only, remove `--bind 0.0.0.0` from `ExecStart`.
 
 ### 3. Install the official model
 
