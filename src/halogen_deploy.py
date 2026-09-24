@@ -97,6 +97,20 @@ def _hf_access_denied(output: str) -> bool:
     )
 
 
+def _hf_download_env(token: str | None = None) -> dict[str, str]:
+    # huggingface_hub/tqdm suppresses progress automatically when stderr is a
+    # pipe. Force log-friendly progress records for the dashboard instead of
+    # terminal cursor updates. A modest interval avoids flooding job history.
+    env = {
+        "HF_HUB_DISABLE_PROGRESS_BARS": "0",
+        "TQDM_POSITION": "-1",
+        "TQDM_MININTERVAL": "2",
+    }
+    if token:
+        env["HF_TOKEN"] = token
+    return env
+
+
 class DeployManager:
     def __init__(
         self,
@@ -410,7 +424,7 @@ class DeployManager:
             cmd.append(filename)
         cmd += ["--local-dir", str(dest)]
         return self._start_job(
-            "hf-download", cmd, {"HF_TOKEN": token}, timeout=21600
+            "hf-download", cmd, _hf_download_env(token), timeout=21600
         )
 
     def convert(self, payload: dict) -> dict:
@@ -877,7 +891,7 @@ class DeployManager:
                     self._append_job_line(f"--- {step}: Download uncensored GGUF ---")
                     await self._run_stream(
                         [hf, "download", UNCENSORED_HF_REPO, "--local-dir", str(uncensored_dir)],
-                        {"HF_TOKEN": token},
+                        _hf_download_env(token),
                         timeout=21600,
                         token=token,
                     )
@@ -894,6 +908,7 @@ class DeployManager:
                             "--local-dir",
                             str(uncensored_dir),
                         ],
+                        _hf_download_env(),
                         timeout=3600,
                     )
                     step += 1
@@ -911,6 +926,7 @@ class DeployManager:
                             "--local-dir",
                             str(uncensored_dir),
                         ],
+                        _hf_download_env(),
                         timeout=3600,
                     )
                     step += 1

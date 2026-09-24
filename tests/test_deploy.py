@@ -486,6 +486,9 @@ class ConvertVerifyJobTests(PosixTestCase):
             ["hf", "download", "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"],
         )
         self.assertEqual(captured["env"]["HF_TOKEN"], "hf_secret123")
+        self.assertEqual(captured["env"]["HF_HUB_DISABLE_PROGRESS_BARS"], "0")
+        self.assertEqual(captured["env"]["TQDM_POSITION"], "-1")
+        self.assertEqual(captured["env"]["TQDM_MININTERVAL"], "2")
         self.assertNotIn("hf_secret123", " ".join(captured["argv"]))
 
     def test_hf_status_detects_venv_local_hf(self):
