@@ -588,10 +588,58 @@ class DeployManager:
     async def quick_official(self) -> dict:
         self._require_enabled()
         if await self._service_is_active("halogen-official.service"):
-            return {"ok": True, "already": True, "service": "halogen-official.service"}
+            health = await self.manager.backend_health()
+            if health and health.get("model") == "qwen3.8-flash":
+                return {
+                    "ok": True,
+                    "already": True,
+                    "service": "halogen-official.service",
+                }
+            model_id = next(
+                (
+                    model
+                    for model, service in self.manager.models.items()
+                    if service == "halogen-official.service"
+                ),
+                "qwen3.8-flash",
+            )
+            self._start_pipeline_job("quick-official", 1)
+            self._job_task = asyncio.create_task(
+                self._track_active_official(model_id)
+            )
+            return {
+                "ok": True,
+                "kind": "quick-official",
+                "already_running": True,
+            }
         self._start_pipeline_job("quick-official", 2)
         self._job_task = asyncio.create_task(self._run_quick_official())
         return {"ok": True, "kind": "quick-official"}
+
+    async def _track_active_official(self, model_id: str) -> None:
+        self.job["step"] = 1
+        self._append_job_line("--- Continue active official download/startup ---")
+        stop = asyncio.Event()
+        hb = asyncio.create_task(self._heartbeat(stop, "waiting for official"))
+        service = self.manager.models.get(model_id, "halogen-official.service")
+        journal = asyncio.create_task(self._stream_service_journal(service))
+        try:
+            await self.manager.wait_for_backend(
+                model_id, timeout=QUICK_OFFICIAL_START_TIMEOUT
+            )
+            self.job["state"] = "done"
+        except asyncio.CancelledError:
+            self.job["state"] = "cancelled"
+            self._append_job_line("--- Cancelled ---")
+            raise
+        except Exception as exc:
+            self.job["state"] = "error"
+            self.job["error"] = str(exc)
+        finally:
+            stop.set()
+            hb.cancel()
+            journal.cancel()
+            await asyncio.gather(hb, journal, return_exceptions=True)
 
     async def _run_quick_official(self) -> None:
         try:
@@ -1065,10 +1113,26 @@ class DeployManager:
         if not target.exists():
             return None
         self.backup_root.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        backup = self.backup_root / f"profile-{target.stem}-{stamp}.container"
-        backup.write_bytes(target.read_bytes())
-        return backup
+        # Windows can return the same value for both datetime.now() and
+        # time.time_ns() across several rapid calls. Create the file exclusively
+        # and add an ordered suffix so a rollback can never overwrite the backup
+        # it is about to restore.
+        stamp = (
+            f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}-"
+            f"{time.time_ns():020d}"
+        )
+        contents = target.read_bytes()
+        sequence = 0
+        while True:
+            backup = self.backup_root / (
+                f"profile-{target.stem}-{stamp}-{sequence:04d}.container"
+            )
+            try:
+                with backup.open("xb") as handle:
+                    handle.write(contents)
+                return backup
+            except FileExistsError:
+                sequence += 1
 
     def _backups_for(self, quadlet_name: str) -> list[Path]:
         stem = quadlet_name[: -len(".container")]

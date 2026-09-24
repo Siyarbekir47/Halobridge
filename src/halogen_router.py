@@ -364,18 +364,12 @@ class ModelManager:
 
         if len(active_models) == 1:
             candidate = active_models[0]
-
-            try:
-                await self.wait_for_backend(candidate)
-                self.current_model = candidate
-                return
-            except RouterError:
-                LOG.exception(
-                    "Active service %s did not become ready",
-                    candidate,
-                )
-                await self.stop_service(candidate)
-                await self.wait_for_gtt_release()
+            self.current_model = candidate
+            LOG.info(
+                "Detected active backend service %s; startup may still be in progress",
+                candidate,
+            )
+            return
 
         elif len(active_models) > 1:
             LOG.error(
@@ -1030,38 +1024,45 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
         auto_decompress=False,
     )
 
-    manager = ModelManager(
-        session,
-        models,
-        backend_url=config.router.backend_url,
-        default_model=default_model,
-        drain_timeout=config.router.drain_timeout_s,
-        start_timeout=config.router.start_timeout_s,
-        stop_timeout=config.router.stop_timeout_s,
-        gtt_path=config.router.gtt_path,
-        gtt_limit_bytes=config.router.gtt_limit_bytes,
-    )
-    updater = ContainerUpdater(manager, session, models, config=config)
-    if models:
-        await updater.recover_on_startup()
-        if not updater.recovery_required:
-            await manager.initialize()
-    else:
-        LOG.warning(
-            "No models configured; starting the dashboard in deployment-only mode."
+    dashboard = None
+    try:
+        manager = ModelManager(
+            session,
+            models,
+            backend_url=config.router.backend_url,
+            default_model=default_model,
+            drain_timeout=config.router.drain_timeout_s,
+            start_timeout=config.router.start_timeout_s,
+            stop_timeout=config.router.stop_timeout_s,
+            gtt_path=config.router.gtt_path,
+            gtt_limit_bytes=config.router.gtt_limit_bytes,
         )
-    dashboard = Dashboard(
-        manager=manager,
-        session=session,
-        backend_url=config.router.backend_url,
-        models=models,
-        specs=specs,
-        state_dir=config.dashboard.state_dir,
-        retention_days=config.dashboard.retention_days,
-        gpu_card=config.dashboard.gpu_card,
-        public_endpoint=config.dashboard.public_endpoint,
-    )
-    await dashboard.initialize()
+        updater = ContainerUpdater(manager, session, models, config=config)
+        if models:
+            await updater.recover_on_startup()
+            if not updater.recovery_required:
+                await manager.initialize()
+        else:
+            LOG.warning(
+                "No models configured; starting the dashboard in deployment-only mode."
+            )
+        dashboard = Dashboard(
+            manager=manager,
+            session=session,
+            backend_url=config.router.backend_url,
+            models=models,
+            specs=specs,
+            state_dir=config.dashboard.state_dir,
+            retention_days=config.dashboard.retention_days,
+            gpu_card=config.dashboard.gpu_card,
+            public_endpoint=config.dashboard.public_endpoint,
+        )
+        await dashboard.initialize()
+    except BaseException:
+        if dashboard is not None:
+            await dashboard.close()
+        await session.close()
+        raise
 
     deploy_manager = DeployManager(manager, config, updater=updater, dashboard=dashboard)
     deploy_routes = DeployRoutes(deploy_manager)
