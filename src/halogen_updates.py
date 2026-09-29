@@ -50,6 +50,7 @@ JOB_PHASES = TERMINAL_PHASES | {"starting", "pulling", "draining", "configuring"
 CHECKPOINT_V2_PATH = "/models/qwen38-flash-next-v2.hgn"
 CHECKPOINT_V2_FILES = ("qwen38-flash-next-v2.hgn", "qwen38-flash-next-ngram.hgn")
 LEGACY_W4B_PATH = "/models/qwen38-flash-next-w4b.hgn"
+LEGACY_W4B_FILES = ("qwen38-flash-next-w4b.hgn",)
 CHECKPOINT_MIN_IMAGE = (0, 15, 0)
 CHECKPOINT_DOWNLOAD_GIB = 110
 CHECKPOINT_MIN_FREE_GIB = 115
@@ -96,18 +97,22 @@ def quadlet_checkpoint_upgrade(
 ) -> bytes:
     """Point the checkpoint at v2, preserving every other byte.
 
-    Sets HALOGEN_CHECKPOINT, drops HALOGEN_FLASH_PIN_TRUNK (v2 refuses it at
-    startup), and - when the weights still have to be fetched - adds
-    HALOGEN_DOWNLOAD and makes the models volume writable so the backend can
-    download into it.
+    Sets HALOGEN_CHECKPOINT (inserting it after the Image line when the profile
+    never declared one, as a quick-install profile does not), drops
+    HALOGEN_FLASH_PIN_TRUNK (v2 refuses it at startup), and - when the weights
+    still have to be fetched - adds HALOGEN_DOWNLOAD and makes the models
+    volume writable so the backend can download into it.
     """
     text = content.decode("utf-8")
+    has_checkpoint = re.search(
+        r"^[ \t]*Environment[ \t]*=[ \t]*HALOGEN_CHECKPOINT[ \t]*=", text, re.MULTILINE
+    ) is not None
     has_download = re.search(
         r"^[ \t]*Environment[ \t]*=[ \t]*HALOGEN_DOWNLOAD[ \t]*=", text, re.MULTILINE
     ) is not None
     lines = text.splitlines(keepends=True)
     section = ""
-    saw_checkpoint = False
+    placed = has_checkpoint
     out: list[str] = []
     for line in lines:
         stripped = line.strip()
@@ -119,12 +124,13 @@ def quadlet_checkpoint_upgrade(
                 line,
             )
             if checkpoint_match:
-                saw_checkpoint = True
+                placed = True
                 out.append(
                     checkpoint_match[1] + "HALOGEN_CHECKPOINT=" + checkpoint
                     + checkpoint_match[4] + checkpoint_match[5]
                 )
                 if download_repo and not has_download:
+                    has_download = True
                     out.append(
                         checkpoint_match[1] + "HALOGEN_DOWNLOAD=" + download_repo
                         + checkpoint_match[5]
@@ -153,9 +159,22 @@ def quadlet_checkpoint_upgrade(
                             + volume_match[3] + volume_match[4]
                         )
                         continue
+            image_match = re.fullmatch(
+                r"([ \t]*Image[ \t]*=[ \t]*)(\S+)([ \t]*)(\r?\n?)", line
+            )
+            if image_match and not placed:
+                indent = re.match(r"[ \t]*", line).group()
+                eol = image_match[4]
+                out.append(line)
+                out.append(indent + "Environment=HALOGEN_CHECKPOINT=" + checkpoint + eol)
+                placed = True
+                if download_repo and not has_download:
+                    out.append(indent + "Environment=HALOGEN_DOWNLOAD=" + download_repo + eol)
+                    has_download = True
+                continue
         out.append(line)
-    if not saw_checkpoint:
-        raise UpdateError("The Quadlet has no HALOGEN_CHECKPOINT line to upgrade.")
+    if not placed:
+        raise UpdateError("Could not place a HALOGEN_CHECKPOINT line in [Container].")
     return "".join(out).encode("utf-8")
 
 
@@ -300,6 +319,10 @@ class ContainerUpdater:
         return all((models_path / name).is_file() for name in CHECKPOINT_V2_FILES)
 
     @staticmethod
+    def _w4b_files_present(models_path: Path) -> bool:
+        return all((models_path / name).is_file() for name in LEGACY_W4B_FILES)
+
+    @staticmethod
     def _free_gib(models_path: Path) -> float | None:
         try:
             return shutil.disk_usage(models_path).free / 2**30
@@ -325,17 +348,30 @@ class ContainerUpdater:
         except (OSError, UnicodeError, UpdateError, ProfileError):
             return info
         current = profile.env.get("HALOGEN_CHECKPOINT")
-        info["current"] = current
-        if current != LEGACY_W4B_PATH:
-            return info
         models_host = next(
             (volume[0] for volume in profile.volumes if volume[1] == CONTAINER_MODELS_PATH),
             None,
         )
         if not models_host:
             return info
-        info["needs_download"] = not self._v2_files_present(Path(models_host))
-        free_gib = self._free_gib(Path(models_host))
+        models_path = Path(models_host)
+        v2_present = self._v2_files_present(models_path)
+        if current == LEGACY_W4B_PATH:
+            on_legacy = True
+        elif current is None:
+            # Quick-install profile with no explicit checkpoint: on 0.15 the
+            # backend serves v2 when present, otherwise the w4b it already has.
+            # Only offer the upgrade when it is in fact still serving w4b.
+            on_legacy = not v2_present and self._w4b_files_present(models_path)
+            if on_legacy:
+                current = LEGACY_W4B_PATH
+        else:
+            on_legacy = False
+        info["current"] = current
+        if not on_legacy:
+            return info
+        info["needs_download"] = not v2_present
+        free_gib = self._free_gib(models_path)
         info["free_gib"] = round(free_gib, 1) if free_gib is not None else None
         if info["needs_download"]:
             info["download_gib"] = CHECKPOINT_DOWNLOAD_GIB

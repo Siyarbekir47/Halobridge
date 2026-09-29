@@ -414,6 +414,18 @@ class CheckpointUpgradeTests(unittest.IsolatedAsyncioTestCase):
             "[Service]\r\nRestart=on-failure\r\n"
         ).encode()
 
+    def quick_quadlet(self):
+        # Quick-install profile: HALOGEN_DOWNLOAD but no explicit HALOGEN_CHECKPOINT.
+        return (
+            "[Container]\r\n"
+            f"Image={IMAGE_REPOSITORY}:{self.VERSION}\r\n"
+            "ContainerName=halogen-official\r\n"
+            "Environment=HALOGEN_MODEL_ID=qwen3.8-flash\r\n"
+            "Environment=HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next\r\n"
+            "Volume=/home/tester/halogen/models:/models:Z\r\n"
+            "[Service]\r\nRestart=on-failure\r\n"
+        ).encode()
+
     def make_updater(self):
         updater = ContainerUpdater(self.manager, None, MODELS,
                                   quadlet_dir=self.quadlets, backup_root=self.root / "backups", state_dir=self.root / "state")
@@ -520,6 +532,35 @@ class CheckpointUpgradeTests(unittest.IsolatedAsyncioTestCase):
         for path in self.updater._paths().values():
             path.write_bytes(self.checkpoint_quadlet().replace(
                 b"w4b", b"v2"))
+        info = self.updater._checkpoint_info()
+        self.assertFalse(info["available"])
+
+    async def test_unset_checkpoint_with_w4b_files_is_offered(self):
+        for path in self.updater._paths().values():
+            path.write_bytes(self.quick_quadlet())
+        present = patch.object(ContainerUpdater, "_w4b_files_present", return_value=True)
+        absent = patch.object(ContainerUpdater, "_v2_files_present", return_value=False)
+        present.start(); absent.start()
+        self.addCleanup(present.stop); self.addCleanup(absent.stop)
+        with self.patch_disk(self.free_gib):
+            info = self.updater._checkpoint_info()
+            self.assertTrue(info["available"])
+            self.assertEqual(info["current"], updates.LEGACY_W4B_PATH)
+            self.assertTrue(info["needs_download"])
+            await self.execute()
+        self.assertEqual(self.updater.job["phase"], "succeeded")
+        content = (self.quadlets / "halogen-official.container").read_text(encoding="utf-8")
+        # The checkpoint line was inserted after the Image line.
+        self.assertIn("HALOGEN_CHECKPOINT=/models/qwen38-flash-next-v2.hgn", content)
+        self.assertIn("HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next", content)
+        self.assertEqual(content.count("HALOGEN_DOWNLOAD"), 1)
+
+    async def test_unset_checkpoint_with_v2_files_not_offered(self):
+        for path in self.updater._paths().values():
+            path.write_bytes(self.quick_quadlet())
+        present = patch.object(ContainerUpdater, "_v2_files_present", return_value=True)
+        present.start()
+        self.addCleanup(present.stop)
         info = self.updater._checkpoint_info()
         self.assertFalse(info["available"])
 
