@@ -7,15 +7,44 @@ exercised.
 
 import asyncio
 import sys
+import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import halogen_router
 from halogen_router import ModelManager, RouterError
 
 OFFICIAL = "qwen3.8-flash"
 UNCENSORED = "qwen3.8-flash-uncensored"
+
+
+class GttDiscoveryTests(unittest.TestCase):
+    def test_default_card0_falls_back_to_available_drm_card(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            drm = Path(tmp)
+            detected = drm / "card1" / "device" / "mem_info_gtt_used"
+            detected.parent.mkdir(parents=True)
+            detected.write_text("1234\n")
+            manager = ModelManager(None)
+
+            with patch.object(halogen_router, "DRM_CLASS_PATH", drm):
+                self.assertEqual(manager.read_gtt_used(), 1234)
+
+            self.assertEqual(manager.gtt_path, detected)
+
+    def test_explicit_gtt_path_does_not_fall_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            drm = Path(tmp)
+            detected = drm / "card1" / "device" / "mem_info_gtt_used"
+            detected.parent.mkdir(parents=True)
+            detected.write_text("1234\n")
+            manager = ModelManager(None, gtt_path=str(drm / "custom-missing"))
+
+            with patch.object(halogen_router, "DRM_CLASS_PATH", drm):
+                with self.assertRaises(RouterError):
+                    manager.read_gtt_used()
 
 
 class SwitchWithHookTests(unittest.IsolatedAsyncioTestCase):
