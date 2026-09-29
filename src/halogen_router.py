@@ -36,6 +36,7 @@ STOP_TIMEOUT_SECONDS = 180
 GTT_PATH = Path(
     "/sys/class/drm/card0/device/mem_info_gtt_used"
 )
+DRM_CLASS_PATH = Path("/sys/class/drm")
 GTT_LIMIT_BYTES = 1024 * 1024 * 1024
 
 HOP_BY_HOP_HEADERS = {
@@ -268,12 +269,31 @@ class ModelManager:
         )
 
     def read_gtt_used(self) -> int:
-        try:
-            return int(self.gtt_path.read_text().strip())
-        except (OSError, ValueError) as error:
-            raise RouterError(
-                f"Could not read GTT counter: {error}"
-            ) from error
+        candidates = [self.gtt_path]
+        if self.gtt_path == GTT_PATH:
+            candidates.extend(
+                path
+                for path in sorted(
+                    DRM_CLASS_PATH.glob("card[0-9]*/device/mem_info_gtt_used")
+                )
+                if path != self.gtt_path
+            )
+
+        last_error: Exception | None = None
+        for path in candidates:
+            try:
+                used = int(path.read_text().strip())
+            except (OSError, ValueError) as error:
+                last_error = error
+                continue
+            if path != self.gtt_path:
+                LOG.info("Automatically detected GTT counter: %s", path)
+                self.gtt_path = path
+            return used
+
+        raise RouterError(
+            f"Could not read GTT counter: {last_error or 'no DRM card found'}"
+        ) from last_error
 
     async def wait_for_gtt_release(self) -> None:
         deadline = time.monotonic() + self.stop_timeout
