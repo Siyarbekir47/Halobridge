@@ -191,6 +191,19 @@
       <button id="recoverUpdate" class="update-action" hidden data-i18n="btn_recover">Recover</button>
     </div>
   </section>
+  <section class="update-strip checkpoint-strip" id="checkpointStrip" hidden data-i18n-attr="aria-label:ckpt_section">
+    <div>
+      <span id="checkpointTitle" role="status" data-i18n="ckpt_title">Model checkpoint</span>
+      <p id="checkpointMessage" data-i18n="ckpt_msg_default">A newer model checkpoint (v2) is available.</p>
+      <p id="checkpointWarn" class="explanation" data-i18n="ckpt_warning">Please read: this downloads about 110 GiB and restarts the backend. The first start can take up to an hour; new requests receive HTTP 503 during the switch.</p>
+      <p id="checkpointError" class="failure" role="alert" hidden></p>
+    </div>
+    <div class="controls">
+      <button id="installCheckpoint" class="update-action" data-i18n="ckpt_install_btn">Upgrade checkpoint to v2</button>
+      <button id="confirmCheckpoint" class="update-action" hidden data-i18n="ckpt_confirm_btn">Yes, download ~110 GiB and restart</button>
+      <button id="cancelCheckpoint" class="ghost" hidden data-i18n="reset_no">Cancel</button>
+    </div>
+  </section>
 
 </section><section class="data-section"><details><summary data-i18n="db_summary">Database</summary><div class="detail-body">
       <p class="explanation" data-i18n="db_explanation">Deletes all stored telemetry (requests and engine logs) from the local database. This action cannot be undone. Running requests are not terminated.</p>

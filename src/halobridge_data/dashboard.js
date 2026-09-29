@@ -27,6 +27,7 @@ function bytes(n) {
 const state = {period:'24h', from:null, to:null, page:1, pages:1, range:null, pinned:null};
 let analyticsController, analyticsSequence = 0, liveBusy = false, liveTimer, analyticsTimer, currentAnalytics;
 let updatesData, updatesTimer, updatesBusy = false, updateActionBusy = false, updateSequence = 0;
+let ckptArmed = false, ckptBusy = false, ckptRevertTimer;
 const expanded = new Set();
 const clientLabel = value => ['Unknown', 'Unbekannt'].includes(value) ? t('unknown_client') : value;
 
@@ -368,19 +369,27 @@ function localInput(date) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 function renderUpdates(data) {
-  const attention = data.running || data.recovery_required || data.update_available;
+  updatesData = data;
+  const cp = data.checkpoint || {};
+  const cpJob = data.job && data.job.kind === 'checkpoint' ? data.job : null;
+  const job = data.job && data.job.kind !== 'checkpoint' ? data.job : null;
+  const imgRunning = data.running && !cpJob;
+  const cpAttention = !!cpJob || (cp.available && !cp.blocked_reason);
+  const attention = imgRunning || data.recovery_required || data.update_available || cpAttention;
   $('systemAttention').hidden = !attention;
   $('operationNotice').hidden = !attention;
-  $('operationText').textContent = data.recovery_required ? t('update_recovery_notice') : data.running ? t('update_running_notice') : t('update_available_notice');
-  updatesData = data;
-  const job = data.job;
+  if (data.recovery_required) $('operationText').textContent = t('update_recovery_notice');
+  else if (cpJob) $('operationText').textContent = t('ckpt_running_notice');
+  else if (imgRunning) $('operationText').textContent = t('update_running_notice');
+  else if (data.update_available) $('operationText').textContent = t('update_available_notice');
+  else $('operationText').textContent = t('ckpt_available_notice');
   let title = data.current_version ? t('update_server_title', {version: data.current_version}) : t('update_default_title');
   if (data.recovery_required) title += t('update_suffix_recovery');
-  else if (data.running) title += t('update_suffix_running');
+  else if (imgRunning) title += t('update_suffix_running');
   else if (data.update_available) title += t('update_suffix_available', {version: data.latest_version});
   else if (data.up_to_date && !data.check_error) title += t('update_suffix_current');
   if ($('updateTitle').textContent !== title) $('updateTitle').textContent = title;
-  $('updateMessage').textContent = data.running || data.recovery_required || job?.phase === 'failed' || job?.phase === 'rolled_back' || job?.phase === 'succeeded'
+  $('updateMessage').textContent = imgRunning || data.recovery_required || job?.phase === 'failed' || job?.phase === 'rolled_back' || job?.phase === 'succeeded'
     ? job?.message || t('update_msg_recovery')
     : data.check_error || data.support_error || data.blocked_reason || t('update_msg_default');
   $('updateVersions').textContent = Object.entries(data.configured_versions || {}).map(([model, version]) => `${model}: ${version}`).join(' · ') || t('update_no_quadlets');
@@ -390,12 +399,71 @@ function renderUpdates(data) {
   $('updateChangelog').hidden = !data.release_url;
   if (data.release_url) $('updateChangelog').href = data.release_url;
   $('checkUpdate').disabled = updateActionBusy || data.running || data.recovery_required;
-  $('installUpdate').hidden = !data.update_available || data.recovery_required;
+  $('installUpdate').hidden = !data.update_available || data.recovery_required || !!cpJob;
   $('installUpdate').disabled = updateActionBusy || !data.can_install;
-  $('installUpdate').textContent = data.running ? t('update_running_btn') : t('update_install_btn', {version: data.latest_version});
+  $('installUpdate').textContent = imgRunning ? t('update_running_btn') : t('update_install_btn', {version: data.latest_version});
   $('recoverUpdate').hidden = !data.recovery_required;
   $('recoverUpdate').disabled = updateActionBusy || !data.can_recover;
+  renderCheckpoint(data);
 }
+function renderCheckpoint(data) {
+  const cp = data.checkpoint || {};
+  const cpJob = data.job && data.job.kind === 'checkpoint' ? data.job : null;
+  const running = data.running && !!cpJob;
+  const show = cp.available || !!cpJob;
+  $('checkpointStrip').hidden = !show;
+  if (!show) { ckptArmed = false; return; }
+  $('checkpointTitle').textContent = running ? t('ckpt_running_title') : t('ckpt_title');
+  if (cpJob) {
+    $('checkpointMessage').textContent = cpJob.message || t('ckpt_msg_running');
+    $('checkpointWarn').hidden = true;
+  } else {
+    $('checkpointMessage').textContent = cp.needs_download
+      ? t('ckpt_msg_download', {gib: cp.download_gib})
+      : t('ckpt_msg_present');
+    $('checkpointWarn').hidden = false;
+  }
+  const blocked = cp.blocked_reason;
+  $('checkpointError').hidden = !blocked;
+  if (blocked) $('checkpointError').textContent = blocked;
+  const canAct = cp.can_install && !running && !data.recovery_required && !ckptBusy;
+  $('installCheckpoint').hidden = running || ckptArmed || !!blocked;
+  $('installCheckpoint').disabled = !canAct;
+  $('confirmCheckpoint').hidden = !ckptArmed || running || !!blocked;
+  $('confirmCheckpoint').disabled = !canAct;
+  $('cancelCheckpoint').hidden = !ckptArmed || running;
+  $('cancelCheckpoint').disabled = ckptBusy;
+}
+async function checkpointAction() {
+  if (ckptBusy) return;
+  ckptBusy = true;
+  clearTimeout(ckptRevertTimer);
+  try {
+    const response = await apiFetch('/dashboard/api/updates/checkpoint', {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'update'}, body: '{}',
+    });
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) throw new Error((await response.text()) || t('update_action_failed'));
+    updatesData = await response.json();
+    ckptArmed = false;
+    refreshLive();
+  } catch (error) {
+    $('checkpointError').hidden = false;
+    $('checkpointError').textContent = error.name === 'AbortError' ? t('update_action_timeout') : error.message;
+  } finally {
+    ckptBusy = false;
+    if (updatesData) renderUpdates(updatesData);
+    scheduleUpdates();
+  }
+}
+$('installCheckpoint').addEventListener('click', () => {
+  if (ckptBusy) return;
+  ckptArmed = true;
+  renderCheckpoint(updatesData || {});
+  ckptRevertTimer = setTimeout(() => { ckptArmed = false; if (updatesData) renderCheckpoint(updatesData); }, 30000);
+});
+$('confirmCheckpoint').addEventListener('click', checkpointAction);
+$('cancelCheckpoint').addEventListener('click', () => { ckptArmed = false; clearTimeout(ckptRevertTimer); renderCheckpoint(updatesData || {}); });
 function scheduleUpdates() {
   clearTimeout(updatesTimer);
   if (!document.hidden) updatesTimer = setTimeout(refreshUpdates, updatesData?.running ? 3000 : updatesData?.checked_at ? 60000 : 10000);

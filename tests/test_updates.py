@@ -376,6 +376,172 @@ class TransactionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await response.json())["job"]["phase"], "succeeded")
 
 
+class CheckpointUpgradeTests(unittest.IsolatedAsyncioTestCase):
+    """Switching the official profile from the 0.14 w4b checkpoint to v2."""
+
+    VERSION = "0.15.0"
+
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir=os.environ.get("HALOGEN_TEST_TMP"))
+        self.root = Path(self.temp.name)
+        self.quadlets = self.root / "quadlets"
+        self.quadlets.mkdir()
+        self.models = self.root / "models"
+        self.models.mkdir()
+        for service in MODELS.values():
+            (self.quadlets / service.replace(".service", ".container")).write_bytes(self.checkpoint_quadlet())
+        self.manager = ModelManager(None)
+        self.manager.current_model = MODEL
+        self.manager.wait_for_gtt_release = AsyncMock()
+        self.manager.backend_health = AsyncMock(side_effect=self.health)
+        self.running_model = MODEL
+        self.commands = []
+        self.fail_start = False
+        self.free_gib = 200
+        self.updater = self.make_updater()
+
+    def checkpoint_quadlet(self):
+        # A Unix-style host path: on Linux the models volume host never carries
+        # a drive-letter colon, which would break the host:container:mode split.
+        return (
+            "[Container]\r\n"
+            f"Image={IMAGE_REPOSITORY}:{self.VERSION}\r\n"
+            "ContainerName=halogen-official\r\n"
+            "Environment=HALOGEN_MODEL_ID=qwen3.8-flash\r\n"
+            "Environment=HALOGEN_CHECKPOINT=/models/qwen38-flash-next-w4b.hgn\r\n"
+            "Environment=HALOGEN_FLASH_PIN_TRUNK=0\r\n"
+            "Volume=/home/tester/halogen/models:/models:ro,Z\r\n"
+            "[Service]\r\nRestart=on-failure\r\n"
+        ).encode()
+
+    def make_updater(self):
+        updater = ContainerUpdater(self.manager, None, MODELS,
+                                  quadlet_dir=self.quadlets, backup_root=self.root / "backups", state_dir=self.root / "state")
+        updater._support_error = lambda: None
+        updater._run = AsyncMock(side_effect=self.command)
+        updater.current_version = self.VERSION
+        updater.checked_at = updater.attempted_at = time.time()
+        return updater
+
+    async def health(self):
+        return {"status": "ok", "model": self.running_model, "in_flight": 0, "queued": 0,
+                "version": {"api": self.VERSION, "engine": self.VERSION}, "capability_probe": "ok"}
+
+    async def command(self, *args, **kwargs):
+        self.commands.append(args)
+        if args[:3] == ("podman", "image", "inspect"):
+            return json.dumps([{"Id": "sha256:image-" + args[3].rsplit(":", 1)[1]}])
+        elif args[:3] == ("podman", "container", "inspect"):
+            return json.dumps([{"Image": "image-" + self.VERSION}])
+        elif args[:3] == ("systemctl", "--user", "start"):
+            if self.fail_start:
+                self.fail_start = False  # fail only the forward start; the rollback start must succeed
+                raise UpdateError("Start fehlgeschlagen")
+            self.running_model = next(m for m, s in MODELS.items() if s == args[3])
+        return ""
+
+    def patch_disk(self, free_gib):
+        return patch.object(ContainerUpdater, "_free_gib", return_value=float(free_gib))
+
+    async def asyncTearDown(self):
+        await self.updater.close()
+        self.temp.cleanup()
+
+    async def execute(self):
+        await self.updater.start_checkpoint()
+        await self.updater.task
+
+    async def test_detection_needs_download_and_can_install(self):
+        with self.patch_disk(self.free_gib):
+            info = self.updater._checkpoint_info()
+            self.assertTrue(info["available"])
+            self.assertTrue(info["needs_download"])
+            self.assertEqual(info["download_gib"], updates.CHECKPOINT_DOWNLOAD_GIB)
+            self.assertIsNone(info["blocked_reason"])
+            self.assertTrue(self.updater.status()["checkpoint"]["can_install"])
+
+    async def test_low_disk_blocks_the_upgrade(self):
+        with self.patch_disk(50):
+            info = self.updater._checkpoint_info()
+        self.assertTrue(info["available"])
+        self.assertIsNotNone(info["blocked_reason"])
+        self.assertFalse(self.updater.status()["checkpoint"]["can_install"])
+        with self.assertRaises(web.HTTPConflict):
+            await self.updater.start_checkpoint()
+
+    async def test_files_already_present_skips_download(self):
+        present = patch.object(ContainerUpdater, "_v2_files_present", return_value=True)
+        present.start()
+        self.addCleanup(present.stop)
+        with self.patch_disk(self.free_gib):
+            info = self.updater._checkpoint_info()
+        self.assertTrue(info["available"])
+        self.assertFalse(info["needs_download"])
+        await self.execute()
+        self.assertEqual(self.updater.job["phase"], "succeeded")
+        content = (self.quadlets / "halogen-official.container").read_text(encoding="utf-8")
+        self.assertNotIn("HALOGEN_DOWNLOAD", content)
+        self.assertIn(":ro,Z", content)
+
+    async def test_success_rewrites_quadlet_and_backups(self):
+        with self.patch_disk(self.free_gib):
+            await self.execute()
+        self.assertEqual(self.updater.job["phase"], "succeeded")
+        self.assertFalse(self.manager.maintenance)
+        content = (self.quadlets / "halogen-official.container").read_text(encoding="utf-8")
+        self.assertIn("HALOGEN_CHECKPOINT=/models/qwen38-flash-next-v2.hgn", content)
+        self.assertIn("HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next", content)
+        self.assertNotIn("HALOGEN_FLASH_PIN_TRUNK", content)
+        self.assertIn("/models:Z", content)
+        self.assertNotIn(":ro", content)
+        backup = Path(self.updater.job["backup_dir"])
+        self.assertIn("checkpoint-update-", backup.name)
+        self.assertIn("w4b", (backup / "halogen-official.container").read_text(encoding="utf-8"))
+
+    async def test_start_failure_rolls_back_to_w4b(self):
+        self.fail_start = True
+        with self.patch_disk(self.free_gib):
+            await self.execute()
+        self.assertEqual(self.updater.job["phase"], "rolled_back")
+        self.assertFalse(self.manager.maintenance)
+        content = (self.quadlets / "halogen-official.container").read_text(encoding="utf-8")
+        self.assertIn("w4b", content)
+        self.assertIn("HALOGEN_FLASH_PIN_TRUNK=0", content)
+        self.assertIn(":ro,Z", content)
+
+    async def test_not_offered_below_0_15(self):
+        self.updater.current_version = "0.14.2"
+        info = self.updater._checkpoint_info()
+        self.assertFalse(info["available"])
+        with self.assertRaises(web.HTTPConflict):
+            await self.updater.start_checkpoint()
+
+    async def test_already_v2_is_not_offered(self):
+        for path in self.updater._paths().values():
+            path.write_bytes(self.checkpoint_quadlet().replace(
+                b"w4b", b"v2"))
+        info = self.updater._checkpoint_info()
+        self.assertFalse(info["available"])
+
+    async def test_api_requires_same_origin_and_returns_202(self):
+        app = web.Application()
+        self.updater.register_routes(app)
+        async with TestClient(TestServer(app)) as client:
+            url = "/dashboard/api/updates/checkpoint"
+            response = await client.post(url, json={}, headers={"Origin": "https://foreign.example", "X-Halogen-Action": "update"})
+            self.assertEqual(response.status, 403)
+            headers = {"Origin": str(client.make_url("")).rstrip("/"), "X-Halogen-Action": "update"}
+            with self.patch_disk(50):
+                response = await client.post(url, json={}, headers=headers)
+                self.assertEqual(response.status, 409)
+            with self.patch_disk(self.free_gib):
+                response = await client.post(url, json={}, headers=headers)
+                self.assertEqual(response.status, 202)
+                await self.updater.task
+            response = await client.get("/dashboard/api/updates")
+            self.assertEqual((await response.json())["job"]["phase"], "succeeded")
+
+
 class DiscoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_tag_pagination_semver_and_prerelease_filtering(self):
         pages = []
