@@ -20,6 +20,13 @@ from typing import Any
 
 from aiohttp import ClientSession, ClientTimeout, web
 
+from profiles import (
+    CONTAINER_MODELS_PATH,
+    OFFICIAL_WEIGHTS_REPO,
+    ProfileError,
+    parse_quadlet,
+)
+
 # Re-exported so existing callers/tests keep working; the definitions live in
 # semver.py, shared with discovery.
 from semver import normalize_version, version_tuple
@@ -35,6 +42,19 @@ DRAIN_TIMEOUT = 7200
 START_TIMEOUT = 600
 TERMINAL_PHASES = {"succeeded", "failed", "rolled_back"}
 JOB_PHASES = TERMINAL_PHASES | {"starting", "pulling", "draining", "configuring", "restarting", "verifying", "rolling_back", "recovery_required"}
+
+# Model checkpoint upgrade (0.15.0 introduced the v2 checkpoint). The image
+# update above never touches weights; this flow switches the active official
+# profile from the 0.14 w4b checkpoint to v2. v2 is 62.1 GiB plus a 47.7 GiB
+# lookup table, fetched by the backend itself on the first start.
+CHECKPOINT_V2_PATH = "/models/qwen38-flash-next-v2.hgn"
+CHECKPOINT_V2_FILES = ("qwen38-flash-next-v2.hgn", "qwen38-flash-next-ngram.hgn")
+LEGACY_W4B_PATH = "/models/qwen38-flash-next-w4b.hgn"
+LEGACY_W4B_FILES = ("qwen38-flash-next-w4b.hgn",)
+CHECKPOINT_MIN_IMAGE = (0, 15, 0)
+CHECKPOINT_DOWNLOAD_GIB = 110
+CHECKPOINT_MIN_FREE_GIB = 115
+CHECKPOINT_START_TIMEOUT = 6 * 3600
 
 
 class UpdateError(RuntimeError):
@@ -65,6 +85,97 @@ def quadlet_image(
     if not found[0].startswith(prefix) or version_tuple(found[0][len(prefix):]) is None:
         raise UpdateError("The configured image is not a versioned Halogen image.")
     return found[0], "".join(lines).encode("utf-8")
+
+
+def quadlet_checkpoint_upgrade(
+    content: bytes,
+    checkpoint: str,
+    *,
+    download_repo: str | None = None,
+    writable_models: bool = False,
+    models_container_path: str = CONTAINER_MODELS_PATH,
+) -> bytes:
+    """Point the checkpoint at v2, preserving every other byte.
+
+    Sets HALOGEN_CHECKPOINT (inserting it after the Image line when the profile
+    never declared one, as a quick-install profile does not), drops
+    HALOGEN_FLASH_PIN_TRUNK (v2 refuses it at startup), and - when the weights
+    still have to be fetched - adds HALOGEN_DOWNLOAD and makes the models
+    volume writable so the backend can download into it.
+    """
+    text = content.decode("utf-8")
+    has_checkpoint = re.search(
+        r"^[ \t]*Environment[ \t]*=[ \t]*HALOGEN_CHECKPOINT[ \t]*=", text, re.MULTILINE
+    ) is not None
+    has_download = re.search(
+        r"^[ \t]*Environment[ \t]*=[ \t]*HALOGEN_DOWNLOAD[ \t]*=", text, re.MULTILINE
+    ) is not None
+    lines = text.splitlines(keepends=True)
+    section = ""
+    placed = has_checkpoint
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped
+        if section == "[Container]":
+            checkpoint_match = re.fullmatch(
+                r"([ \t]*Environment[ \t]*=[ \t]*)(HALOGEN_CHECKPOINT[ \t]*=[ \t]*)([^\r\n]*?)([ \t]*)(\r?\n?)",
+                line,
+            )
+            if checkpoint_match:
+                placed = True
+                out.append(
+                    checkpoint_match[1] + "HALOGEN_CHECKPOINT=" + checkpoint
+                    + checkpoint_match[4] + checkpoint_match[5]
+                )
+                if download_repo and not has_download:
+                    has_download = True
+                    out.append(
+                        checkpoint_match[1] + "HALOGEN_DOWNLOAD=" + download_repo
+                        + checkpoint_match[5]
+                    )
+                continue
+            if re.fullmatch(
+                r"[ \t]*Environment[ \t]*=[ \t]*HALOGEN_FLASH_PIN_TRUNK[ \t]*=[^\r\n]*(\r?\n)?",
+                line,
+            ):
+                continue
+            if writable_models:
+                volume_match = re.fullmatch(
+                    r"([ \t]*Volume[ \t]*=[ \t]*)(\S+)([ \t]*)(\r?\n?)", line
+                )
+                if volume_match:
+                    parts = volume_match[2].split(":")
+                    if len(parts) >= 2 and parts[1] == models_container_path:
+                        options = [
+                            option
+                            for option in (parts[2].split(",") if len(parts) > 2 else ["rw"])
+                            if option and option != "ro"
+                        ]
+                        parts[2] = ",".join(options) if options else "rw"
+                        out.append(
+                            volume_match[1] + ":".join(parts)
+                            + volume_match[3] + volume_match[4]
+                        )
+                        continue
+            image_match = re.fullmatch(
+                r"([ \t]*Image[ \t]*=[ \t]*)(\S+)([ \t]*)(\r?\n?)", line
+            )
+            if image_match and not placed:
+                indent = re.match(r"[ \t]*", line).group()
+                eol = image_match[4]
+                out.append(line)
+                out.append(indent + "Environment=HALOGEN_CHECKPOINT=" + checkpoint + eol)
+                placed = True
+                if download_repo and not has_download:
+                    out.append(indent + "Environment=HALOGEN_DOWNLOAD=" + download_repo + eol)
+                    has_download = True
+                continue
+        out.append(line)
+    if not placed:
+        raise UpdateError("Could not place a HALOGEN_CHECKPOINT line in [Container].")
+    return "".join(out).encode("utf-8")
 
 
 def atomic_write(path: Path, content: bytes, mode: int = 0o600) -> None:
@@ -203,6 +314,76 @@ class ContainerUpdater:
             return str(error)
         return None
 
+    @staticmethod
+    def _v2_files_present(models_path: Path) -> bool:
+        return all((models_path / name).is_file() for name in CHECKPOINT_V2_FILES)
+
+    @staticmethod
+    def _w4b_files_present(models_path: Path) -> bool:
+        return all((models_path / name).is_file() for name in LEGACY_W4B_FILES)
+
+    @staticmethod
+    def _free_gib(models_path: Path) -> float | None:
+        try:
+            return shutil.disk_usage(models_path).free / 2**30
+        except OSError:
+            return None
+
+    def _checkpoint_info(self) -> dict[str, Any]:
+        """Whether the active official profile still runs the 0.14 w4b
+        checkpoint while the image is 0.15+, and what switching to v2 needs."""
+        info: dict[str, Any] = {
+            "available": False, "current": None, "target": CHECKPOINT_V2_PATH,
+            "needs_download": False, "download_gib": 0, "free_gib": None,
+            "blocked_reason": None, "can_install": False,
+        }
+        current_image = version_tuple(self.current_version)
+        if current_image is None or current_image < CHECKPOINT_MIN_IMAGE:
+            return info
+        model = getattr(self.manager, "current_model", None)
+        if model not in self.models:
+            return info
+        try:
+            profile = parse_quadlet(self._configuration()[model]["content"].decode("utf-8"))
+        except (OSError, UnicodeError, UpdateError, ProfileError):
+            return info
+        current = profile.env.get("HALOGEN_CHECKPOINT")
+        models_host = next(
+            (volume[0] for volume in profile.volumes if volume[1] == CONTAINER_MODELS_PATH),
+            None,
+        )
+        if not models_host:
+            return info
+        models_path = Path(models_host)
+        v2_present = self._v2_files_present(models_path)
+        if current == LEGACY_W4B_PATH:
+            on_legacy = True
+        elif current is None:
+            # Quick-install profile with no explicit checkpoint: on 0.15 the
+            # backend serves v2 when present, otherwise the w4b it already has.
+            # Only offer the upgrade when it is in fact still serving w4b.
+            on_legacy = not v2_present and self._w4b_files_present(models_path)
+            if on_legacy:
+                current = LEGACY_W4B_PATH
+        else:
+            on_legacy = False
+        info["current"] = current
+        if not on_legacy:
+            return info
+        info["needs_download"] = not v2_present
+        free_gib = self._free_gib(models_path)
+        info["free_gib"] = round(free_gib, 1) if free_gib is not None else None
+        if info["needs_download"]:
+            info["download_gib"] = CHECKPOINT_DOWNLOAD_GIB
+            if free_gib is None or free_gib < CHECKPOINT_MIN_FREE_GIB:
+                info["available"] = True
+                info["blocked_reason"] = (
+                    "Not enough free disk space for the ~110 GiB checkpoint download."
+                )
+                return info
+        info["available"] = True
+        return info
+
     async def _run(self, *args: str, timeout: float = 120) -> str:
         """Fixed argv only; never invoke a shell or log container environments."""
         process = await asyncio.create_subprocess_exec(
@@ -331,12 +512,24 @@ class ContainerUpdater:
         if latest and any(value < latest for value in versions if value is not None) and any(value > latest for value in versions if value is not None):
             blocked_reason = "Version mismatch: a configuration is newer than the GitHub tag. Automatic downgrade is disabled."
         fresh = self.checked_at is not None and time.time() - self.checked_at < self.check_interval
+        checkpoint = self._checkpoint_info()
+        checkpoint["can_install"] = bool(
+            checkpoint["available"]
+            and checkpoint["blocked_reason"] is None
+            and self.enabled
+            and self.allow_install
+            and support_error is None
+            and self.check_error is None
+            and not self.running
+            and not self.recovery_required
+        )
         return {
             "latest_version": self.latest_version, "current_version": self.current_version,
             "configured_versions": configured, "checked_at": self.checked_at,
             "check_error": self.check_error, "supported": support_error is None,
             "support_error": support_error, "update_available": available,
             "up_to_date": up_to_date, "blocked_reason": blocked_reason,
+            "checkpoint": checkpoint,
             "can_install": (
                 available
                 and fresh
@@ -395,14 +588,113 @@ class ContainerUpdater:
             self._save_job()
             self.task = asyncio.create_task(self._update(version))
 
+    async def start_checkpoint(self) -> None:
+        """Switch the active official profile from the w4b checkpoint to v2."""
+        async with self.start_lock:
+            if not self.enabled:
+                raise web.HTTPForbidden(text="Updates are disabled.")
+            if not self.allow_install:
+                raise web.HTTPForbidden(text="Installation is disabled.")
+            if self.running or self.recovery_required:
+                raise web.HTTPConflict(text="An update or recovery is already running.")
+            support_error = self._support_error()
+            if support_error:
+                raise web.HTTPConflict(text=support_error)
+            info = self._checkpoint_info()
+            if not info["available"]:
+                raise web.HTTPConflict(text="No checkpoint upgrade is available.")
+            if info["blocked_reason"]:
+                raise web.HTTPConflict(text=info["blocked_reason"])
+            model = self.manager.current_model
+            configurations = self._configuration()
+            old_version = self.current_version
+            old_image_id = await self._container_image(model)
+            if await self._inspect_image(configurations[model]["image"]) != old_image_id:
+                raise web.HTTPConflict(text="Running image does not match the active Quadlet.")
+            self.job = {
+                "kind": "checkpoint", "version": old_version, "phase": "starting",
+                "message": "Preparing the checkpoint upgrade.", "started_at": time.time(),
+                "changed": False, "backup_dir": None, "model": model,
+                "old_version": old_version, "old_image_id": old_image_id,
+                "needs_download": info["needs_download"],
+            }
+            self._save_job()
+            self.task = asyncio.create_task(self._update_checkpoint(info))
+
+    async def _update_checkpoint(self, info: dict[str, Any]) -> None:
+        maintenance = False
+        try:
+            model = self.manager.current_model
+            if model not in self.models:
+                raise UpdateError("Active model is unknown.")
+            configurations = self._configuration()
+            health = await self.manager.backend_health()
+            if not health or health.get("status") != "ok" or health.get("model") != model:
+                raise UpdateError("Could not verify the active backend before the checkpoint upgrade.")
+            self._save_job(phase="draining", message="Waiting for model switches and active requests.")
+            await asyncio.wait_for(self.manager.begin_maintenance(), self.drain_timeout)
+            maintenance = True
+            await asyncio.wait_for(self.manager.drain_maintenance(), self.drain_timeout)
+            backup = self.backup_root / f"checkpoint-update-{time.time_ns()}"
+            backup.mkdir(parents=True, mode=0o700)
+            modes = {}
+            for name, path in self._paths().items():
+                modes[name] = stat.S_IMODE(path.stat().st_mode)
+                atomic_write(backup / path.name, configurations[name]["content"], modes[name])
+            self._save_job(phase="configuring", message="Quadlets backed up; switching the checkpoint to v2.",
+                          backup_dir=str(backup), model=model, modes=modes, changed=True)
+            # changed is durable BEFORE the first write (including partial failure).
+            for name, path in self._paths().items():
+                if path.read_bytes() != configurations[name]["content"]:
+                    raise UpdateError("Quadlet was changed externally during the upgrade.")
+                content = quadlet_checkpoint_upgrade(
+                    configurations[name]["content"],
+                    CHECKPOINT_V2_PATH,
+                    download_repo=OFFICIAL_WEIGHTS_REPO if info["needs_download"] else None,
+                    writable_models=info["needs_download"],
+                )
+                atomic_write(path, content, modes[name])
+            await self._run("systemctl", "--user", "daemon-reload")
+            self._save_job(
+                phase="restarting",
+                message=(
+                    f"Starting {model} with the v2 checkpoint. Downloading ~{CHECKPOINT_DOWNLOAD_GIB} GiB; "
+                    "this can take a while."
+                    if info["needs_download"]
+                    else f"Starting {model} with the v2 checkpoint."
+                ),
+            )
+            await self._restart(model, timeout=CHECKPOINT_START_TIMEOUT)
+            self._save_job(phase="verifying", message="Verifying the v2 checkpoint is active.")
+            await self._ready(model, self.job["old_version"], self.job["old_image_id"], timeout=CHECKPOINT_START_TIMEOUT)
+            self._save_job(
+                phase="succeeded",
+                message="The v2 checkpoint is active. The previous w4b files can be deleted to free disk space.",
+                changed=False,
+            )
+        except (Exception, asyncio.CancelledError) as error:
+            LOG.warning("Checkpoint upgrade failed: %s", type(error).__name__)
+            reason = str(error) if isinstance(error, UpdateError) else "Checkpoint upgrade cancelled or timed out."
+            if self.job and self.job.get("changed"):
+                try:
+                    await self._rollback(reason)
+                except (Exception, asyncio.CancelledError):
+                    self.recovery_required = True
+                    self._save_job(phase="recovery_required", message="Rollback incomplete. Retry recovery; the router remains in maintenance mode.")
+            elif self.job:
+                self._save_job(phase="failed", message=reason, changed=False)
+        finally:
+            if maintenance and not self.recovery_required:
+                await self.manager.end_maintenance()
+
     async def _verify_units(self, image: str) -> None:
         for service in self.models.values():
             command = await self._run("systemctl", "--user", "show", service, "--property=ExecStart", "--value")
             if image not in command.split():
                 raise UpdateError(f"Generated service {service} does not use the expected image.")
 
-    async def _ready(self, model: str, version: str, image_id: str) -> None:
-        deadline = time.monotonic() + self.start_timeout
+    async def _ready(self, model: str, version: str, image_id: str, timeout: float | None = None) -> None:
+        deadline = time.monotonic() + (timeout if timeout is not None else self.start_timeout)
         while time.monotonic() < deadline:
             health = await self.manager.backend_health() or {}
             versions = health.get("version") or {}
@@ -418,12 +710,13 @@ class ContainerUpdater:
             await asyncio.sleep(2)
         raise UpdateError("Backend did not become ready with the expected API/engine version and capability probe.")
 
-    async def _restart(self, model: str) -> None:
+    async def _restart(self, model: str, timeout: float | None = None) -> None:
         # Stop + wait for GTT release avoids starting a second model over memory
         # still held by the driver. The router admission gate stays closed.
+        start_timeout = timeout if timeout is not None else self.start_timeout
         await self._run("systemctl", "--user", "stop", self.models[model], timeout=self.stop_timeout)
         await self.manager.wait_for_gtt_release()
-        await self._run("systemctl", "--user", "start", self.models[model], timeout=self.start_timeout)
+        await self._run("systemctl", "--user", "start", self.models[model], timeout=start_timeout)
 
     async def _update(self, version: str) -> None:
         maintenance = False
@@ -604,8 +897,14 @@ class ContainerUpdater:
             self.task = asyncio.create_task(self._retry_recovery())
         return web.json_response(self.status(), status=202, headers={"Cache-Control": "no-store"})
 
+    async def api_install_checkpoint(self, request: web.Request) -> web.Response:
+        self._require_same_origin(request)
+        await self.start_checkpoint()
+        return web.json_response(self.status(), status=202, headers={"Cache-Control": "no-store"})
+
     def register_routes(self, app: web.Application) -> None:
         app.router.add_get("/dashboard/api/updates", self.api_status)
         app.router.add_post("/dashboard/api/updates/check", self.api_check)
         app.router.add_post("/dashboard/api/updates/install", self.api_install)
         app.router.add_post("/dashboard/api/updates/recover", self.api_recover)
+        app.router.add_post("/dashboard/api/updates/checkpoint", self.api_install_checkpoint)
