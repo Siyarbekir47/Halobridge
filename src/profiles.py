@@ -339,7 +339,7 @@ def official_template(image_tag: str, models_root: Path, cache_root: Path) -> Pr
     """
     env = {
         "HALOGEN_MODEL_ID": "qwen3.8-flash",
-        "HALOGEN_CHECKPOINT": "/models/qwen38-flash-next-w4b.hgn",
+        "HALOGEN_CHECKPOINT": "/models/qwen38-flash-next-v2.hgn",
         "HALOGEN_TOKENIZER": "/models/tokenizer",
         "HALOGEN_VISION_TOWER": "/models/qwen38-flash-next-vision.hgn",
         **_COMMON_RUNTIME_ENV,
