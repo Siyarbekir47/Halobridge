@@ -51,4 +51,4 @@ py-modules = [
 packages = ["halobridge_data"]
 
 [tool.setuptools.package-data]
-halobridge_data = ["dashboard.html", "dashboard.css", "dashboard.js", "locales/*.json"]
+halobridge_data = ["dashboard.html", "dashboard.css", "dashboard.js", "theme.js", "locales/*.json"]

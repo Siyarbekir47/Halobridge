@@ -34,7 +34,7 @@ class AssetsTests(unittest.IsolatedAsyncioTestCase):
         dashboard.register_routes(app)
         try:
             async with TestClient(TestServer(app)) as client:
-                for name in ('dashboard.js', 'dashboard.css'):
+                for name in ('dashboard.js', 'dashboard.css', 'theme.js'):
                     response = await client.get('/dashboard/assets/' + name, allow_redirects=False)
                     self.assertEqual(response.status, 302)
                     response = await client.get('/dashboard/assets/' + name, headers={'Authorization': 'Bearer test-secret'})
@@ -52,7 +52,7 @@ class AssetsTests(unittest.IsolatedAsyncioTestCase):
                 html = await page.text()
                 self.assertIn('<html lang="en">', html)
                 self.assertIn('script-src \'self\'', page.headers['Content-Security-Policy'])
-                for name, content_type in [('dashboard.css', 'text/css'), ('dashboard.js', 'application/javascript')]:
+                for name, content_type in [('dashboard.css', 'text/css'), ('dashboard.js', 'application/javascript'), ('theme.js', 'application/javascript')]:
                     self.assertIn('/dashboard/assets/' + name, html)
                     response = await client.get('/dashboard/assets/' + name)
                     self.assertEqual(response.status, 200)

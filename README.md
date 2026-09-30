@@ -251,6 +251,10 @@ English is the default. The language selector remembers English or German and
 applies it to labels, validation errors, update status and deployment job messages.
 Changing language preserves profile edits and the selected reporting period.
 
+The **Appearance** selector defaults to **System**, following your device's light
+or dark theme as it changes. Select **Light** or **Dark** to override it. Your
+choice is remembered in the browser and shared across open dashboard tabs.
+
 The dashboard shows:
 
 - active model and switch target
@@ -535,7 +539,8 @@ This fixture uses synthetic, in-memory telemetry and supports profile previews;
 it does not deploy models or modify system services.
 
 Dashboard markup, styles and behavior live in `src/halobridge_data/dashboard.html`,
-`dashboard.css` and `dashboard.js`. UI translations are in `locales/en.json` and
+`dashboard.css` and `dashboard.js`. The small `theme.js` script applies the saved
+appearance before the stylesheet loads. UI translations are in `locales/en.json` and
 `locales/de.json`. Python messages use English source text; add their German
 translations to `locales/server.de.json`, using matching `{p0}`, `{p1}` placeholders
 for dynamic values. Response localization leaves profile data and shared job state
