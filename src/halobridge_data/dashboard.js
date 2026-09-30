@@ -27,6 +27,15 @@ function bytes(n) {
 const state = {period:'24h', from:null, to:null, page:1, pages:1, range:null, pinned:null};
 let analyticsController, analyticsSequence = 0, liveBusy = false, liveTimer, analyticsTimer, currentAnalytics;
 let updatesData, updatesTimer, updatesBusy = false, updateActionBusy = false, updateSequence = 0;
+let appUpdatesData, appUpdatesTimer, appUpdatesBusy = false, appUpdateActionBusy = false, appUpdateSequence = 0, appUpdatePending = false;
+const coverageStorageKey = 'halobridge_coverage_dismissed_through';
+function readCoverageDismissal() {
+  try {
+    const value = Number(localStorage.getItem(coverageStorageKey));
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  } catch { return 0; }
+}
+let coverageDismissedThrough = readCoverageDismissal();
 let ckptArmed = false, ckptBusy = false, ckptRevertTimer;
 const expanded = new Set();
 const clientLabel = value => ['Unknown', 'Unbekannt'].includes(value) ? t('unknown_client') : value;
@@ -222,8 +231,8 @@ function renderAnalytics(data) {
   const messages = [];
   if (missing > 0) messages.push(t('coverage_missing', {reported: integer(s.usage_reported), total: integer(s.requests)}));
   if (s.legacy_requests > 0) messages.push(t('coverage_legacy', {count: integer(s.legacy_requests)}));
-  $('coverageNotice').hidden = messages.length === 0;
-  $('coverageNotice').textContent = messages.join(' ');
+  $('coverageNotice').hidden = messages.length === 0 || (s.coverage_latest_id > 0 && s.coverage_latest_id <= coverageDismissedThrough);
+  $('coverageText').textContent = messages.join(' ');
   renderChart(data);
   renderHistory(data.history);
   renderBreakdown('clients', data.by_client);
@@ -315,6 +324,19 @@ function changeRange(period, from = null, to = null) {
   expanded.clear();
   refreshAnalytics(true);
 }
+$('dismissCoverage').addEventListener('click', () => {
+  const observed = currentAnalytics?.summary.coverage_observed_id;
+  if (Number.isSafeInteger(observed) && observed >= 0) {
+    coverageDismissedThrough = Math.max(coverageDismissedThrough, readCoverageDismissal(), observed);
+    try { localStorage.setItem(coverageStorageKey, String(coverageDismissedThrough)); } catch {}
+  }
+  $('coverageNotice').hidden = true;
+});
+window.addEventListener('storage', event => {
+  if (event.key !== coverageStorageKey && event.key !== null) return;
+  coverageDismissedThrough = readCoverageDismissal();
+  if (currentAnalytics) renderAnalytics(currentAnalytics);
+});
 $('period').addEventListener('change', event => {
   $('customRange').hidden = event.target.value !== 'custom';
   if (event.target.value !== 'custom') changeRange(event.target.value);
@@ -374,24 +396,11 @@ function ckptDismissed(job) {
 }
 function renderUpdates(data) {
   updatesData = data;
-  const cp = data.checkpoint || {};
+  renderUpdateAttention();
   const cpJob = data.job && data.job.kind === 'checkpoint' ? data.job : null;
   const job = data.job && data.job.kind !== 'checkpoint' ? data.job : null;
   const imgRunning = data.running && !cpJob;
   const cpRunning = data.running && !!cpJob;
-  const cpDone = !!cpJob && cpJob.phase === 'succeeded';
-  const cpFailed = !!cpJob && ckptFailedPhase(cpJob.phase);
-  const cpAttention = (cp.available && !cp.blocked_reason) || cpRunning || cpFailed || (cpDone && !ckptDismissed(cpJob));
-  const attention = imgRunning || data.recovery_required || data.update_available || cpAttention;
-  $('systemAttention').hidden = !attention;
-  $('operationNotice').hidden = !attention;
-  if (data.recovery_required) $('operationText').textContent = t('update_recovery_notice');
-  else if (cpRunning) $('operationText').textContent = t('ckpt_running_notice');
-  else if (cpFailed) $('operationText').textContent = t('ckpt_failed_notice');
-  else if (imgRunning) $('operationText').textContent = t('update_running_notice');
-  else if (data.update_available) $('operationText').textContent = t('update_available_notice');
-  else if (cpDone) $('operationText').textContent = t('ckpt_done_notice');
-  else $('operationText').textContent = t('ckpt_available_notice');
   let title = data.current_version ? t('update_server_title', {version: data.current_version}) : t('update_default_title');
   if (data.recovery_required) title += t('update_suffix_recovery');
   else if (imgRunning) title += t('update_suffix_running');
@@ -407,13 +416,36 @@ function renderUpdates(data) {
   $('updateBackup').textContent = job?.backup_dir ? t('update_backup', {dir: job.backup_dir}) : '';
   $('updateChangelog').hidden = !data.release_url;
   if (data.release_url) $('updateChangelog').href = data.release_url;
-  $('checkUpdate').disabled = updateActionBusy || data.running || data.recovery_required;
+  $('checkUpdate').disabled = updateActionBusy || data.running || data.recovery_required || appUpdatesData?.running;
   $('installUpdate').hidden = !data.update_available || data.recovery_required || cpRunning;
-  $('installUpdate').disabled = updateActionBusy || !data.can_install;
+  $('installUpdate').disabled = updateActionBusy || !data.can_install || appUpdatesData?.running;
   $('installUpdate').textContent = imgRunning ? t('update_running_btn') : t('update_install_btn', {version: data.latest_version});
   $('recoverUpdate').hidden = !data.recovery_required;
-  $('recoverUpdate').disabled = updateActionBusy || !data.can_recover;
+  $('recoverUpdate').disabled = updateActionBusy || !data.can_recover || appUpdatesData?.running;
   renderCheckpoint(data);
+  setAppInstallAvailability();
+}
+function renderUpdateAttention() {
+  const data = updatesData || {};
+  const cp = data.checkpoint || {};
+  const cpJob = data.job && data.job.kind === 'checkpoint' ? data.job : null;
+  const imgRunning = data.running && !cpJob;
+  const cpRunning = data.running && !!cpJob;
+  const cpDone = !!cpJob && cpJob.phase === 'succeeded';
+  const cpFailed = !!cpJob && ckptFailedPhase(cpJob.phase);
+  const cpAttention = (cp.available && !cp.blocked_reason) || cpRunning || cpFailed || (cpDone && !ckptDismissed(cpJob));
+  const attention = imgRunning || data.recovery_required || data.update_available || cpAttention || appUpdatesData?.update_available || appUpdatesData?.running;
+  $('systemAttention').hidden = !attention;
+  $('operationNotice').hidden = !attention;
+  if (data.recovery_required) $('operationText').textContent = t('update_recovery_notice');
+  else if (cpRunning) $('operationText').textContent = t('ckpt_running_notice');
+  else if (cpFailed) $('operationText').textContent = t('ckpt_failed_notice');
+  else if (imgRunning) $('operationText').textContent = t('update_running_notice');
+  else if (appUpdatesData?.running) $('operationText').textContent = t('app_update_running_notice');
+  else if (appUpdatesData?.update_available) $('operationText').textContent = t('app_update_available_notice', {version: appUpdatesData.latest_version});
+  else if (data.update_available) $('operationText').textContent = t('update_available_notice');
+  else if (cpDone) $('operationText').textContent = t('ckpt_done_notice');
+  else $('operationText').textContent = t('ckpt_available_notice');
 }
 function ckptPhaseText(job) {
   const phases = {
@@ -454,7 +486,7 @@ function renderCheckpoint(data) {
   $('checkpointError').hidden = !blocked;
   if (blocked) $('checkpointError').textContent = blocked;
   const actionable = cp.available && !cp.blocked_reason && !cpJob;
-  const canAct = cp.can_install && !running && !data.recovery_required && !ckptBusy;
+  const canAct = cp.can_install && !running && !data.recovery_required && !ckptBusy && !appUpdatesData?.running;
   $('installCheckpoint').hidden = !actionable || ckptArmed;
   $('installCheckpoint').disabled = !canAct;
   $('confirmCheckpoint').hidden = !ckptArmed || running || !!blocked;
@@ -559,6 +591,96 @@ async function updateAction(action) {
 $('checkUpdate').addEventListener('click', () => updateAction('check'));
 $('installUpdate').addEventListener('click', () => updateAction('install'));
 $('recoverUpdate').addEventListener('click', () => updateAction('recover'));
+function setAppInstallAvailability() {
+  if (appUpdatesData) $('installAppUpdate').disabled = appUpdateActionBusy || !appUpdatesData.can_install || updatesData?.running || updatesData?.recovery_required || updateActionBusy || ckptBusy || deployBusy;
+}
+function renderAppUpdates(data) {
+  appUpdatesData = data;
+  if (data.running) appUpdatePending = true;
+  const failed = ['failed', 'rolled_back', 'recovery_required'].includes(data.job?.phase);
+  if (failed) appUpdatePending = false;
+  if (appUpdatePending && !data.running && data.job?.phase === 'succeeded' && data.current_version === data.job.target_version) {
+    appUpdatePending = false;
+    location.reload();
+    return;
+  }
+  let title = t('app_update_title', {version: data.current_version});
+  if (data.running) title += t('update_suffix_running');
+  else if (data.update_available) title += t('update_suffix_available', {version: data.latest_version});
+  else if (data.up_to_date && !data.check_error) title += t('update_suffix_current');
+  $('appUpdateTitle').textContent = title;
+  $('appUpdateMessage').textContent = data.running || failed || data.job?.phase === 'succeeded'
+    ? data.job?.message || t('app_update_running_notice')
+    : data.check_error || data.support_error || data.blocked_reason || t('app_update_default');
+  $('appUpdateChecked').textContent = data.checked_at ? t('app_update_checked_at', {time: dateTime(data.checked_at)}) : t('not_checked');
+  $('appUpdateSource').textContent = data.source_ref ? t('app_update_source', {source: data.source_ref}) : '';
+  $('appUpdateBackup').hidden = !data.job?.backup_dir;
+  $('appUpdateBackup').textContent = data.job?.backup_dir ? t('update_backup', {dir: data.job.backup_dir}) : '';
+  $('appUpdateChangelog').hidden = !data.release_url;
+  if (data.release_url) $('appUpdateChangelog').href = data.release_url;
+  $('appUpdateManual').hidden = data.supported || !data.manual_command;
+  $('appUpdateCommand').textContent = data.manual_command || '';
+  $('checkAppUpdate').disabled = appUpdateActionBusy || data.running;
+  $('installAppUpdate').hidden = !data.update_available && !data.running;
+  setAppInstallAvailability();
+  $('installAppUpdate').textContent = data.running ? t('update_running_btn') : t('update_install_btn', {version: data.latest_version});
+  if (updatesData) renderUpdates(updatesData); else renderUpdateAttention();
+}
+function scheduleAppUpdates() {
+  clearTimeout(appUpdatesTimer);
+  if (!document.hidden) appUpdatesTimer = setTimeout(refreshAppUpdates, appUpdatePending || appUpdatesData?.running ? 3000 : appUpdatesData?.checked_at ? 60000 : 10000);
+}
+async function refreshAppUpdates() {
+  if (appUpdatesBusy || appUpdateActionBusy || document.hidden) return;
+  appUpdatesBusy = true;
+  const sequence = ++appUpdateSequence;
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await apiFetch('/dashboard/api/app-updates', {cache:'no-store', signal:controller.signal});
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) throw new Error(t('app_update_unavailable'));
+    const data = await response.json();
+    if (sequence === appUpdateSequence) { renderAppUpdates(data); $('appUpdateError').hidden = true; }
+  } catch (error) {
+    if (sequence === appUpdateSequence) {
+      $('installAppUpdate').disabled = true;
+      if (appUpdatePending) $('appUpdateMessage').textContent = t('app_update_reconnecting');
+      else { $('appUpdateError').hidden = false; $('appUpdateError').textContent = error.name === 'AbortError' ? t('update_timeout') : error.message; }
+    }
+  } finally { clearTimeout(timeout); appUpdatesBusy = false; scheduleAppUpdates(); }
+}
+async function appUpdateAction(action) {
+  if (appUpdateActionBusy) return;
+  appUpdateActionBusy = true;
+  setLanguageAvailability();
+  ++appUpdateSequence;
+  clearTimeout(appUpdatesTimer);
+  $('checkAppUpdate').disabled = true;
+  $('installAppUpdate').disabled = true;
+  $('appUpdateError').hidden = true;
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 180000);
+  try {
+    const response = await apiFetch(`/dashboard/api/app-updates/${action}`, {
+      method:'POST', headers:{'Content-Type':'application/json', 'X-Halogen-Action':'update'},
+      body:JSON.stringify(action === 'install' ? {version:appUpdatesData?.latest_version} : {}), signal:controller.signal,
+    });
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) throw new Error((await response.text()) || t('update_action_failed'));
+    renderAppUpdates(await response.json());
+    refreshLive();
+  } catch (error) {
+    $('appUpdateError').hidden = false;
+    $('appUpdateError').textContent = error.name === 'AbortError' ? t('update_action_timeout') : error.message;
+  } finally {
+    clearTimeout(timeout);
+    appUpdateActionBusy = false;
+    setLanguageAvailability();
+    if (appUpdatesData) renderAppUpdates(appUpdatesData); else $('checkAppUpdate').disabled = false;
+    scheduleAppUpdates();
+  }
+}
+$('checkAppUpdate').addEventListener('click', () => appUpdateAction('check'));
+$('installAppUpdate').addEventListener('click', () => appUpdateAction('install'));
 let resetArmed = false, resetBusy = false, resetRevertTimer;
 function setResetUi() {
   setLanguageAvailability();
@@ -642,7 +764,7 @@ function setDeployBusy(busy) {
   }
 }
 function setLanguageAvailability() {
-  $('langSelect').disabled = localeLoading || deployBusy || updateActionBusy || resetBusy;
+  $('langSelect').disabled = localeLoading || deployBusy || updateActionBusy || appUpdateActionBusy || resetBusy;
 }
 function volHost(profile, containerPath) {
   const v = (profile.volumes || []).find(x => x[1] === containerPath);
@@ -1012,8 +1134,8 @@ new ResizeObserver(() => {
   if (currentAnalytics) renderChart(currentAnalytics);
 }).observe(document.querySelector('.chart-area'));
 document.addEventListener('visibilitychange', () => {
-  clearTimeout(liveTimer); clearTimeout(analyticsTimer); clearTimeout(updatesTimer); clearTimeout(jobTimer);
-  if (!document.hidden) { refreshLive(); refreshAnalytics(); refreshUpdates(); refreshDeploy(); pollJob(); }
+  clearTimeout(liveTimer); clearTimeout(analyticsTimer); clearTimeout(updatesTimer); clearTimeout(appUpdatesTimer); clearTimeout(jobTimer);
+  if (!document.hidden) { refreshLive(); refreshAnalytics(); refreshUpdates(); refreshAppUpdates(); refreshDeploy(); pollJob(); }
 });
 function applyLocale() {
   document.documentElement.lang = currentLang;
@@ -1055,7 +1177,7 @@ async function switchLanguage(lang) {
     }
     if (liveData) renderLive(liveData);
     if (currentAnalytics) renderAnalytics(currentAnalytics);
-    await Promise.all([refreshLive(), refreshAnalytics(), refreshUpdates(), refreshDeploy(), pollJob()]);
+    await Promise.all([refreshLive(), refreshAnalytics(), refreshUpdates(), refreshAppUpdates(), refreshDeploy(), pollJob()]);
   } catch {
     if (sequence !== localeSequence) return;
     if (!Object.keys(L).length && lang !== 'en') { await switchLanguage('en'); return; }

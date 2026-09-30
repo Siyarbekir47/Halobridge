@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#f5f6f8">
 <title>Halobridge · Overview</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230b1419'/%3E%3Cpath d='M17 43V21h7v8h16v-8h7v22h-7v-8H24v8z' fill='%235ee7c4'/%3E%3C/svg%3E">
+<script src="/dashboard/assets/theme.js"></script>
 <link rel="stylesheet" href="/dashboard/assets/dashboard.css">
 </head>
 <body>
@@ -18,7 +19,11 @@
     <a href="#models" data-view="models"><span aria-hidden="true">▱</span><span data-i18n="nav_models">Models</span></a>
     <a href="#system" data-view="system"><span aria-hidden="true">⚙</span><span data-i18n="nav_system">System</span><span id="systemAttention" class="attention" hidden>!</span></a>
   </nav>
-  <div class="sidebar-bottom"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect"><option value="en">English</option><option value="de">Deutsch</option></select><small>Halobridge <span id="appVersion">v0.1.18</span></small></div>
+  <div class="sidebar-bottom">
+    <div class="sidebar-preference"><label for="themeSelect" data-i18n="theme_label">Appearance</label><select id="themeSelect" aria-label="Appearance" data-i18n-attr="aria-label:theme_label"><option value="system" data-i18n="theme_system">System</option><option value="light" data-i18n="theme_light">Light</option><option value="dark" data-i18n="theme_dark">Dark</option></select></div>
+    <div class="sidebar-preference"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect" aria-label="Language" data-i18n-attr="aria-label:lang_label"><option value="en">English</option><option value="de">Deutsch</option></select></div>
+    <small>Halobridge <span id="appVersion">v0.1.21</span></small>
+  </div>
 </aside>
 <main class="shell" id="mainContent" tabindex="-1">
   <header class="page-header"><div><p class="eyebrow" data-i18n="workspace_label">LOCAL INFERENCE</p><h1 id="viewTitle" tabindex="-1">Overview</h1><p id="viewDescription" class="muted"></p></div><div class="status" role="status"><i class="dot" id="statusDot"></i><span id="connection" data-i18n="conn_connecting">Connecting …</span></div></header>
@@ -52,7 +57,7 @@
     </form>
     <p class="range-caption" id="rangeCaption" data-i18n="range_loading">Loading period …</p>
     <div class="notice error" id="analyticsError" role="alert" hidden></div>
-    <div class="notice" id="coverageNotice" hidden></div>
+    <div class="notice dismissible" id="coverageNotice" hidden><span id="coverageText"></span><button type="button" class="notice-close" id="dismissCoverage" data-i18n-attr="aria-label:dismiss_notice;title:dismiss_notice"><span aria-hidden="true">&times;</span></button></div>
 </div>
 <div id="view-overview" class="view"><section class="usage" aria-labelledby="usageTitle"><h2 id="usageTitle" data-i18n="usage_title">Usage</h2>    <dl class="metrics">
       <div class="metric"><dt data-i18n="metric_requests">Requests</dt><dd id="requestCount">–</dd><small id="requestNote" data-i18n="metric_requests_note">Completed router requests</small></div>
@@ -173,7 +178,24 @@
       <p class="explanation" data-i18n="engine_explanation">Engine measurements come from local completion logs. They may also include direct backend calls and are independent of the router requests above.</p>
       <div class="endpoint"><span class="muted" data-i18n="api_label">API</span><code id="endpoint">–</code><button id="copy" data-i18n="copy_btn">Copy</button><span id="copyStatus" class="muted" role="status"></span></div>
       <div id="storage" class="explanation"></div>
-    </div></section><section class="updates-section"><h2 data-i18n="updates_section">Container updates</h2>  <section class="update-strip" data-i18n-attr="aria-label:updates_section">
+    </div></section><section class="updates-section"><h2 data-i18n="app_updates_section">Halobridge updates</h2><div class="update-strip">
+    <div>
+      <span id="appUpdateTitle" role="status" data-i18n="app_update_checking">Checking Halobridge version…</span>
+      <p id="appUpdateMessage" data-i18n="app_update_default">Checks for newer versions automatically. You choose when to install.</p>
+      <details><summary data-i18n="update_details_summary">Update details</summary><div class="detail-body">
+        <p id="appUpdateSource"></p><p id="appUpdateChecked" data-i18n="not_checked">Not checked yet</p>
+        <p id="appUpdateBackup" hidden></p>
+        <p data-i18n="app_update_warning">Waits for running requests to finish, then updates Halobridge and restarts its service. The dashboard reconnects automatically.</p>
+        <p id="appUpdateManual" hidden><code id="appUpdateCommand"></code></p>
+        <a id="appUpdateChangelog" target="_blank" rel="noopener noreferrer" hidden data-i18n="update_changelog">Changes on GitHub ↗</a>
+      </div></details>
+      <p id="appUpdateError" class="failure" role="alert" hidden></p>
+    </div>
+    <div class="controls">
+      <button id="checkAppUpdate" data-i18n="btn_check">Check</button>
+      <button id="installAppUpdate" class="update-action" hidden data-i18n="btn_install">Update now</button>
+    </div>
+  </div></section><section class="updates-section"><h2 data-i18n="updates_section">Container updates</h2>  <section class="update-strip" data-i18n-attr="aria-label:updates_section">
     <div>
       <span id="updateTitle" role="status" data-i18n="update_checking">Checking server version …</span>
       <p id="updateMessage" data-i18n="update_msg_default">Automatic check every 6 hours · one-click install</p>
