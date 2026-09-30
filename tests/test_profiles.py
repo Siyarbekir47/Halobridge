@@ -191,7 +191,7 @@ class TemplateTests(unittest.TestCase):
         )
         self.assertEqual(validate_profile(profile), [])
         self.assertFalse(profile.downloads_weights)
-        self.assertEqual(profile.env["HALOGEN_CHECKPOINT"], "/models/qwen38-flash-next-w4b.hgn")
+        self.assertEqual(profile.env["HALOGEN_CHECKPOINT"], "/models/qwen38-flash-next-v2.hgn")
         self.assertEqual(profile.env["HALOGEN_TOKENIZER"], "/models/tokenizer")
         self.assertEqual(
             profile.env["HALOGEN_VISION_TOWER"], "/models/qwen38-flash-next-vision.hgn"
