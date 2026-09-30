@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.22
+
+- Limit checkpoint v2 upgrades and recovery to the official model profile.
+- Prevent checkpoint upgrades during model switches.
+
 ## 0.1.21
 
 - Keep token usage notices dismissed until a new incomplete request is recorded.

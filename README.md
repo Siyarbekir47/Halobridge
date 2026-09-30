@@ -379,6 +379,10 @@ default.
 For the standard official model, leave the checkpoint field empty. Set it only
 when deliberately running a custom or converted checkpoint.
 
+The checkpoint v2 upgrade changes only the active official profile. Uncensored
+profiles keep their converted OrcaRouter checkpoint and do not need the official
+v2 weights. Upgrading the container image is separate from upgrading a checkpoint.
+
 ### Advanced editor
 
 Open **Profile & Deployment** in the dashboard:

@@ -388,8 +388,9 @@ class CheckpointUpgradeTests(unittest.IsolatedAsyncioTestCase):
         self.quadlets.mkdir()
         self.models = self.root / "models"
         self.models.mkdir()
-        for service in MODELS.values():
-            (self.quadlets / service.replace(".service", ".container")).write_bytes(self.checkpoint_quadlet())
+        for model, service in MODELS.items():
+            content = self.checkpoint_quadlet() if model == MODEL else self.uncensored_quadlet()
+            (self.quadlets / service.replace(".service", ".container")).write_bytes(content)
         self.manager = ModelManager(None)
         self.manager.current_model = MODEL
         self.manager.wait_for_gtt_release = AsyncMock()
@@ -423,6 +424,19 @@ class CheckpointUpgradeTests(unittest.IsolatedAsyncioTestCase):
             "Environment=HALOGEN_MODEL_ID=qwen3.8-flash\r\n"
             "Environment=HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next\r\n"
             "Volume=/home/tester/halogen/models:/models:Z\r\n"
+            "[Service]\r\nRestart=on-failure\r\n"
+        ).encode()
+
+    def uncensored_quadlet(self, checkpoint="/models/qwen3.8-flash-uncensored.hgn"):
+        return (
+            "[Container]\r\n"
+            f"Image={IMAGE_REPOSITORY}:{self.VERSION}\r\n"
+            "ContainerName=halogen-uncensored\r\n"
+            "Environment=HALOGEN_MODEL_ID=qwen3.8-flash-uncensored\r\n"
+            f"Environment=HALOGEN_CHECKPOINT={checkpoint}\r\n"
+            "Environment=HALOGEN_TOKENIZER=/models/tokenizer\r\n"
+            "Volume=/home/tester/halogen/models/uncensored:/models:ro,Z\r\n"
+            "Volume=/home/tester/halogen/models/uncensored:/uncensored:ro,Z\r\n"
             "[Service]\r\nRestart=on-failure\r\n"
         ).encode()
 
@@ -509,6 +523,114 @@ class CheckpointUpgradeTests(unittest.IsolatedAsyncioTestCase):
         backup = Path(self.updater.job["backup_dir"])
         self.assertIn("checkpoint-update-", backup.name)
         self.assertIn("w4b", (backup / "halogen-official.container").read_text(encoding="utf-8"))
+
+    async def test_official_upgrade_preserves_both_uncensored_layouts(self):
+        uncensored = self.quadlets / "halogen-uncensored.container"
+        for checkpoint in ("/models/qwen3.8-flash-uncensored.hgn", "/uncensored/qwen3.8-flash-uncensored.hgn"):
+            with self.subTest(checkpoint=checkpoint):
+                original = self.uncensored_quadlet(checkpoint)
+                uncensored.write_bytes(original)
+                (self.quadlets / "halogen-official.container").write_bytes(self.checkpoint_quadlet())
+                with self.patch_disk(self.free_gib):
+                    await self.execute()
+                self.assertEqual(self.updater.job["phase"], "succeeded")
+                self.assertEqual(uncensored.read_bytes(), original)
+
+    async def test_uncensored_is_not_offered_the_official_upgrade(self):
+        uncensored = self.quadlets / "halogen-uncensored.container"
+        self.manager.current_model = self.running_model = "qwen3.8-flash-uncensored"
+        for checkpoint in ("/models/qwen3.8-flash-uncensored.hgn", updates.LEGACY_W4B_PATH, None):
+            with self.subTest(checkpoint=checkpoint):
+                content = self.uncensored_quadlet(checkpoint or updates.LEGACY_W4B_PATH)
+                if checkpoint is None:
+                    content = content.replace(f"Environment=HALOGEN_CHECKPOINT={updates.LEGACY_W4B_PATH}\r\n".encode(), b"")
+                uncensored.write_bytes(content)
+                with self.patch_disk(self.free_gib), patch.object(ContainerUpdater, "_w4b_files_present", return_value=True):
+                    self.assertFalse(self.updater._checkpoint_info()["available"])
+                    with self.assertRaises(web.HTTPConflict):
+                        await self.updater.start_checkpoint()
+                self.assertEqual(uncensored.read_bytes(), content)
+
+    async def test_model_switch_before_upgrade_task_leaves_both_profiles_unchanged(self):
+        originals = {path: path.read_bytes() for path in self.updater._paths().values()}
+        with self.patch_disk(self.free_gib):
+            await self.updater.start_checkpoint()
+            self.manager.current_model = self.running_model = "qwen3.8-flash-uncensored"
+            await self.updater.task
+        self.assertEqual(self.updater.job["phase"], "failed")
+        self.assertFalse(self.manager.maintenance)
+        for path, content in originals.items():
+            self.assertEqual(path.read_bytes(), content)
+        self.assertFalse(any(args[:3] == ("systemctl", "--user", "start") for args in self.commands))
+
+    async def test_model_switch_during_image_check_rejects_upgrade(self):
+        originals = {path: path.read_bytes() for path in self.updater._paths().values()}
+
+        async def inspect_then_switch(image):
+            self.manager.current_model = self.running_model = "qwen3.8-flash-uncensored"
+            return "image-" + self.VERSION
+
+        self.updater._inspect_image = AsyncMock(side_effect=inspect_then_switch)
+        with self.patch_disk(self.free_gib):
+            with self.assertRaises(web.HTTPConflict):
+                await self.updater.start_checkpoint()
+        self.assertIsNone(self.updater.job)
+        for path, content in originals.items():
+            self.assertEqual(path.read_bytes(), content)
+
+    async def test_model_switch_while_entering_maintenance_leaves_profiles_unchanged(self):
+        originals = {path: path.read_bytes() for path in self.updater._paths().values()}
+        begin_maintenance = self.manager.begin_maintenance
+
+        async def finish_switch_then_enter():
+            self.manager.current_model = self.running_model = "qwen3.8-flash-uncensored"
+            await begin_maintenance()
+
+        self.manager.begin_maintenance = finish_switch_then_enter
+        with self.patch_disk(self.free_gib):
+            await self.execute()
+        self.assertEqual(self.updater.job["phase"], "failed")
+        self.assertFalse(self.manager.maintenance)
+        for path, content in originals.items():
+            self.assertEqual(path.read_bytes(), content)
+
+    async def test_checkpoint_recovery_preserves_uncensored_changes(self):
+        with self.patch_disk(self.free_gib):
+            await self.execute()
+        self.assertEqual(self.updater.job["phase"], "succeeded")
+        self.updater._save_job(phase="verifying", changed=True)
+        uncensored = self.quadlets / "halogen-uncensored.container"
+        customized = self.uncensored_quadlet() + b"RestartSec=30\r\n"
+        uncensored.write_bytes(customized)
+        recovered = self.make_updater()
+        await recovered.recover_on_startup()
+        self.assertEqual(recovered.job["phase"], "rolled_back")
+        self.assertFalse(self.manager.maintenance)
+        self.assertEqual(uncensored.read_bytes(), customized)
+        self.assertEqual((self.quadlets / "halogen-official.container").read_bytes(), self.checkpoint_quadlet())
+
+    async def test_legacy_checkpoint_journal_still_restores_both_profiles(self):
+        with self.patch_disk(self.free_gib):
+            await self.execute()
+        backup = Path(self.updater.job["backup_dir"])
+        uncensored = self.quadlets / "halogen-uncensored.container"
+        original = self.uncensored_quadlet()
+        (backup / uncensored.name).write_bytes(original)
+        uncensored.write_bytes(updates.quadlet_checkpoint_upgrade(
+            original, updates.CHECKPOINT_V2_PATH,
+            download_repo=updates.OFFICIAL_WEIGHTS_REPO, writable_models=True,
+        ))
+        legacy_job = {**self.updater.job, "phase": "verifying", "changed": True,
+                      "modes": {**self.updater.job["modes"], "qwen3.8-flash-uncensored": 0o600}}
+        legacy_job.pop("changed_models")
+        self.updater.journal_path.write_text(json.dumps(legacy_job), encoding="utf-8")
+        self.manager.current_model = None
+        recovered = self.make_updater()
+        await recovered.recover_on_startup()
+        self.assertEqual(recovered.job["phase"], "rolled_back")
+        self.assertFalse(self.manager.maintenance)
+        self.assertEqual(uncensored.read_bytes(), original)
+        self.assertEqual((self.quadlets / "halogen-official.container").read_bytes(), self.checkpoint_quadlet())
 
     async def test_start_failure_rolls_back_to_w4b(self):
         self.fail_start = True

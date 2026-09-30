@@ -347,6 +347,8 @@ class ContainerUpdater:
             profile = parse_quadlet(self._configuration()[model]["content"].decode("utf-8"))
         except (OSError, UnicodeError, UpdateError, ProfileError):
             return info
+        if model != "qwen3.8-flash" or profile.model_id != model:
+            return info
         current = profile.env.get("HALOGEN_CHECKPOINT")
         models_host = next(
             (volume[0] for volume in profile.volumes if volume[1] == CONTAINER_MODELS_PATH),
@@ -611,6 +613,8 @@ class ContainerUpdater:
             old_image_id = await self._container_image(model)
             if await self._inspect_image(configurations[model]["image"]) != old_image_id:
                 raise web.HTTPConflict(text="Running image does not match the active Quadlet.")
+            if self.manager.current_model != model:
+                raise web.HTTPConflict(text="Active model changed; check the checkpoint upgrade again.")
             self.job = {
                 "kind": "checkpoint", "version": old_version, "phase": "starting",
                 "message": "Preparing the checkpoint upgrade.", "started_at": time.time(),
@@ -624,9 +628,10 @@ class ContainerUpdater:
     async def _update_checkpoint(self, info: dict[str, Any]) -> None:
         maintenance = False
         try:
-            model = self.manager.current_model
-            if model not in self.models:
-                raise UpdateError("Active model is unknown.")
+            assert self.job is not None
+            model = self.job["model"]
+            if model not in self.models or self.manager.current_model != model:
+                raise UpdateError("Active model changed; check the checkpoint upgrade again.")
             configurations = self._configuration()
             health = await self.manager.backend_health()
             if not health or health.get("status") != "ok" or health.get("model") != model:
@@ -634,17 +639,24 @@ class ContainerUpdater:
             self._save_job(phase="draining", message="Waiting for model switches and active requests.")
             await asyncio.wait_for(self.manager.begin_maintenance(), self.drain_timeout)
             maintenance = True
+            if self.manager.current_model != model:
+                raise UpdateError("Active model changed; check the checkpoint upgrade again.")
             await asyncio.wait_for(self.manager.drain_maintenance(), self.drain_timeout)
+            info = self._checkpoint_info()
+            if not info["available"] or info["blocked_reason"]:
+                raise UpdateError(info["blocked_reason"] or "No checkpoint upgrade is available.")
+            paths = {model: self._paths()[model]}
             backup = self.backup_root / f"checkpoint-update-{time.time_ns()}"
             backup.mkdir(parents=True, mode=0o700)
             modes = {}
-            for name, path in self._paths().items():
+            for name, path in paths.items():
                 modes[name] = stat.S_IMODE(path.stat().st_mode)
                 atomic_write(backup / path.name, configurations[name]["content"], modes[name])
-            self._save_job(phase="configuring", message="Quadlets backed up; switching the checkpoint to v2.",
-                          backup_dir=str(backup), model=model, modes=modes, changed=True)
+            self._save_job(phase="configuring", message="Official Quadlet backed up; switching the checkpoint to v2.",
+                          backup_dir=str(backup), model=model, modes=modes,
+                          changed_models=[model], changed=True)
             # changed is durable BEFORE the first write (including partial failure).
-            for name, path in self._paths().items():
+            for name, path in paths.items():
                 if path.read_bytes() != configurations[name]["content"]:
                     raise UpdateError("Quadlet was changed externally during the upgrade.")
                 content = quadlet_checkpoint_upgrade(
@@ -795,11 +807,20 @@ class ContainerUpdater:
         backup = Path(self.job["backup_dir"])
         if model not in self.models or backup.resolve().parent != self.backup_root.resolve():
             raise UpdateError("Invalid recovery record.")
-        # Read and validate BOTH backups before restoring either file.
-        originals = {name: (backup / path.name).read_bytes() for name, path in self._paths().items()}
+        paths = self._paths()
+        if "changed_models" in self.job:
+            changed_models = self.job["changed_models"]
+            if (not isinstance(changed_models, list) or not changed_models
+                    or any(not isinstance(name, str) or name not in paths for name in changed_models)
+                    or model not in changed_models):
+                raise UpdateError("Invalid recovery record.")
+            paths = {name: paths[name] for name in changed_models}
+        # Older journals changed every profile; new checkpoint jobs record only
+        # the official profile. Validate all affected backups before restoring.
+        originals = {name: (backup / path.name).read_bytes() for name, path in paths.items()}
         for content in originals.values():
             quadlet_image(content, image_repo=self.image_repo)
-        for name, path in self._paths().items():
+        for name, path in paths.items():
             atomic_write(path, originals[name], self.job["modes"][name])
         await self._run("systemctl", "--user", "daemon-reload")
         # A process restart could have occurred midway through startup. Stop both
