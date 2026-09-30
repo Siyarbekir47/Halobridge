@@ -258,6 +258,13 @@ English is the default. The language selector remembers English or German and
 applies it to labels, validation errors, update status and deployment job messages.
 Changing language preserves profile edits and the selected reporting period.
 
+The **Appearance** selector defaults to **System**, following your device's light
+or dark theme as it changes. Select **Light** or **Dark** to override it. Your
+choice is remembered in the browser and shared across open dashboard tabs.
+
+Close the incomplete token usage notice with its **×** button. It stays hidden
+during automatic refreshes until you change the reporting period or reload.
+
 The dashboard shows:
 
 - active model and switch target
@@ -441,7 +448,7 @@ Update flow:
 7. Verify API version, engine version, model, capability probe, and container image ID.
 8. Roll back automatically if verification fails.
 
-You can disable updates:
+You can disable container updates:
 
 ```toml
 [updates]
@@ -457,8 +464,40 @@ allow_install = false
 
 ## Updating Halobridge itself
 
-The dashboard's one-click update handles the **halogen container**. To update
-the **Halobridge package itself**, use the command matching how you installed it:
+Under **System → Halobridge updates**, the dashboard checks GitHub every six
+hours and offers an update only when the package version increases. Checks
+follow the branch recorded by your installation; use `app_updates.branch` to
+choose a different branch. Commit changes without a version bump do not trigger
+an update.
+
+For a GitHub installation managed by **pipx** and running as a Linux systemd
+**user service**, click **Update now**. Halobridge waits for active requests,
+reinstalls the package from its trusted GitHub source, verifies the new version,
+and restarts its own service. A separate background service runs the update,
+so it survives the restart. The dashboard reconnects and reloads automatically.
+Failed installations restore the previous environment; status and errors remain
+available after a reload.
+
+If verification fails after restarting, the dashboard requires manual recovery.
+**Update details** shows the saved environment's path; its `venv` subdirectory
+contains the previous installation. Stop the Halobridge user service before
+restoring it, then restart and verify `halobridge --version`. After confirming
+the restored service works, remove `app-update.json` from your configured
+dashboard state directory to clear the recovery status.
+Restart the user service once more after clearing that journal.
+
+```toml
+[app_updates]
+enabled = true
+check_interval_h = 6
+branch = ""                    # auto-detect the installed branch
+service = "halobridge.service"  # systemd user service running this instance
+```
+
+Set `app_updates.enabled = false` to disable these checks. The existing
+`security.allow_install = false` also disables Halobridge installation. Other
+installation methods display a manual update command when available. You can
+still update from the terminal:
 
 **Installed with pipx:**
 
@@ -493,7 +532,8 @@ halobridge doctor
 shows the version you actually have running.
 
 > **For maintainers:** when publishing a new release, bump `version` in
-> `pyproject.toml` and tag the commit `vX.Y.Z` on GitHub.
+> `pyproject.toml`, add short English bullets to `CHANGELOG.md`, and tag the
+> commit `vX.Y.Z` on GitHub.
 
 ## Token gate
 
@@ -575,7 +615,8 @@ This fixture uses synthetic, in-memory telemetry and supports profile previews;
 it does not deploy models or modify system services.
 
 Dashboard markup, styles and behavior live in `src/halobridge_data/dashboard.html`,
-`dashboard.css` and `dashboard.js`. UI translations are in `locales/en.json` and
+`dashboard.css` and `dashboard.js`. The small `theme.js` script applies the saved
+appearance before the stylesheet loads. UI translations are in `locales/en.json` and
 `locales/de.json`. Python messages use English source text; add their German
 translations to `locales/server.de.json`, using matching `{p0}`, `{p1}` placeholders
 for dynamic values. Response localization leaves profile data and shared job state

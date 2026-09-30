@@ -84,7 +84,8 @@ def translate_message(message: str, lang: str, depth: int = 0) -> str:
         values = match.groupdict()
         # These slots contain another application message, not a user identifier.
         nested = {"p1"} if english == "env {p0}: {p1}" else {"p0"} if (
-            english.startswith(("ERROR: ", "... ", "{p0} Restoring", "{p0} Previous", "Invalid profile: "))
+            english.startswith(("ERROR: ", "... ", "{p0} Restoring", "{p0} Previous", "Invalid profile: ",
+                                "{p0} The previous", "{p0} Restore", "{p0} Automatic restoration"))
         ) else set()
         for key in nested & values.keys():
             values[key] = translate_message(values[key], lang, depth + 1)

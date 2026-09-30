@@ -859,7 +859,7 @@ class Dashboard:
         from importlib.resources import files
 
         name = request.match_info["name"]
-        types = {"dashboard.css": "text/css", "dashboard.js": "application/javascript"}
+        types = {"dashboard.css": "text/css", "dashboard.js": "application/javascript", "theme.js": "application/javascript"}
         if name not in types:
             raise web.HTTPNotFound()
         content = files("halobridge_data").joinpath(name).read_text(encoding="utf-8")

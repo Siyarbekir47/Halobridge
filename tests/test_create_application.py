@@ -1,9 +1,12 @@
 """create_application wiring tests: python -m unittest discover -s tests -v"""
 
 from pathlib import Path
+import asyncio
 import sys
 import unittest
 from unittest.mock import AsyncMock, patch
+from aiohttp.test_utils import TestClient, TestServer
+from aiohttp import web
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import halogen_router as router
@@ -12,6 +15,49 @@ from settings import Config, DashboardConfig, DeployConfig, ModelsConfig, Securi
 
 
 class CreateApplicationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_admitted_deploy_request_blocks_self_update_before_job_registration(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def delayed_action(self, request):
+            entered.set()
+            await release.wait()
+            return web.json_response({"ok": True})
+        config = Config(models=ModelsConfig(auto_discover=False))
+        with patch.object(router.Dashboard, "initialize", new=AsyncMock()), \
+             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None), \
+             patch.object(router.AppUpdater, "start_checks", new=lambda self: None), \
+             patch.object(router.DeployRoutes, "api_hf_install", new=delayed_action):
+            app = await router.create_application(config)
+        async with TestClient(TestServer(app)) as client:
+            pending = asyncio.ensure_future(client.post("/dashboard/api/deploy/hf/install", json={}))
+            try:
+                await asyncio.wait_for(entered.wait(), 2)
+                self.assertTrue(app["app_updater"]._busy())
+                with self.assertRaises(web.HTTPConflict):
+                    await app["app_updater"].start("0.1.21")
+            finally:
+                release.set()
+                await pending
+            self.assertFalse(app["app_updater"]._busy())
+
+    async def test_self_update_blocks_conflicting_actions_and_retains_auth(self):
+        config = Config(models=ModelsConfig(auto_discover=False),
+                        security=SecurityConfig(auth_token="secret"))
+        with patch.object(router.Dashboard, "initialize", new=AsyncMock()), \
+             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None), \
+             patch.object(router.AppUpdater, "start_checks", new=lambda self: None):
+            app = await router.create_application(config)
+        async with TestClient(TestServer(app)) as client:
+            response = await client.get("/dashboard/api/app-updates", allow_redirects=False)
+            self.assertEqual(response.status, 401)
+            headers = {"Authorization": "Bearer secret", "Accept-Language": "de"}
+            response = await client.get("/dashboard/api/app-updates", headers=headers)
+            self.assertEqual(response.status, 200)
+            app["app_updater"].job = {"phase": "installing"}
+            for path in ["/dashboard/api/deploy/hf/install", "/dashboard/api/updates/checkpoint"]:
+                response = await client.post(path, headers=headers, json={})
+                self.assertEqual(response.status, 409)
+                self.assertIn("Halobridge", await response.text())
+
     def test_router_bind_cli_override(self):
         args = router.parse_args(
             ["router", "--bind", "0.0.0.0", "--bind", "::1"]
@@ -33,7 +79,8 @@ class CreateApplicationTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(router.ContainerUpdater, "recover_on_startup", new=AsyncMock()) as recover, \
              patch.object(router.ModelManager, "initialize", new=AsyncMock()) as initialize, \
              patch.object(router.Dashboard, "initialize", new=AsyncMock()), \
-             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None):
+             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None), \
+             patch.object(router.AppUpdater, "start_checks", new=lambda self: None):
             app = await router.create_application(config)
         await app["session"].close()
 
@@ -60,7 +107,8 @@ class CreateApplicationTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(router.ModelManager, "initialize", new=AsyncMock()), \
              patch.object(router.ContainerUpdater, "recover_on_startup", new=AsyncMock()), \
              patch.object(router.Dashboard, "initialize", new=AsyncMock()), \
-             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None):
+             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None), \
+             patch.object(router.AppUpdater, "start_checks", new=lambda self: None):
             app = await router.create_application(config)
         await app["session"].close()
 
@@ -69,7 +117,7 @@ class CreateApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(app["manager"].models, app["models"])
         self.assertIs(app["updater"].models, app["models"])
         self.assertEqual(app["manager"].default_model, "model-a")
-        self.assertEqual(len(app.middlewares), 1)
+        self.assertEqual(len(app.middlewares), 2)
 
     async def test_discovery_and_explicit_override_are_merged(self):
         spec = ModelSpec(
@@ -91,7 +139,8 @@ class CreateApplicationTests(unittest.IsolatedAsyncioTestCase):
              patch.object(router.ModelManager, "initialize", new=AsyncMock()), \
              patch.object(router.ContainerUpdater, "recover_on_startup", new=AsyncMock()), \
              patch.object(router.Dashboard, "initialize", new=AsyncMock()), \
-             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None):
+             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None), \
+             patch.object(router.AppUpdater, "start_checks", new=lambda self: None):
             app = await router.create_application(config)
         await app["session"].close()
 
@@ -117,14 +166,18 @@ class CreateApplicationTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(router.ModelManager, "initialize", new=AsyncMock()), \
              patch.object(router.ContainerUpdater, "recover_on_startup", new=AsyncMock()), \
              patch.object(router.Dashboard, "initialize", new=AsyncMock()), \
-             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None):
+             patch.object(router.ContainerUpdater, "start_checks", new=lambda self: None), \
+             patch.object(router.AppUpdater, "start_checks", new=lambda self: None):
             app = await router.create_application(config)
         await app["session"].close()
 
-        self.assertEqual(len(app.middlewares), 2)
+        self.assertEqual(len(app.middlewares), 3)
         routes = {route.resource.canonical for route in app.router.routes()}
         self.assertIn("/dashboard/login", routes)
         self.assertIn("/dashboard/logout", routes)
+        self.assertIn("/dashboard/api/app-updates", routes)
+        self.assertIn("/dashboard/api/app-updates/install", routes)
+        self.assertIn("/dashboard/api/app-updates/check", routes)
 
 
 if __name__ == "__main__":

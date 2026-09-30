@@ -41,6 +41,32 @@ class TempCase(unittest.TestCase):
 
 
 class SettingsTests(TempCase):
+    def test_app_updates_defaults_and_configuration(self):
+        defaults = Config().app_updates
+        self.assertTrue(defaults.enabled)
+        self.assertEqual(defaults.check_interval_h, 6)
+        self.assertEqual(defaults.branch, "")
+        self.assertEqual(defaults.service, "halobridge.service")
+        configured = Config.from_dict({"app_updates": {
+            "enabled": False, "check_interval_h": 12,
+            "branch": "develop", "service": "halobridge-custom.service",
+        }}).app_updates
+        self.assertFalse(configured.enabled)
+        self.assertEqual(configured.check_interval_h, 12)
+        self.assertEqual(configured.branch, "develop")
+        self.assertEqual(configured.service, "halobridge-custom.service")
+
+    def test_app_updates_rejects_invalid_values(self):
+        for field, value in [("enabled", "yes"), ("check_interval_h", 0),
+                             ("branch", "--upload-pack=x"), ("branch", "a..b"),
+                             ("branch", "develop\nmain"), ("service", "../other.service"),
+                             ("service", "halobridge")]:
+            with self.subTest(field=field, value=value):
+                with self.assertRaisesRegex(ConfigError, field):
+                    Config.from_dict({"app_updates": {field: value}})
+        with self.assertRaisesRegex(ConfigError, "app_updates"):
+            Config.from_dict({"app_updates": False})
+
     def test_defaults_without_file(self):
         config = load(self.root / "missing.toml")
         self.assertIsNone(config.source)
