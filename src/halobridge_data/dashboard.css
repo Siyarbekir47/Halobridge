@@ -197,6 +197,11 @@ legend { font-size: 13px; font-weight: 650; padding-right: 12px; }
 .system-section, .updates-section { padding: 16px 0 28px; }
 .updates-section { border-top: 1px solid var(--line); }
 .update-strip { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.update-strip > div:first-child { min-width: 0; }
+.update-strip code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.notice.dismissible { display: flex; align-items: flex-start; gap: 16px; }
+.dismissible > span { flex: 1; }
+.notice-close { flex-shrink: 0; padding: 0; width: 32px; min-height: 32px; margin: -4px -4px -4px 0; background: transparent; border-color: transparent; color: inherit; font-size: 22px; line-height: 1; }
 .update-strip .controls { flex-shrink: 0; }
 .update-strip p { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .update-strip details { border: 0; padding-bottom: 0; }

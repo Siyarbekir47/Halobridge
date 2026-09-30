@@ -16,6 +16,7 @@ from aiohttp import ClientError, ClientSession, ClientTimeout, web
 from halogen_dashboard import Dashboard, INFERENCE_ENDPOINTS
 from halogen_deploy import DeployManager, DeployRoutes
 from halogen_updates import ContainerUpdater
+from halobridge_updates import AppUpdater
 import settings
 from discovery import discover
 
@@ -1086,6 +1087,8 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
 
     deploy_manager = DeployManager(manager, config, updater=updater, dashboard=dashboard)
     deploy_routes = DeployRoutes(deploy_manager)
+    app_updater = AppUpdater(manager, session, config=config,
+                             container_updater=updater, deploy_manager=deploy_manager)
 
     app = web.Application(
         client_max_size=128 * 1024 * 1024,
@@ -1095,6 +1098,7 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     app["manager"] = manager
     app["dashboard"] = dashboard
     app["updater"] = updater
+    app["app_updater"] = app_updater
     app["deploy"] = deploy_manager
     app["models"] = models
     app["backend_url"] = config.router.backend_url
@@ -1116,15 +1120,35 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
         app.router.add_post("/dashboard/logout", logout)
 
     dashboard.register_routes(app)
+    @web.middleware
+    async def block_during_app_update(request: web.Request, handler):
+        operation = (request.method not in {"GET", "HEAD", "OPTIONS"}
+                     and request.path.startswith(("/dashboard/api/deploy/", "/dashboard/api/updates/")))
+        if not operation:
+            return await handler(request)
+        if app_updater.running:
+            raise web.HTTPConflict(text="Halobridge is updating. Wait before starting another operation.")
+        # Register admission before body parsing or service probes can yield.
+        # A self-update cannot start while an earlier operation is suspended.
+        app_updater.operation_requests += 1
+        try:
+            return await handler(request)
+        finally:
+            app_updater.operation_requests -= 1
+
+    app.middlewares.append(block_during_app_update)
     updater.register_routes(app)
     deploy_routes.register_routes(app)
+    app_updater.register_routes(app)
     updater.start_checks()
+    app_updater.start_checks()
     app.router.add_get("/v1/models", list_models)
     app.router.add_get("/router/status", router_status)
 
     app.router.add_route("*", "/{tail:.*}", proxy_request)
 
     async def close_session(_: web.Application) -> None:
+        await app_updater.close()
         await updater.close()
         await dashboard.close()
         await session.close()

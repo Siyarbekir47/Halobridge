@@ -73,6 +73,10 @@ async def main(args):
     dashboard.register_routes(app)
     app.router.add_get("/dashboard/api/updates", update_status)
     app.router.add_post("/dashboard/api/updates/{action}", update_status)
+    async def app_update_status(request):
+        return web.json_response({"current_version": "0.1.20", "latest_version": "0.1.20",
+                                  "up_to_date": True, "supported": False, "running": False})
+    app.router.add_get("/dashboard/api/app-updates", app_update_status)
     async with TestServer(app) as server, async_playwright() as playwright:
         browser = await playwright.chromium.launch(executable_path=args.browser, headless=True)
         context = await browser.new_context(viewport={"width": 1440, "height": 1050}, timezone_id="Europe/Berlin", color_scheme="light")
@@ -122,6 +126,14 @@ async def main(args):
         await expect(page.locator("#installUpdate")).to_be_hidden()
         await expect(page.locator("#coverageNotice")).to_contain_text("31 von 33")
         await expect(page.locator("#coverageNotice")).to_contain_text("1 Altbestände")
+        await page.get_by_role('button', name='Token-Hinweis schließen').click()
+        await expect(page.locator('#coverageNotice')).to_be_hidden()
+        await page.locator('#refresh').click()
+        await expect(page.locator('#analytics')).to_have_attribute('aria-busy', 'false')
+        await expect(page.locator('#coverageNotice')).to_be_hidden()
+        await page.locator('#period').select_option('7d')
+        await expect(page.locator('#coverageNotice')).to_be_visible()
+        await page.locator('#period').select_option('24h')
         assert await page.locator("#tokenChart rect").count() > 0
         await expect(page.locator("#tokenChart")).to_be_visible()
         assert (await page.locator("#tokenChart").bounding_box())["height"] >= 150

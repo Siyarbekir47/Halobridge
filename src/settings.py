@@ -11,6 +11,7 @@ single edit. See docs/open-source-plan.md §0.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 import tomllib
@@ -148,6 +149,33 @@ class UpdatesConfig:
 
 
 @dataclass
+class AppUpdatesConfig:
+    enabled: bool = True
+    check_interval_h: int = 6
+    branch: str = ""
+    service: str = "halobridge.service"
+
+    @classmethod
+    def from_section(cls, s: dict[str, Any]) -> "AppUpdatesConfig":
+        if not isinstance(s, dict):
+            raise ConfigError("app_updates must be a table")
+        branch = _as_optional_str(s, "branch")
+        if branch and (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch)
+                       or ".." in branch or "//" in branch
+                       or branch.endswith(("/", ".", ".lock"))):
+            raise ConfigError("app_updates.branch must be a valid Git branch or tag")
+        service = _as_str(s, "service", "halobridge.service")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_@.-]*\.service", service):
+            raise ConfigError("app_updates.service must name a systemd service")
+        return cls(
+            enabled=_as_bool(s, "enabled", True),
+            check_interval_h=_as_int(s, "check_interval_h", 6),
+            branch=branch,
+            service=service,
+        )
+
+
+@dataclass
 class DashboardConfig:
     state_dir: Path = field(default_factory=lambda: DEFAULT_STATE_DIR)
     retention_days: int = 365
@@ -213,6 +241,7 @@ class Config:
     router: RouterConfig = field(default_factory=RouterConfig)
     models: ModelsConfig = field(default_factory=ModelsConfig)
     updates: UpdatesConfig = field(default_factory=UpdatesConfig)
+    app_updates: AppUpdatesConfig = field(default_factory=AppUpdatesConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     deploy: DeployConfig = field(default_factory=DeployConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
@@ -224,6 +253,7 @@ class Config:
             "router",
             "models",
             "updates",
+            "app_updates",
             "dashboard",
             "deploy",
             "security",
@@ -233,6 +263,7 @@ class Config:
             router=RouterConfig.from_section(data.get("router", {})),
             models=ModelsConfig.from_section(data.get("models", {})),
             updates=UpdatesConfig.from_section(data.get("updates", {})),
+            app_updates=AppUpdatesConfig.from_section(data.get("app_updates", {})),
             dashboard=DashboardConfig.from_section(data.get("dashboard", {})),
             deploy=DeployConfig.from_section(data.get("deploy", {})),
             security=SecurityConfig.from_section(data.get("security", {})),

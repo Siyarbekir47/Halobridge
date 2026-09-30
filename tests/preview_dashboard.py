@@ -21,8 +21,10 @@ def create_preview():
                client='OpenCode' if i % 3 else 'Open WebUI', input_tokens=1000+i*90,
                output_tokens=100+i*10, cached_tokens=800 if i % 2 else 0,
                status=200 if i % 9 else 499, duration_ms=3200+i*50)
+    insert(dashboard, request_id='preview-missing', completed_at=time.time() - 600,
+           input_tokens=None, output_tokens=None, cached_tokens=None, reasoning_tokens=None)
     async def snapshot():
-        return {'generated_at': time.time(), 'app': {'version': '0.1.11'},
+        return {'generated_at': time.time(), 'app': {'version': app_updates['current_version']},
                 'api': {'active_model': 'qwen3.8-flash', 'status': 'ok'},
                 'backend': {'status': 'ok', 'in_flight': 0, 'queued': 0, 'context': 262144,
                             'slots': 4, 'max_tokens_default': 8192, 'max_tokens_cap': 65536,
@@ -40,6 +42,29 @@ def create_preview():
         return web.json_response(updates)
     app.router.add_get('/dashboard/api/updates', update_status)
     app.router.add_post('/dashboard/api/updates/check', update_status)
+    # The self-update interaction is simulated; no installation or restart occurs.
+    app_updates = {'current_version': '0.1.19', 'latest_version': '0.1.20',
+                   'checked_at': time.time(), 'source_ref': 'develop',
+                   'update_available': True, 'up_to_date': False, 'running': False,
+                   'supported': True, 'can_install': True, 'job': None,
+                   'release_url': 'https://github.com/Siyarbekir47/Halobridge/blob/develop/CHANGELOG.md'}
+    app_poll_count = 0
+    async def app_update_status(request):
+        nonlocal app_poll_count
+        if request.match_info.get('action') == 'install':
+            data = await request.json()
+            assert data['version'] == '0.1.20'
+            assert request.headers.get('X-Halogen-Action') == 'update'
+            app_updates.update(running=True, can_install=False,
+                               job={'phase': 'installing', 'message': 'Installing the verified Halobridge version.', 'target_version': '0.1.20'})
+        elif app_updates['running']:
+            app_poll_count += 1
+            if app_poll_count >= 3:
+                app_updates.update(current_version='0.1.20', update_available=False, up_to_date=True,
+                                   running=False, job={'phase': 'succeeded', 'message': 'Halobridge was updated and the user service restarted.', 'target_version': '0.1.20'})
+        return web.json_response(app_updates)
+    app.router.add_get('/dashboard/api/app-updates', app_update_status)
+    app.router.add_post('/dashboard/api/app-updates/{action}', app_update_status)
     profile = profile_to_dict(official_template('0.13.2', PurePosixPath('/home/demo/models'), PurePosixPath('/home/demo/cache')))
     async def deploy(request):
         return web.json_response({'enabled': True, 'posix': True, 'quadlet_dir': '/home/demo/.config/containers/systemd',
