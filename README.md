@@ -263,7 +263,9 @@ or dark theme as it changes. Select **Light** or **Dark** to override it. Your
 choice is remembered in the browser and shared across open dashboard tabs.
 
 Close the incomplete token usage notice with its **×** button. It stays hidden
-during automatic refreshes until you change the reporting period or reload.
+across refreshes, reloads and reporting periods until a new request with missing
+token usage is recorded. The browser remembers which existing requests you
+acknowledged; complete requests do not make the notice reappear.
 
 The dashboard shows:
 

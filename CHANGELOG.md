@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.21
+
+- Keep token usage notices dismissed until a new incomplete request is recorded.
+
 ## 0.1.20
 
 - Add system-aware dark mode with manual theme selection.

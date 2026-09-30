@@ -28,7 +28,14 @@ const state = {period:'24h', from:null, to:null, page:1, pages:1, range:null, pi
 let analyticsController, analyticsSequence = 0, liveBusy = false, liveTimer, analyticsTimer, currentAnalytics;
 let updatesData, updatesTimer, updatesBusy = false, updateActionBusy = false, updateSequence = 0;
 let appUpdatesData, appUpdatesTimer, appUpdatesBusy = false, appUpdateActionBusy = false, appUpdateSequence = 0, appUpdatePending = false;
-let coverageDismissed = false;
+const coverageStorageKey = 'halobridge_coverage_dismissed_through';
+function readCoverageDismissal() {
+  try {
+    const value = Number(localStorage.getItem(coverageStorageKey));
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  } catch { return 0; }
+}
+let coverageDismissedThrough = readCoverageDismissal();
 let ckptArmed = false, ckptBusy = false, ckptRevertTimer;
 const expanded = new Set();
 const clientLabel = value => ['Unknown', 'Unbekannt'].includes(value) ? t('unknown_client') : value;
@@ -224,7 +231,7 @@ function renderAnalytics(data) {
   const messages = [];
   if (missing > 0) messages.push(t('coverage_missing', {reported: integer(s.usage_reported), total: integer(s.requests)}));
   if (s.legacy_requests > 0) messages.push(t('coverage_legacy', {count: integer(s.legacy_requests)}));
-  $('coverageNotice').hidden = coverageDismissed || messages.length === 0;
+  $('coverageNotice').hidden = messages.length === 0 || (s.coverage_latest_id > 0 && s.coverage_latest_id <= coverageDismissedThrough);
   $('coverageText').textContent = messages.join(' ');
   renderChart(data);
   renderHistory(data.history);
@@ -313,14 +320,22 @@ async function refreshAnalytics(clear = false) {
 }
 
 function changeRange(period, from = null, to = null) {
-  coverageDismissed = false;
   Object.assign(state, {period, from, to, page:1, pages:1, pinned:null});
   expanded.clear();
   refreshAnalytics(true);
 }
 $('dismissCoverage').addEventListener('click', () => {
-  coverageDismissed = true;
+  const observed = currentAnalytics?.summary.coverage_observed_id;
+  if (Number.isSafeInteger(observed) && observed >= 0) {
+    coverageDismissedThrough = Math.max(coverageDismissedThrough, readCoverageDismissal(), observed);
+    try { localStorage.setItem(coverageStorageKey, String(coverageDismissedThrough)); } catch {}
+  }
   $('coverageNotice').hidden = true;
+});
+window.addEventListener('storage', event => {
+  if (event.key !== coverageStorageKey && event.key !== null) return;
+  coverageDismissedThrough = readCoverageDismissal();
+  if (currentAnalytics) renderAnalytics(currentAnalytics);
 });
 $('period').addEventListener('change', event => {
   $('customRange').hidden = event.target.value !== 'custom';

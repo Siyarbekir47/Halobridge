@@ -596,6 +596,8 @@ class Dashboard:
             SELECT {TOKEN_AGGREGATES},
                 SUM(CASE WHEN status < 400 THEN 1 ELSE 0 END) AS successes,
                 SUM(CASE WHEN telemetry_version < {TELEMETRY_VERSION} THEN 1 ELSE 0 END) AS legacy_requests,
+                COALESCE(MAX(CASE WHEN measured_input IS NULL OR measured_output IS NULL THEN id END), 0) AS coverage_latest_id,
+                (SELECT COALESCE(MAX(id), 0) FROM requests) AS coverage_observed_id,
                 AVG(duration_ms) AS avg_duration_ms, AVG(ttft_ms) AS avg_ttfb_ms
             FROM measured
         """, (start, end)).fetchone()

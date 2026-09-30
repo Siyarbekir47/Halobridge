@@ -141,6 +141,35 @@ class AnalyticsTests(unittest.TestCase):
     def tearDown(self):
         self.dashboard.db.close()
 
+    def test_coverage_acknowledges_existing_requests_across_reporting_periods(self):
+        insert(self.dashboard, completed_at=1000, input_tokens=None)
+        insert(self.dashboard, completed_at=2000, output_tokens=None)
+        summary = self.dashboard._summary(0, 1500)
+        self.assertEqual(summary["coverage_latest_id"], 1)
+        self.assertEqual(summary["coverage_observed_id"], 2)
+        acknowledged = summary["coverage_observed_id"]
+        insert(self.dashboard, completed_at=1100)
+        refreshed = self.dashboard._summary(0, 1500)
+        self.assertEqual(refreshed["coverage_latest_id"], 1)
+        self.assertEqual(refreshed["coverage_observed_id"], 3)
+        self.assertLessEqual(self.dashboard._summary(0, 3000)["coverage_latest_id"], acknowledged)
+        insert(self.dashboard, completed_at=1200, output_tokens=None)
+        self.assertGreater(self.dashboard._summary(0, 1500)["coverage_latest_id"], acknowledged)
+
+    def test_coverage_acknowledgement_survives_pruning_and_database_reset(self):
+        insert(self.dashboard, input_tokens=None)
+        acknowledged = self.dashboard._summary(0, 20000)["coverage_observed_id"]
+        self.dashboard.db.execute("DELETE FROM requests")
+        self.dashboard.db.commit()
+        self.dashboard.db.execute("VACUUM")
+        self.assertEqual(self.dashboard._summary(0, 20000)["coverage_latest_id"], 0)
+        insert(self.dashboard, input_tokens=0, output_tokens=0, status=500)
+        self.assertEqual(self.dashboard._summary(0, 20000)["coverage_latest_id"], 0)
+        insert(self.dashboard, endpoint="/health", input_tokens=None)
+        self.assertEqual(self.dashboard._summary(0, 20000)["coverage_latest_id"], 0)
+        insert(self.dashboard, output_tokens=None)
+        self.assertGreater(self.dashboard._summary(0, 20000)["coverage_latest_id"], acknowledged)
+
     def test_missing_and_legacy_values_are_not_counted_as_zero(self):
         insert(self.dashboard)
         insert(self.dashboard, input_tokens=500, output_tokens=50, cached_tokens=None, reasoning_tokens=None)

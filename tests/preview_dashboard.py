@@ -33,8 +33,27 @@ def create_preview():
                            'disk_used_bytes': 420*1024**3, 'disk_total_bytes': 2000*1024**3},
                 'cache': {'pool': {'usage_ratio': .3}, 'model_bytes': {}}, 'active_requests': []}
     dashboard.snapshot = snapshot
+    original_page = dashboard.page
+    async def fixture_page(request):
+        response = await original_page(request)
+        response.text = response.text.replace('</main>', '''
+          <div class="controls" aria-label="Test fixture controls">
+            <form method="post" action="/preview/request/complete"><button>Add complete test request</button></form>
+            <form method="post" action="/preview/request/incomplete"><button>Add incomplete test request</button></form>
+          </div></main>''')
+        return response
+    dashboard.page = fixture_page
     app = web.Application()
     dashboard.register_routes(app)
+    async def fixture_request(request):
+        kind = request.match_info['kind']
+        if kind not in {'complete', 'incomplete'}:
+            raise web.HTTPBadRequest()
+        fields = {} if kind == 'complete' else dict(input_tokens=None, output_tokens=None,
+                                                   cached_tokens=None, reasoning_tokens=None)
+        insert(dashboard, request_id=f'fixture-{time.time_ns()}', completed_at=time.time(), **fields)
+        raise web.HTTPSeeOther(location='/dashboard')
+    app.router.add_post('/preview/request/{kind}', fixture_request)
     updates = {'current_version': '0.13.2', 'latest_version': '0.13.2', 'checked_at': time.time(),
                'configured_versions': {'qwen3.8-flash': '0.13.2'}, 'up_to_date': True, 'running': False,
                'supported': False, 'support_error': 'Updates require a Linux host with Podman and systemd under the router\'s user account.'}
