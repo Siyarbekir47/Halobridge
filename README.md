@@ -46,6 +46,9 @@ one-click container updates.
 
 ## Requirements
 
+Currently supported distributions: **Ubuntu** and **Fedora 44**. Other Linux
+distributions have not been tested.
+
 - A Linux host supported by
   [halogen-flash-server](https://github.com/peonist-ai/halogen-flash-server),
   with its recommended BIOS/UMA configuration
@@ -701,6 +704,16 @@ unchanged, so each browser can select its own language.
 - Use HTTPS via a reverse proxy if the dashboard is reachable over a network.
 - Keep Quadlet directories owned by the user running Halobridge.
 - Do not put secrets in query strings.
+
+## Credits
+
+- [Peonist (peonist-ai)](https://github.com/peonist-ai/halogen-flash-server)
+  for the Halogen engine, official checkpoints and shared model assets.
+- [UkisAI](https://huggingface.co/ukisai/Swift1.5-Qwen3.8-Flash-Next)
+  for the original Swift 1.5 fine-tune.
+- [Quat3rnion](https://huggingface.co/Quat3rnion/halogen-swift1.5-qwen3.8-flash-next-v2)
+  for the Halogen builds of Swift 1.5 and Swift 1.5 Abliterated.
+- **johnlockejrr** for providing diagnostics that helped bring Ubuntu support.
 
 ## License
 
