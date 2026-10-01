@@ -6,6 +6,8 @@
 - Share verified N-Gram, tokenizer and vision files across model profiles.
 - Add download previews, resumable installs and activation recovery.
 - Refresh API model discovery without restarting Halobridge.
+- Document Ubuntu and Fedora 44 support.
+- Credit model creators and Ubuntu diagnostics contributor johnlockejrr.
 
 ## 0.1.22
 
