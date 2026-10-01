@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.23
+
+- Add Swift 1.5 and Swift 1.5 Abliterated quick templates with vision.
+- Share verified N-Gram, tokenizer and vision files across model profiles.
+- Add download previews, resumable installs and activation recovery.
+- Refresh API model discovery without restarting Halobridge.
+
 ## 0.1.22
 
 - Limit checkpoint v2 upgrades and recovery to the official model profile.

@@ -42,6 +42,8 @@ class FieldSpec:
 ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_MODEL_ID": FieldSpec("text"),
     "HALOGEN_CHECKPOINT": FieldSpec("path"),
+    "HALOGEN_NGRAM_TABLE": FieldSpec("path"),
+    "HALOGEN_WEIGHTS_LOCK": FieldSpec("flag"),
     "HALOGEN_TOKENIZER": FieldSpec("path"),
     "HALOGEN_VISION_TOWER": FieldSpec("text"),
     "HALOGEN_MTP_HEAD": FieldSpec("path"),
@@ -260,7 +262,7 @@ def parse_quadlet(text: str, quadlet_path: Path | None = None) -> Profile:
             elif key == "ContainerName":
                 container_name = value
             elif key == "Volume":
-                parts = value.split(":")
+                parts = value.rsplit(":", 2)
                 if len(parts) >= 2:
                     mode = parts[2] if len(parts) > 2 else "rw"
                     volumes.append((parts[0], parts[1], mode))
@@ -439,3 +441,50 @@ def custom_template(image_tag: str, models_root: Path, cache_root: Path) -> Prof
             **_COMMON_RUNTIME_ENV,
         },
     )
+
+
+def bind_shared_assets(profile: Profile, locations: dict[str, str]) -> Profile:
+    """Read-only aliases for the single canonical table, tokenizer and tower."""
+    ngram = Path(locations["qwen38-flash-next-ngram.hgn"])
+    vision = Path(locations["qwen38-flash-next-vision.hgn"])
+    tokenizer = Path(locations["tokenizer/tokenizer.json"]).parent
+    aliases = {"/shared/ngram", "/shared/vision", "/shared/tokenizer"}
+    profile.volumes = [v for v in profile.volumes if v[1] not in aliases] + [
+        (str(ngram.parent), "/shared/ngram", "ro,z"),
+        (str(vision.parent), "/shared/vision", "ro,z"),
+        (str(tokenizer), "/shared/tokenizer", "ro,z"),
+    ]
+    profile.env["HALOGEN_NGRAM_TABLE"] = "/shared/ngram/" + ngram.name
+    profile.env["HALOGEN_TOKENIZER"] = "/shared/tokenizer"
+    if profile.env.get("HALOGEN_VISION_TOWER") != "0":
+        profile.env["HALOGEN_VISION_TOWER"] = "/shared/vision/" + vision.name
+    return profile
+
+
+def swift_quick_template(variant: str, models_root: Path, cache_root: Path,
+                         locations: dict[str, str], existing: Profile | None = None) -> Profile:
+    from swift_catalog import SWIFT_ENGINE_VERSION, variant_info
+    from semver import version_tuple
+    checkpoint = variant_info(variant)["checkpoint"]
+    env = {**_COMMON_RUNTIME_ENV, "HALOGEN_CTX": "262144",
+           "HALOGEN_KV_POOL_POSITIONS": "262144", "HALOGEN_KV_SLOTS": "2",
+           "HALOGEN_MAX_TOK": "8192", "HALOGEN_WEIGHTS_LOCK": "1",
+           "HALOGEN_SPEC_ADAPT": "0", "HALOGEN_TEMPERATURE": "1.0",
+           "HALOGEN_TOP_P": "0.95", "HALOGEN_TOP_K": "20"}
+    if existing:
+        env.update(existing.env)
+    env.update({"HALOGEN_MODEL_ID": "halogen-" + variant,
+                "HALOGEN_CHECKPOINT": "/models/" + checkpoint.name,
+                "HALOGEN_VISION_TOWER": "/shared/vision/qwen38-flash-next-vision.hgn"})
+    env.pop("HALOGEN_DOWNLOAD", None)
+    env.pop("HALOGEN_MTP_HEAD", None)
+    image = f"{OFFICIAL_IMAGE_REPO}:{SWIFT_ENGINE_VERSION}"
+    if existing and (version_tuple(existing.image.rsplit(":", 1)[-1]) or (0, 0, 0)) >= version_tuple(SWIFT_ENGINE_VERSION):
+        image = existing.image
+    volumes = [(str(models_root / variant), "/models", "ro,Z"),
+               (str(cache_root / variant), "/cache", "Z")]
+    if existing:
+        volumes[1] = next((v for v in existing.volumes if v[1] == "/cache"), volumes[1])
+        volumes += [v for v in existing.volumes if v[1] not in {"/models", "/cache"}]
+    return bind_shared_assets(Profile(variant, image, volumes,
+                                     existing.host_port if existing else 8831, env), locations)

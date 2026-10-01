@@ -83,11 +83,15 @@ function modelTab(assets) {
 $('profilesTab').addEventListener('click', () => modelTab(false));
 $('assetsTab').addEventListener('click', () => modelTab(true));
 $('quickModel').addEventListener('change', () => {
+  const swift = $('quickModel').value.startsWith('swift15');
   const uncensored = $('quickModel').value === 'uncensored';
   $('quickTokenField').hidden = !uncensored;
   $('quickHfAccessHint').hidden = !uncensored;
-  $('quickOfficialBtn').hidden = uncensored;
+  $('quickOfficialBtn').hidden = uncensored || swift;
   $('quickUncensoredBtn').hidden = !uncensored;
+  $('quickSwiftBtn').hidden = !swift;
+  $('quickNote').hidden = swift;
+  refreshSwiftPlan();
   resetDeployArm();
 });
 $('deployRefresh').addEventListener('click', () => { refreshDeploy(); startJobPoll(); });
@@ -732,6 +736,33 @@ $('resetConfirm').addEventListener('click', async () => {
 });
 // ---------- Deployment ----------
 let deployData = null, deployBusy = false, deployPreviewOk = false, deployArm = null, deployRevision = 0, editorReturnFocus;
+let swiftPlanData = null, swiftPlanSequence = 0;
+async function refreshSwiftPlan() {
+  const variant = $('quickModel').value, sequence = ++swiftPlanSequence;
+  swiftPlanData = null;
+  $('quickSwiftBtn').disabled = true;
+  $('swiftPlan').hidden = !variant.startsWith('swift15');
+  if ($('swiftPlan').hidden) return;
+  $('swiftPlan').textContent = t('swift_plan_loading');
+  try {
+    const data = await deployRequest(`/dashboard/api/deploy/quick/swift/plan?variant=${encodeURIComponent(variant)}`);
+    if (sequence !== swiftPlanSequence) return;
+    swiftPlanData = data;
+    renderSwiftPlan();
+  } catch (err) {
+    if (sequence === swiftPlanSequence) $('swiftPlan').textContent = err.message;
+  }
+}
+function renderSwiftPlan() {
+  if (!swiftPlanData) return;
+  const data = swiftPlanData;
+  const sufficient = (data.filesystems || []).every(fs => fs.sufficient);
+  $('quickSwiftBtn').disabled = !sufficient || deployBusy || deployData?.recovery_required;
+  const files = (data.files || []).map(file => `<tr><td><a href="${esc(file.url)}" target="_blank" rel="noopener noreferrer">${esc(file.name)}</a><small>${esc(file.path)}</small>${file.source_path && file.source_path !== file.path ? `<small>${esc(t('swift_source'))}: ${esc(file.source_path)}</small>` : ''}</td><td>${esc(t('swift_asset_' + file.status))}</td><td class="num">${esc(bytes(file.size))}</td></tr>`).join('');
+  const space = (data.filesystems || []).map(fs => `<p class="${fs.sufficient ? 'muted' : 'failure'}">${esc(fs.path)} · ${esc(t('swift_space', {free: bytes(fs.free_bytes), need: bytes(fs.required_bytes + fs.reserve_bytes)}))}</p>`).join('');
+  const presentBytes = (data.files || []).filter(f => f.status !== 'download').reduce((sum, f) => sum + f.size, 0);
+  $('swiftPlan').innerHTML = `<p><strong>${esc(t('swift_download', {size: bytes(data.download_bytes)}))}</strong> · ${esc(t('swift_existing', {size: bytes(presentBytes)}))} · <a href="${esc(data.model_card)}" target="_blank" rel="noopener noreferrer">${esc(t('swift_model_card'))}</a></p><p class="muted">${esc(t('swift_plan_note'))}</p>${space}<p class="muted shared-path">${esc(t('swift_shared_path'))}: ${esc(data.shared_root || '')}</p><details><summary>${esc(t('swift_files', {count: (data.files || []).length}))}</summary><div class="table-scroll"><table><thead><tr><th>${esc(t('swift_file'))}</th><th>${esc(t('swift_status'))}</th><th class="num">${esc(t('swift_size'))}</th></tr></thead><tbody>${files}</tbody></table></div><p class="muted">${esc(t('swift_unverified_note', {size: bytes(data.unverified_bytes)}))}</p></details>`;
+}
 const DEPLOY_ENV_FIELDS = [
   ['HALOGEN_CHECKPOINT', 'text', 'deploy_f_checkpoint'],
   ['HALOGEN_TOKENIZER', 'text', 'deploy_f_tokenizer'],
@@ -762,6 +793,8 @@ function setDeployBusy(busy) {
     if (['profilesTab', 'assetsTab', 'jobCancelBtn'].includes(button.id)) continue;
     button.disabled = busy || (button.id === 'deployApply' && !deployPreviewOk);
   }
+  if (swiftPlanData) renderSwiftPlan();
+  else $('quickSwiftBtn').disabled = true;
 }
 function setLanguageAvailability() {
   $('langSelect').disabled = localeLoading || deployBusy || updateActionBusy || appUpdateActionBusy || resetBusy;
@@ -836,7 +869,7 @@ function collectDeploy() {
   for (const row of $('deployMountRows').children) {
     const host = row.querySelector('.mount-host').value.trim();
     const container = row.querySelector('.mount-container').value.trim();
-    if (host && container) mounts.push([host, container, row.querySelector('.mount-ro').checked ? 'ro,Z' : 'Z']);
+    if (host && container) mounts.push([host, container, row.querySelector('.mount-ro').checked ? (container.startsWith('/shared/') ? 'ro,z' : 'ro,Z') : 'Z']);
   }
   return {
     profile_id: $('df_profile_id').value.trim(),
@@ -904,6 +937,7 @@ function renderDeploy() {
   }).join('');
   $('deployList').innerHTML = rows || `<p class="muted">${esc(t('deploy_none'))}</p>`;
   $('deployEnvKeys').innerHTML = (deployData.env_keys || []).map(k => `<option value="${k}"></option>`).join('');
+  if (swiftPlanData) renderSwiftPlan();
 }
 async function deployReload() {
   try { await deployRequest('/dashboard/api/deploy/reload', {method: 'POST', headers: {'X-Halogen-Action': 'deploy'}}); refreshLive(); } catch { /* reload optional */ }
@@ -1052,6 +1086,10 @@ async function pollJob() {
       jobTimer = setTimeout(pollJob, 2000);
     } else if (job.kind === 'hf-install') {
       await refreshHf();
+    } else if (job.kind.startsWith('quick-')) {
+      await refreshDeploy();
+      await refreshSwiftPlan();
+      refreshLive();
     }
   } catch { jobTimer = setTimeout(pollJob, 5000); }
   finally { jobBusy = false; }
@@ -1120,6 +1158,10 @@ $('quickUncensoredBtn').addEventListener('click', () => {
     finally { setDeployBusy(false); resetDeployArm(); }
   }, t('quick_confirm'));
 });
+$('quickSwiftBtn').addEventListener('click', async () => {
+  if (!swiftPlanData || $('quickSwiftBtn').disabled) return;
+  await startModelJob('/dashboard/api/deploy/quick/swift', {variant: $('quickModel').value});
+});
 $('convBtn').addEventListener('click', async () => {
   await startModelJob('/dashboard/api/deploy/convert', {image: $('convImage').value.trim(), gguf: $('convGguf').value.trim(), output: $('convOut').value.trim(), download_head: $('convHead').checked});
 });
@@ -1177,6 +1219,7 @@ async function switchLanguage(lang) {
     }
     if (liveData) renderLive(liveData);
     if (currentAnalytics) renderAnalytics(currentAnalytics);
+    if (swiftPlanData) renderSwiftPlan();
     await Promise.all([refreshLive(), refreshAnalytics(), refreshUpdates(), refreshAppUpdates(), refreshDeploy(), pollJob()]);
   } catch {
     if (sequence !== localeSequence) return;

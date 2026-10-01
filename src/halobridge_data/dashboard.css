@@ -260,3 +260,8 @@ body:has(#analytics[aria-busy="true"]) .metrics { opacity: .55; }
   .detail-grid { gap: 18px; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+/* Shared assets use the existing table and text hierarchy in both themes. */
+.shared-plan { margin-top: 1rem; }
+.shared-plan td:first-child { min-width: 16rem; }
+.shared-plan td small { display: block; overflow-wrap: anywhere; max-width: 46rem; }
+.shared-path { overflow-wrap: anywhere; }

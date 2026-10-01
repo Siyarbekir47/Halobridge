@@ -358,6 +358,11 @@ class ContainerUpdater:
             return info
         models_path = Path(models_host)
         v2_present = self._v2_files_present(models_path)
+        if profile.env.get("HALOGEN_NGRAM_TABLE"):
+            from shared_assets import host_path
+            table = host_path(profile, profile.env["HALOGEN_NGRAM_TABLE"])
+            v2_present = ((models_path / "qwen38-flash-next-v2.hgn").is_file()
+                          and table is not None and table.is_file())
         if current == LEGACY_W4B_PATH:
             on_legacy = True
         elif current is None:
@@ -376,11 +381,14 @@ class ContainerUpdater:
         free_gib = self._free_gib(models_path)
         info["free_gib"] = round(free_gib, 1) if free_gib is not None else None
         if info["needs_download"]:
-            info["download_gib"] = CHECKPOINT_DOWNLOAD_GIB
-            if free_gib is None or free_gib < CHECKPOINT_MIN_FREE_GIB:
+            shared_table = profile.env.get("HALOGEN_NGRAM_TABLE") and table is not None and table.is_file()
+            download_gib = 63 if shared_table else CHECKPOINT_DOWNLOAD_GIB
+            minimum_free = download_gib + 5 if shared_table else CHECKPOINT_MIN_FREE_GIB
+            info["download_gib"] = download_gib
+            if free_gib is None or free_gib < minimum_free:
                 info["available"] = True
                 info["blocked_reason"] = (
-                    "Not enough free disk space for the ~110 GiB checkpoint download."
+                    f"Not enough free disk space for the ~{download_gib} GiB checkpoint download."
                 )
                 return info
         info["available"] = True
@@ -723,6 +731,8 @@ class ContainerUpdater:
         raise UpdateError("Backend did not become ready with the expected API/engine version and capability probe.")
 
     async def _restart(self, model: str, timeout: float | None = None) -> None:
+        if getattr(self.manager, "asset_validator", None):
+            await self.manager.asset_validator(model)
         # Stop + wait for GTT release avoids starting a second model over memory
         # still held by the driver. The router admission gate stays closed.
         start_timeout = timeout if timeout is not None else self.start_timeout
@@ -828,6 +838,8 @@ class ContainerUpdater:
         await self._run("systemctl", "--user", "stop", *self.models.values(), timeout=self.stop_timeout)
         await self.manager.wait_for_gtt_release()
         await self._run("systemctl", "--user", "reset-failed", self.models[model])
+        if getattr(self.manager, "asset_validator", None):
+            await self.manager.asset_validator(model)
         await self._run("systemctl", "--user", "start", self.models[model], timeout=self.start_timeout)
         await self._ready(model, self.job["old_version"], self.job["old_image_id"])
         self.manager.current_model = model

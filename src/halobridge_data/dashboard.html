@@ -22,7 +22,7 @@
   <div class="sidebar-bottom">
     <div class="sidebar-preference"><label for="themeSelect" data-i18n="theme_label">Appearance</label><select id="themeSelect" aria-label="Appearance" data-i18n-attr="aria-label:theme_label"><option value="system" data-i18n="theme_system">System</option><option value="light" data-i18n="theme_light">Light</option><option value="dark" data-i18n="theme_dark">Dark</option></select></div>
     <div class="sidebar-preference"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect" aria-label="Language" data-i18n-attr="aria-label:lang_label"><option value="en">English</option><option value="de">Deutsch</option></select></div>
-    <small>Halobridge <span id="appVersion">v0.1.22</span></small>
+    <small>Halobridge <span id="appVersion">v0.1.23</span></small>
   </div>
 </aside>
 <main class="shell" id="mainContent" tabindex="-1">
@@ -99,7 +99,7 @@
 
 <div class="section-head"><h2 data-i18n="installed_models">Installed models</h2><button id="deployRefresh" data-i18n="refresh_models">Refresh</button></div>      <div id="deployList"><p>–</p></div>
       <div id="quickDeploy" class="quick-deploy" hidden>
-        <h2 data-i18n="quick_title">Install a model</h2><label for="quickModel" class="muted" data-i18n="choose_model">Model to install</label><select id="quickModel"><option value="official" data-i18n="model_official">Official model</option><option value="uncensored" data-i18n="model_uncensored">Uncensored model</option></select>
+        <h2 data-i18n="quick_title">Install a model</h2><label for="quickModel" class="muted" data-i18n="choose_model">Model to install</label><select id="quickModel"><option value="official" data-i18n="model_official">Official model</option><option value="uncensored" data-i18n="model_uncensored">Uncensored model</option><option value="swift15">Swift 1.5</option><option value="swift15-abliterated">Swift 1.5 Abliterated</option></select>
         <div class="deploy-fields">
           <label id="quickTokenField" hidden><span data-i18n="hf_token">HF token — READ only required</span><input id="quickHfToken" type="password" autocomplete="off" autocapitalize="off"></label>
         </div>
@@ -107,8 +107,10 @@
         <div class="deploy-actions">
           <button type="button" id="quickOfficialBtn" class="primary" data-i18n="quick_official">Install official model</button>
           <button type="button" id="quickUncensoredBtn" hidden data-i18n="quick_uncensored">Install uncensored model</button>
+          <button type="button" id="quickSwiftBtn" class="primary" hidden disabled data-i18n="quick_swift">Install Swift model</button>
         </div>
-        <p class="muted" data-i18n="quick_note">Official downloads about 118 GiB on first start. Uncensored downloads the GGUF, converts it, then starts. Halobridge serves one backend at a time: installing pauses the currently active model and starts the new one afterwards. On failure it rolls back to the previous model automatically.</p>
+        <div id="swiftPlan" class="shared-plan" role="status" hidden></div>
+        <p id="quickNote" class="muted" data-i18n="quick_note">Official downloads its checkpoint on first start. Uncensored downloads and converts the GGUF. Tokenizer, vision and N-Gram files are shared by all profiles.</p>
       </div>
 
       <details id="deployNew"><summary data-i18n="custom_profile">Configure a profile manually</summary><div class="deploy-new">
@@ -116,6 +118,8 @@
         <select id="deployTemplate">
           <option value="official" data-i18n="deploy_tpl_official">Official (preconfigured, weights on disk)</option>
           <option value="uncensored" data-i18n="deploy_tpl_uncensored">Uncensored (OrcaRouter IQ4_XS)</option>
+          <option value="swift15-quick">Swift 1.5</option>
+          <option value="swift15-abliterated-quick">Swift 1.5 Abliterated</option>
           <option value="custom" data-i18n="deploy_tpl_custom">Custom model (GGUF or .hgn files)</option>
         </select>
         <button type="button" id="deployLoadTemplate" data-i18n="deploy_load_template">Edit template</button>

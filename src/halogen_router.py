@@ -334,6 +334,8 @@ class ModelManager:
         )
 
     async def start_service(self, model: str, start_timeout: Optional[float] = None) -> None:
+        if getattr(self, "asset_validator", None):
+            await self.asset_validator(model)
         service = self.models[model]
 
         await self.run_command(
@@ -413,6 +415,9 @@ class ModelManager:
         if old_model == target_model:
             return
 
+        if getattr(self, "asset_validator", None):
+            await self.asset_validator(target_model)
+
         LOG.info(
             "Model switch: %s -> %s",
             old_model,
@@ -468,6 +473,7 @@ class ModelManager:
         target_model: str,
         hook: Optional[Callable[[], Awaitable[None]]] = None,
         start_timeout: Optional[float] = None,
+        before_stop: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> None:
         """Stop the current backend and release the GPU, run an optional async
         ``hook`` (e.g. a one-shot convert container), then start
@@ -491,12 +497,19 @@ class ModelManager:
                 self._check_maintenance()
             self.switching = True
             self.switch_target = target_model
-            while self.active_requests > 0:
-                await self.condition.wait()
 
         old_model = self.current_model
+        backend_stopped = False
         try:
+            async with self.condition:
+                while self.active_requests > 0:
+                    await self.condition.wait()
+            if before_stop is not None:
+                await before_stop()
+            if getattr(self, "asset_validator", None):
+                await self.asset_validator(target_model)
             await self.wait_for_backend_idle()
+            backend_stopped = True
             if old_model in self.models:
                 await self.stop_service(old_model)
             else:
@@ -514,13 +527,14 @@ class ModelManager:
                 old_model,
             )
             try:
-                if target_model in self.models and await self.service_is_active(
+                if backend_stopped and target_model in self.models and await self.service_is_active(
                     self.models[target_model]
                 ):
                     await self.stop_service(target_model)
-                await self.wait_for_gtt_release()
-                if old_model in self.models:
-                    await self.start_service(old_model)
+                if backend_stopped:
+                    await self.wait_for_gtt_release()
+                    if old_model in self.models:
+                        await self.start_service(old_model)
             except Exception:
                 LOG.exception("Rollback to %s failed", old_model)
             async with self.condition:
@@ -643,7 +657,8 @@ class ModelManager:
 
 async def list_models(request: web.Request) -> web.Response:
     created = int(time.time())
-    models = request.app.get("models", MODELS)
+    manager = request.app.get("manager")
+    models = manager.models if manager is not None else request.app.get("models", MODELS)
 
     return web.json_response(
         {
@@ -1059,9 +1074,16 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
             gtt_limit_bytes=config.router.gtt_limit_bytes,
         )
         updater = ContainerUpdater(manager, session, models, config=config)
+        deploy_manager = DeployManager(manager, config, updater=updater)
+        manager.asset_validator = deploy_manager.assets.validate_start
         if models:
             await updater.recover_on_startup()
-            if not updater.recovery_required:
+        if not updater.recovery_required:
+            await deploy_manager.recover_swift_on_startup()
+        models = manager.models
+        specs, skipped, _ = resolve_models(config)
+        if models:
+            if not updater.recovery_required and not deploy_manager.recovery_required:
                 await manager.initialize()
         else:
             LOG.warning(
@@ -1085,7 +1107,7 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
         await session.close()
         raise
 
-    deploy_manager = DeployManager(manager, config, updater=updater, dashboard=dashboard)
+    deploy_manager.dashboard = dashboard
     deploy_routes = DeployRoutes(deploy_manager)
     app_updater = AppUpdater(manager, session, config=config,
                              container_updater=updater, deploy_manager=deploy_manager)
@@ -1128,6 +1150,10 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
             return await handler(request)
         if app_updater.running:
             raise web.HTTPConflict(text="Halobridge is updating. Wait before starting another operation.")
+        if request.path.startswith("/dashboard/api/updates/") and (
+                deploy_manager.recovery_required or deploy_manager.deploy_lock.locked()
+                or (deploy_manager.job and deploy_manager.job.get("state") == "running")):
+            raise web.HTTPConflict(text="Model installation or recovery is in progress.")
         # Register admission before body parsing or service probes can yield.
         # A self-update cannot start while an earlier operation is suspended.
         app_updater.operation_requests += 1
@@ -1148,6 +1174,9 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     app.router.add_route("*", "/{tail:.*}", proxy_request)
 
     async def close_session(_: web.Application) -> None:
+        if deploy_manager._job_task and not deploy_manager._job_task.done():
+            deploy_manager._job_task.cancel()
+            await asyncio.gather(deploy_manager._job_task, return_exceptions=True)
         await app_updater.close()
         await updater.close()
         await dashboard.close()

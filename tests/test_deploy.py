@@ -514,6 +514,12 @@ class QuickDeployTests(PosixTestCase):
         self._dir = tempfile.TemporaryDirectory()
         self.tmp = Path(self._dir.name)
         self.deploy = make_manager(self.tmp)
+        locations = self.deploy.assets.locations()
+        for value in locations.values():
+            path = Path(value)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"fixture asset")
+        self.deploy.assets.prepare = AsyncMock(return_value=locations)
 
     def tearDown(self):
         self._dir.cleanup()
@@ -734,7 +740,8 @@ class QuickDeployTests(PosixTestCase):
                 )
             )
         joined = [" ".join(s) for s in streams]
-        self.assertTrue(any("tokenizer/*" in j for j in joined))
+        self.deploy.assets.prepare.assert_awaited_once()
+        self.assertFalse(any("tokenizer/*" in j for j in joined))
         self.assertFalse(any("orcarouter" in j for j in joined))  # no gguf download
         self.assertEqual(self.deploy.job["state"], "done")
 

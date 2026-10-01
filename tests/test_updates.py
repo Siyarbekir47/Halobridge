@@ -185,6 +185,33 @@ class TransactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(starts, [("systemctl", "--user", "start", MODELS[MODEL])])
         self.assertFalse(self.updater.status()["update_available"])
 
+    async def test_engine_update_preserves_all_four_profiles_and_shared_mounts(self):
+        from profiles import official_template, uncensored_template, swift_quick_template, bind_shared_assets, render_quadlet
+        from shared_assets import SharedAssets
+        additions = {"halogen-swift15": "halogen-swift15.service",
+                     "halogen-swift15-abliterated": "halogen-swift15-abliterated.service"}
+        locations = SharedAssets(self.root / "models", self.quadlets, self.root / "state").locations()
+        with patch.dict(MODELS, additions), patch("test_updates.OLD", "0.15.1"), patch("test_updates.NEW", "0.15.2"):
+            profiles = [bind_shared_assets(official_template(OLD, self.root / "models", self.root / "cache"), locations),
+                        bind_shared_assets(uncensored_template(OLD, self.root / "models", self.root / "cache"), locations)]
+            profiles += [swift_quick_template(variant, self.root / "models", self.root / "cache", locations)
+                         for variant in ("swift15", "swift15-abliterated")]
+            originals = {}
+            for profile in profiles:
+                path = self.quadlets / f"halogen-{profile.profile_id}.container"
+                originals[path] = render_quadlet(profile).encode() + b"# custom service\nRestartSec=17\n"
+                path.write_bytes(originals[path])
+            self.manager.models = dict(MODELS)
+            self.updater.models = dict(MODELS)
+            self.running_version = self.updater.current_version = OLD
+            self.updater.latest_version = NEW
+            await self.execute()
+            self.assertEqual(self.updater.job["phase"], "succeeded", self.updater.job)
+            for path, original in originals.items():
+                self.assertEqual(path.read_bytes(), original.replace(f":{OLD}".encode(), f":{NEW}".encode()))
+            starts = [c for c in self.commands if c[:3] == ("systemctl", "--user", "start")]
+            self.assertEqual(starts, [("systemctl", "--user", "start", MODELS[MODEL])])
+
     async def test_backup_retention_prunes_old_backups(self):
         self.updater.backup_keep = 2
         self.updater.backup_root.mkdir(parents=True, exist_ok=True)
@@ -550,6 +577,31 @@ class CheckpointUpgradeTests(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaises(web.HTTPConflict):
                         await self.updater.start_checkpoint()
                 self.assertEqual(uncensored.read_bytes(), content)
+
+    async def test_swift_is_never_changed_by_official_checkpoint_upgrade(self):
+        from profiles import swift_quick_template, render_quadlet
+        from shared_assets import SharedAssets
+        additions = {"halogen-swift15": "halogen-swift15.service",
+                     "halogen-swift15-abliterated": "halogen-swift15-abliterated.service"}
+        locations = SharedAssets(self.models, self.quadlets, self.root / "state").locations()
+        with patch.dict(MODELS, additions):
+            self.manager.models = dict(MODELS)
+            self.updater.models = dict(MODELS)
+            originals = {}
+            for variant in ("swift15", "swift15-abliterated"):
+                path = self.quadlets / f"halogen-{variant}.container"
+                originals[path] = render_quadlet(swift_quick_template(variant, self.models, self.root / "cache", locations)).encode()
+                path.write_bytes(originals[path])
+                self.manager.current_model = self.running_model = "halogen-" + variant
+                self.assertFalse(self.updater._checkpoint_info()["available"])
+                with self.assertRaises(web.HTTPConflict):
+                    await self.updater.start_checkpoint()
+            self.manager.current_model = self.running_model = MODEL
+            with self.patch_disk(self.free_gib):
+                await self.execute()
+            self.assertEqual(self.updater.job["phase"], "succeeded", self.updater.job)
+            for path, original in originals.items():
+                self.assertEqual(path.read_bytes(), original)
 
     async def test_model_switch_before_upgrade_task_leaves_both_profiles_unchanged(self):
         originals = {path: path.read_bytes() for path in self.updater._paths().values()}

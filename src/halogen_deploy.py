@@ -46,7 +46,11 @@ from profiles import (
     uncensored_quick_template,
     uncensored_template,
     validate_profile,
+    swift_quick_template,
+    bind_shared_assets,
 )
+from shared_assets import SharedAssets
+from swift_install import SwiftInstallMixin
 
 logger = logging.getLogger("halobridge.deploy")
 
@@ -112,7 +116,7 @@ def _hf_download_env(token: str | None = None) -> dict[str, str]:
     return env
 
 
-class DeployManager:
+class DeployManager(SwiftInstallMixin):
     def __init__(
         self,
         manager: Any,
@@ -129,6 +133,10 @@ class DeployManager:
         self.deploy_lock = asyncio.Lock()
         self.job: dict | None = None
         self._job_task: asyncio.Task | None = None
+        self.recovery_required = False
+        self.swift_journal = Path(config.dashboard.state_dir) / "swift-install.json"
+        self.assets = SharedAssets(self._default_roots()[0], self.quadlet_dir,
+                                   Path(config.dashboard.state_dir), self._validate_host_path)
 
     # ------------------------------------------------------------------ state
 
@@ -144,6 +152,7 @@ class DeployManager:
             "backups": self._backup_names(),
             "active_model": self.manager.current_model,
             "deploying": self.deploy_lock.locked(),
+            "recovery_required": self.recovery_required,
         }
 
     async def list_profiles(self) -> list[dict]:
@@ -178,8 +187,13 @@ class DeployManager:
             profile = uncensored_quick_template(tag, models_root, cache_root)
         elif kind == "custom":
             profile = custom_template(tag, models_root, cache_root)
+        elif kind in {"swift15-quick", "swift15-abliterated-quick"}:
+            profile = swift_quick_template(kind.removesuffix("-quick"), models_root,
+                                           cache_root, self.assets.locations())
         else:
             raise DeployError(f"Unknown template: {kind}")
+        if kind in {"official", "uncensored", "official-quick", "uncensored-quick"}:
+            bind_shared_assets(profile, self.assets.locations())
         return {
             "template": kind,
             "profile": profile_to_dict(profile),
@@ -322,6 +336,7 @@ class DeployManager:
         if not target.exists():
             raise DeployError(f"No Quadlet for profile {profile_id}")
         profile = parse_quadlet(target.read_text(encoding="utf-8"), target)
+        await self.assets.validate_start(profile.model_id)
         await self._run(
             "systemctl", "--user", "start", profile.service_name, timeout=900
         )
@@ -348,7 +363,7 @@ class DeployManager:
         if self.updater is not None:
             self.updater.models = discovered
         if self.dashboard is not None:
-            self.dashboard.models = discovered
+            self.dashboard.reload_models(discovered, specs)
         return {"ok": True, "models": sorted(discovered)}
 
     # ------------------------------------------------- HF download & convert
@@ -655,32 +670,28 @@ class DeployManager:
         self._require_enabled()
         if await self._service_is_active("halogen-official.service"):
             health = await self.manager.backend_health()
-            if health and health.get("model") == "qwen3.8-flash":
+            healthy = health and health.get("status") == "ok" and health.get("model") == "qwen3.8-flash"
+            if healthy and self.assets.profile_ready("qwen3.8-flash"):
                 return {
                     "ok": True,
                     "already": True,
                     "service": "halogen-official.service",
                 }
-            model_id = next(
-                (
-                    model
-                    for model, service in self.manager.models.items()
-                    if service == "halogen-official.service"
-                ),
-                "qwen3.8-flash",
-            )
-            self._start_pipeline_job("quick-official", 1)
-            self._job_task = asyncio.create_task(
-                self._track_active_official(model_id)
-            )
-            return {
-                "ok": True,
-                "kind": "quick-official",
-                "already_running": True,
-            }
+            if not healthy:
+                return self._track_official_job()
         self._start_pipeline_job("quick-official", 2)
         self._job_task = asyncio.create_task(self._run_quick_official())
         return {"ok": True, "kind": "quick-official"}
+
+    def _track_official_job(self) -> dict:
+        model_id = next(
+            (model for model, service in self.manager.models.items()
+             if service == "halogen-official.service"),
+            "qwen3.8-flash",
+        )
+        self._start_pipeline_job("quick-official", 1)
+        self._job_task = asyncio.create_task(self._track_active_official(model_id))
+        return {"ok": True, "kind": "quick-official", "already_running": True}
 
     async def _track_active_official(self, model_id: str) -> None:
         self.job["step"] = 1
@@ -710,18 +721,45 @@ class DeployManager:
     async def _run_quick_official(self) -> None:
         try:
             self.job["step"] = 1
+            locations = await self.assets.prepare(None, self._download_asset, self._append_job_line)
             self._append_job_line("--- Apply official profile ---")
             target = self.quadlet_dir / "halogen-official.container"
             if not target.exists():
                 tag = self._suggested_tag()
                 models_root, cache_root = self._default_roots()
                 profile = official_quick_template(tag, models_root, cache_root)
+                # New installs isolate checkpoints from the canonical shared tree.
+                profile.volumes[0] = (str(models_root / "official"), "/models", "Z")
+                bind_shared_assets(profile, locations)
                 payload = profile_to_dict(profile)
                 self.install_dirs(payload)
                 preview = self.dry_run(payload)
                 if not preview["ok"]:
                     raise DeployError("; ".join(preview["errors"]))
                 await self.apply(payload)
+            else:
+                from swift_install import shared_quadlet_content
+                content = target.read_text(encoding="utf-8")
+                shared = shared_quadlet_content(content, locations)
+                if content != shared:
+                    self._backup_existing(target)
+                    self._atomic_write(target, shared.encode())
+                    await self._daemon_reload()
+            # The official entrypoint's fresh-checkpoint plan also probes the
+            # tower beside the checkpoint. Link the verified shared tower there
+            # so first start never fetches a second copy.
+            from shared_assets import host_path
+            profile = parse_quadlet(target.read_text(encoding="utf-8"), target)
+            model_dir = host_path(profile, "/models")
+            vision = Path(locations["qwen38-flash-next-vision.hgn"])
+            alias = model_dir / vision.name
+            if not alias.exists() and not alias.is_symlink():
+                alias.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.link(vision, alias)
+                except OSError:
+                    # Relative to the container path, independent of host roots.
+                    alias.symlink_to("/shared/vision/" + vision.name)
             self.reload_discovery()
             model_id = parse_quadlet(target.read_text(encoding="utf-8"), target).model_id
             self.job["step"] = 2
@@ -746,6 +784,7 @@ class DeployManager:
         label: str,
         hook=None,
         start_timeout: float = QUICK_START_TIMEOUT,
+        before_stop=None,
     ) -> None:
         """Run a takeover while forwarding service logs and emitting a heartbeat."""
         stop = asyncio.Event()
@@ -757,9 +796,10 @@ class DeployManager:
             else None
         )
         try:
-            await self.manager.switch_with_hook(
-                model_id, hook, start_timeout=start_timeout
-            )
+            options = {"start_timeout": start_timeout}
+            if before_stop is not None:
+                options["before_stop"] = before_stop
+            await self.manager.switch_with_hook(model_id, hook, **options)
         finally:
             stop.set()
             hb.cancel()
@@ -826,7 +866,8 @@ class DeployManager:
 
     async def quick_uncensored(self, payload: dict) -> dict:
         self._require_enabled()
-        if await self._service_is_active("halogen-uncensored.service"):
+        if (await self._service_is_active("halogen-uncensored.service")
+                and self.assets.profile_ready("qwen3.8-flash-uncensored")):
             return {"ok": True, "already": True, "service": "halogen-uncensored.service"}
         token = str(payload.get("token", "")).strip()
         tag = self._suggested_tag()
@@ -836,11 +877,10 @@ class DeployManager:
         uncensored_dir.mkdir(parents=True, exist_ok=True)
         gguf = uncensored_dir / UNCENSORED_DEFAULT_GGUF_NAME
         output = uncensored_dir / UNCENSORED_DEFAULT_OUTPUT
-        tokenizer_dir = uncensored_dir / "tokenizer"
         need_gguf = not output.exists()
         # The tokenizer is needed at runtime even when the .hgn already exists,
         # so a partial earlier install (weights but no tokenizer) is repaired.
-        need_tokenizer = not tokenizer_dir.is_dir() or not any(tokenizer_dir.iterdir())
+        need_tokenizer = False  # All six files are verified in the shared preparation step.
         # A token is only needed when we still have to download the GGUF.
         if need_gguf and not token:
             raise DeployError(
@@ -873,7 +913,9 @@ class DeployManager:
         need_tokenizer: bool,
     ) -> None:
         try:
+            need_tokenizer = False
             step = 1
+            locations = await self.assets.prepare(None, self._download_asset, self._append_job_line)
             if need_gguf or need_tokenizer:
                 if not self._hf_executable():
                     self.job["step"] = step
@@ -922,30 +964,16 @@ class DeployManager:
                     )
                     step += 1
 
-                if need_tokenizer:
-                    self.job["step"] = step
-                    self._append_job_line("--- Download tokenizer ---")
-                    await self._run_stream(
-                        [
-                            hf,
-                            "download",
-                            OFFICIAL_WEIGHTS_REPO,
-                            "--include",
-                            "tokenizer/*",
-                            "--local-dir",
-                            str(uncensored_dir),
-                        ],
-                        _hf_download_env(),
-                        timeout=3600,
-                    )
-                    step += 1
-
             # Apply the profile and refresh discovery while the current backend
             # keeps serving; this does not touch the GPU.
             self.job["step"] = step
             self._append_job_line("--- Apply uncensored profile ---")
             models_root, cache_root = self._default_roots()
             profile = uncensored_quick_template(tag, models_root, cache_root)
+            target = self.quadlet_dir / "halogen-uncensored.container"
+            if target.exists():
+                profile = parse_quadlet(target.read_text(encoding="utf-8"), target)
+            bind_shared_assets(profile, locations)
             profile_payload = profile_to_dict(profile)
             self.install_dirs(profile_payload)
             preview = self.dry_run(profile_payload)
@@ -961,7 +989,7 @@ class DeployManager:
             # the switch rolls back to the previous backend.
             self.job["step"] = step
             self._append_job_line("--- Stop active backend and start uncensored ---")
-            image = f"ghcr.io/peonist-ai/halogen-flash-server:{tag}"
+            image = profile.image
 
             async def convert_hook() -> None:
                 if output.exists():
@@ -1241,6 +1269,11 @@ class DeployRoutes:
         self.manager = manager
 
     def _guard(self, request: web.Request) -> None:
+        job = self.manager.job or {}
+        if (self.manager.recovery_required or
+                (job.get("state") == "running" and job.get("kind", "").startswith("quick-swift"))):
+            if request.path != "/dashboard/api/deploy/job/cancel":
+                raise DeployError("Swift installation or recovery is in progress")
         expected = f"http://{request.headers.get('Host', '')}"
         origin = request.headers.get("Origin")
         if origin is not None and origin != expected:
@@ -1429,6 +1462,23 @@ class DeployRoutes:
         except Exception as exc:
             return self._error(exc, 500)
 
+    async def api_swift_plan(self, request: web.Request) -> web.Response:
+        try:
+            return web.json_response(self.manager.swift_plan(request.query.get("variant", "")))
+        except ValueError as exc:
+            return self._error(DeployError(str(exc)), 400)
+        except Exception as exc:
+            return self._error(exc, 500)
+
+    async def api_quick_swift(self, request: web.Request) -> web.Response:
+        try:
+            self._guard(request)
+            return web.json_response(await self.manager.quick_swift(await self._payload(request)), status=202)
+        except ValueError as exc:
+            return self._error(DeployError(str(exc)), 400)
+        except Exception as exc:
+            return self._error(exc, 500)
+
     def register_routes(self, app: web.Application) -> None:
         app.router.add_get("/dashboard/api/deploy", self.api_status)
         app.router.add_get("/dashboard/api/deploy/template/{kind}", self.api_template)
@@ -1449,6 +1499,8 @@ class DeployRoutes:
         app.router.add_post("/dashboard/api/deploy/convert", self.api_convert)
         app.router.add_post("/dashboard/api/deploy/verify", self.api_verify)
         app.router.add_post("/dashboard/api/deploy/quick/official", self.api_quick_official)
+        app.router.add_get("/dashboard/api/deploy/quick/swift/plan", self.api_swift_plan)
+        app.router.add_post("/dashboard/api/deploy/quick/swift", self.api_quick_swift)
         app.router.add_post(
             "/dashboard/api/deploy/quick/uncensored", self.api_quick_uncensored
         )

@@ -147,9 +147,10 @@ In the dashboard:
 
 Halobridge creates the Quadlet, pulls the pinned official container image,
 downloads the model on first start and streams the progress into the dashboard.
-The download is about 118 GiB and resumes if interrupted. The tokenizer,
-quality overlay and vision tower come from the official weights repository;
-image input is enabled by default. Later starts reuse the files on disk.
+The tokenizer, vision tower and separate v2 N-Gram table are prepared in the
+shared directory before activation. The official checkpoint downloads on first
+start and resumes if interrupted; the selected engine/checkpoint determines
+its size. Image input is enabled by default. Later starts reuse files on disk.
 
 The container engine and model format belong to
 [peonist-ai/halogen-flash-server](https://github.com/peonist-ai/halogen-flash-server).
@@ -321,26 +322,33 @@ at it. You do not have to stop the running model by hand first.
 <p align="center"><em>Models — installed profiles, active backend state and one-click model installation.</em></p>
 
 - **Official model** — one click installs the official profile and starts it.
-  The first start downloads the upstream weights (~118 GiB) through
-  `HALOGEN_DOWNLOAD`; later starts are offline. The downloaded vision tower is
+  The first start downloads the upstream checkpoint through
+  `HALOGEN_DOWNLOAD`; verified shared files are prepared first. The vision tower is
   enabled by default, so the resulting backend accepts image inputs. If a
-  profile already exists, the existing one is started instead of being
-  overwritten.
+  profile already exists, its checkpoint and runtime settings are preserved;
+  shared asset bindings are connected to the canonical directory.
 - **Uncensored model** — paste a Hugging Face read token and click once.
   Before the first download, sign in to Hugging Face, open the
   [gated OrcaRouter repository](https://huggingface.co/orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF),
   accept its terms or request access, and wait for approval. Then create a
   READ token from the same account. A valid token alone is not enough if that
   account has not been granted repository access. Halobridge downloads the
-  uncensored GGUF, the draft head and tokenizer (while the current model keeps
+  uncensored GGUF, the draft head and shared assets (while the current model keeps
   serving), then stops the active backend, converts to `.hgn` with the GPU to
   itself, applies the profile and starts uncensored — all as one streaming job
   with visible steps. After the new backend passes its health check, the source
   GGUF shards and their local download metadata are removed automatically.
   If the converted `.hgn` already exists, the
   download/convert steps are skipped and no token is required.
+- **Swift 1.5** and **Swift 1.5 Abliterated** — select a variant, review its
+  download/storage preview and click **Install Swift model**. Both support
+  text and images, use the existing official engine, and require no HF token
+  or GGUF conversion. Their pinned complete checkpoints include the MTP draft;
+  neither downloads the official v2 checkpoint. Services are
+  `halogen-swift15.service` and `halogen-swift15-abliterated.service`, with API
+  model IDs `halogen-swift15` and `halogen-swift15-abliterated`.
 
-Both buttons ask for a confirmation click (labelled "Stop active model &
+The Official and Uncensored buttons ask for a confirmation click (labelled "Stop active model &
 install?") and respect the same safety boundaries as the advanced editor
 (allowed roots, same-origin + `X-Halogen-Action: deploy`). The switch drains
 in-flight requests and waits for GPU memory release before touching the
@@ -355,6 +363,64 @@ stops the half-started model and rolls back to the previously active one, so a
 failed takeover never leaves the host without a backend or frozen. A missing
 tokenizer is re-downloaded even when the `.hgn` already exists, so a partial
 earlier install is repaired automatically.
+
+#### Shared model assets and Swift installation
+
+N-Gram, all six tokenizer files and the vision tower live under
+`<models_root>/shared/halogen-v2/<pinned-revision>/`. Official, Orca and both
+Swift profiles use the same files through read-only `ro,z` mounts. Existing
+files are located through actual Quadlet mounts, verified and imported using
+hard links on the same filesystem. Across filesystems a verified copy is
+made; source files are retained. Shared assets use about 48.5 GiB once.
+Deleting a profile never deletes shared assets, checkpoints or caches.
+
+The Swift checkpoint sizes are about 63.5 GiB (Swift) and 62.1 GiB
+(Abliterated). The preview distinguishes cached verification, unverified
+existing files and missing downloads, with required/free disk space per
+filesystem. Preparation checks pinned digests, including Git blob hashes for
+small tokenizer files. Verification is streamed and cached by path, device,
+inode, size and modification time. Interrupted downloads retain HF resume
+metadata; changed files invalidate the cache. Invalid files are repaired by
+Quick Setup without replacing legacy files.
+
+Swift starts with engine `0.15.1`, 262144 context/KV pool, two slots,
+`HALOGEN_MAX_TOK=8192`, weights locking enabled, adaptive speculation disabled,
+temperature `1.0`, Top-P `0.95` and Top-K `20`. Reinstallation preserves edited
+runtime settings. Checkpoint, tokenizer, N-Gram and vision paths are explicit,
+and `HALOGEN_DOWNLOAD` is absent: later model switches cannot trigger downloads.
+Missing or invalid assets are reported before stopping the old backend.
+
+Downloads and verification keep the current backend serving. Only activation
+drains requests, changes the Quadlets, releases GPU memory and starts Swift.
+The durable `swift-install.json` in the dashboard state directory stores the
+previous affected Quadlets and active model. Failed or cancelled activation
+restores those exact files, retains downloads and restarts the old backend.
+Startup also recovers an interrupted activation. External Quadlet edits are
+preserved and leave the router in maintenance for manual recovery.
+
+Model discovery and `/v1/models` refresh without a Halobridge restart. The
+official checkpoint upgrader remains restricted to the official model; engine
+image updates preserve each profile's checkpoint and shared bindings.
+
+Sources: [Swift model card](https://huggingface.co/Quat3rnion/halogen-swift1.5-qwen3.8-flash-next-v2),
+[Abliterated model card](https://huggingface.co/Quat3rnion/halogen-swift1.5-qwen3.8-flash-next-v2-abliterated).
+
+HTTP endpoints (existing dashboard authentication applies):
+
+```text
+GET  /dashboard/api/deploy/quick/swift/plan?variant=swift15
+POST /dashboard/api/deploy/quick/swift
+     {"variant": "swift15"}  # or swift15-abliterated
+```
+
+POST requires `Content-Type: application/json` and `X-Halogen-Action: deploy`.
+Progress and cancellation use the existing deployment job endpoints.
+
+After installing the four profiles, run the opt-in GPU check on the Linux host
+with `python3 tests/smoke_swift_linux.py` from a checkout. It sends text and
+image requests, exercises all model switches and restores the initial model;
+it does not install weights. Use `HALOBRIDGE_TOKEN` for an authenticated router
+and `--url` if the endpoint differs from `http://127.0.0.1:8731`.
 
 #### Why the checkpoint field is empty after Quick Setup
 

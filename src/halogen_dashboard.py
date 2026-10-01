@@ -526,10 +526,27 @@ class Dashboard:
         )
         self.db.commit()
 
+    def reload_models(self, models, specs) -> None:
+        """Refresh telemetry sources along with live router discovery."""
+        self.models, self.specs = models, specs
+        self.service_models = {service: model for model, service in models.items()}
+        self.cache_paths = {spec.model_id: spec.cache_path for spec in specs.values() if spec.cache_path}
+        self.cache_sizes_updated = 0
+        units = sorted(self.service_models)
+        if units != self.journal_units:
+            self.journal_units = units
+            if self.journal_process and self.journal_process.returncode is None:
+                self.journal_process.terminate()
+            if units and self.journal_task is None and Path("/usr/bin/journalctl").exists():
+                self.journal_task = asyncio.create_task(self._journal_loop())
+
     async def _journal_loop(self) -> None:
-        units = [arg for unit in self.journal_units for arg in ("-u", unit)]
         while True:
             try:
+                units = [arg for unit in self.journal_units for arg in ("-u", unit)]
+                if not units:
+                    await asyncio.sleep(2)
+                    continue
                 self.journal_process = await asyncio.create_subprocess_exec(
                     "/usr/bin/journalctl", "--user", "-f", "-n", "5000", "-o", "json",
                     *units,

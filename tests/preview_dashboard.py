@@ -10,7 +10,8 @@ from aiohttp import web
 from test_dashboard import database, insert
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from profiles import official_template, custom_template, profile_to_dict, ENV_FIELDS
+from profiles import official_template, custom_template, swift_quick_template, profile_to_dict, ENV_FIELDS
+from swift_catalog import SHARED_ASSETS, variant_info
 from halogen_router import _login_response, _request_lang
 
 
@@ -62,7 +63,7 @@ def create_preview():
     app.router.add_get('/dashboard/api/updates', update_status)
     app.router.add_post('/dashboard/api/updates/check', update_status)
     # The self-update interaction is simulated; no installation or restart occurs.
-    app_updates = {'current_version': '0.1.19', 'latest_version': '0.1.20',
+    app_updates = {'current_version': '0.1.23', 'latest_version': '0.1.24',
                    'checked_at': time.time(), 'source_ref': 'develop',
                    'update_available': True, 'up_to_date': False, 'running': False,
                    'supported': True, 'can_install': True, 'job': None,
@@ -72,15 +73,15 @@ def create_preview():
         nonlocal app_poll_count
         if request.match_info.get('action') == 'install':
             data = await request.json()
-            assert data['version'] == '0.1.20'
+            assert data['version'] == '0.1.24'
             assert request.headers.get('X-Halogen-Action') == 'update'
             app_updates.update(running=True, can_install=False,
-                               job={'phase': 'installing', 'message': 'Installing the verified Halobridge version.', 'target_version': '0.1.20'})
+                               job={'phase': 'installing', 'message': 'Installing the verified Halobridge version.', 'target_version': '0.1.24'})
         elif app_updates['running']:
             app_poll_count += 1
             if app_poll_count >= 3:
-                app_updates.update(current_version='0.1.20', update_available=False, up_to_date=True,
-                                   running=False, job={'phase': 'succeeded', 'message': 'Halobridge was updated and the user service restarted.', 'target_version': '0.1.20'})
+                app_updates.update(current_version='0.1.24', update_available=False, up_to_date=True,
+                                   running=False, job={'phase': 'succeeded', 'message': 'Halobridge was updated and the user service restarted.', 'target_version': '0.1.24'})
         return web.json_response(app_updates)
     app.router.add_get('/dashboard/api/app-updates', app_update_status)
     app.router.add_post('/dashboard/api/app-updates/{action}', app_update_status)
@@ -90,13 +91,51 @@ def create_preview():
                                  'allowed_roots': ['/home/demo'], 'env_keys': list(ENV_FIELDS),
                                  'profiles': [{**profile, 'model_id': 'qwen3.8-flash', 'service_active': True, 'has_backup': True}]})
     async def template(request):
+        kind = request.match_info['kind']
+        if kind in {'swift15-quick', 'swift15-abliterated-quick'}:
+            locations = {a.name: '/home/demo/models/shared/halogen-v2/' + a.revision + '/' + a.name for a in SHARED_ASSETS}
+            p = swift_quick_template(kind.removesuffix('-quick'), Path('/home/demo/models'), Path('/home/demo/cache'), locations)
+            p.volumes = [(host.replace('\\', '/'), container, mode) for host, container, mode in p.volumes]
+            return web.json_response({'profile': profile_to_dict(p)})
         factory = custom_template if request.match_info['kind'] == 'custom' else official_template
         p = factory('0.13.2', PurePosixPath('/home/demo/models'), PurePosixPath('/home/demo/cache'))
         return web.json_response({'profile': profile_to_dict(p)})
     async def hf(request):
         return web.json_response({'installed': True, 'default_repo': 'demo/model', 'default_file': 'model.gguf'})
+    swift_job = None
     async def job(request):
-        return web.json_response({'active': False})
+        return web.json_response(swift_job or {'active': False})
+    async def swift_plan(request):
+        variant = request.query.get('variant', 'swift15')
+        info = variant_info(variant)
+        files = []
+        for i, asset in enumerate([info['checkpoint'], *SHARED_ASSETS]):
+            path = '/home/demo/models/' + (variant if i == 0 else 'shared/halogen-v2/' + asset.revision) + '/' + asset.name
+            files.append({'name': asset.name, 'path': path, 'source_path': path if i else None,
+                          'status': 'download' if i == 0 else 'verified' if i < 3 else 'unverified',
+                          'size': asset.size, 'download_bytes': asset.size if i == 0 else 0,
+                          'url': f'https://huggingface.co/{asset.repo}/blob/{asset.revision}/{asset.name}'})
+        return web.json_response({'variant': variant, 'files': files,
+                                  'shared_root': '/home/demo/models/shared/halogen-v2',
+                                  'model_card': 'https://huggingface.co/' + info['checkpoint'].repo,
+                                  'download_bytes': info['checkpoint'].size,
+                                  'unverified_bytes': sum(f['size'] for f in files if f['status'] == 'unverified'),
+                                  'filesystems': [{'path': '/home/demo/models', 'free_bytes': 300 * 1024**3,
+                                                   'required_bytes': info['checkpoint'].size,
+                                                   'reserve_bytes': 5 * 1024**3, 'sufficient': True}]})
+    async def swift_install(request):
+        nonlocal swift_job
+        data = await request.json()
+        variant_info(data['variant'])
+        assert request.headers.get('X-Halogen-Action') == 'deploy'
+        swift_job = {'active': True, 'kind': 'quick-' + data['variant'], 'state': 'running',
+                     'lines': ['Preparing verified shared assets (UI fixture; no downloads).'],
+                     'step': 1, 'total_steps': 4, 'elapsed': 0}
+        return web.json_response({'ok': True}, status=202)
+    async def cancel_job(request):
+        if swift_job:
+            swift_job.update(state='cancelled')
+        return web.json_response({'ok': True})
     async def preview(request):
         from profiles import Profile, validate_profile, render_quadlet
         data = await request.json()
@@ -109,6 +148,9 @@ def create_preview():
     app.router.add_get('/dashboard/api/deploy/template/{kind}', template)
     app.router.add_get('/dashboard/api/deploy/hf', hf)
     app.router.add_get('/dashboard/api/deploy/job', job)
+    app.router.add_get('/dashboard/api/deploy/quick/swift/plan', swift_plan)
+    app.router.add_post('/dashboard/api/deploy/quick/swift', swift_install)
+    app.router.add_post('/dashboard/api/deploy/job/cancel', cancel_job)
     app.router.add_post('/dashboard/api/deploy/dry-run', preview)
     app.router.add_route('*', '/dashboard/login', login)
     async def cleanup(_):
