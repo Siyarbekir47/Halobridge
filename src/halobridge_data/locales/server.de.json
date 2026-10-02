@@ -287,5 +287,20 @@
   "env {p0}: {p1}": "env {p0}: {p1}",
   "ERROR: {p0}": "ERROR: {p0}",
   "... {p0} ({p1}s)": "... {p0} ({p1}s)",
-  "allowed: {p0}": "erlaubt: {p0}"
+  "allowed: {p0}": "erlaubt: {p0}",
+  "Checkpoint target must be v2 or ht43": "Das Checkpoint-Ziel muss v2 oder ht43 sein",
+  "HT43 requires Halogen 0.16.0 or newer. Update the engine first.": "HT43 benötigt Halogen 0.16.0 oder neuer. Aktualisiere zuerst die Engine.",
+  "Not enough free disk space for the checkpoint plan and 5 GiB reserve.": "Nicht genug freier Speicher für den Checkpoint-Downloadplan und 5 GiB Reserve.",
+  "Preparing verified checkpoint and shared assets. Requests continue to run.": "Checkpoint und gemeinsame Dateien werden geprüft und vorbereitet. Anfragen laufen weiter.",
+  "Active model changed during checkpoint preparation.": "Das aktive Modell wurde während der Checkpoint-Vorbereitung gewechselt.",
+  "Quadlet was changed externally during checkpoint preparation.": "Das Quadlet wurde während der Checkpoint-Vorbereitung extern geändert.",
+  "Official Quadlet backed up; switching to {p0}.": "Official-Quadlet gesichert; Wechsel zu {p0}.",
+  "Verifying {p0} is active.": "Prüfe, ob {p0} aktiv ist.",
+  "Starting {p0} with {p1}.": "Starte {p0} mit {p1}.",
+  "The {p0} checkpoint is active. Previous checkpoint files are retained for switching back.": "Der {p0}-Checkpoint ist aktiv. Bisherige Checkpoint-Dateien bleiben für den Rückwechsel erhalten.",
+  "Downloading {p0} at pinned revision {p1}. Requests continue to run.": "Lade {p0} in der festgelegten Revision {p1}. Anfragen laufen weiter.",
+  "The running container does not use the selected checkpoint.": "Der laufende Container verwendet nicht den gewählten Checkpoint.",
+  "The selected checkpoint changed during activation.": "Der gewählte Checkpoint wurde während der Aktivierung verändert.",
+  "HT43 requires Halogen 0.16.0 or newer": "HT43 benötigt Halogen 0.16.0 oder neuer",
+  "Missing or invalid HT43 checkpoint. Repair through the checkpoint selector (no startup download).": "HT43-Checkpoint fehlt oder ist ungültig. Repariere ihn über die Checkpoint-Auswahl (kein Download beim Start)."
 }

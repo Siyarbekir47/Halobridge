@@ -452,11 +452,13 @@ function renderUpdateAttention() {
   else $('operationText').textContent = t('ckpt_available_notice');
 }
 function ckptPhaseText(job) {
+  const args = {label: job.label || 'v2', gib: job.download_gib || 0};
   const phases = {
+    preparing: t('ckpt_phase_preparing'),
     draining: t('ckpt_phase_draining'),
-    configuring: t('ckpt_phase_configuring'),
-    restarting: job.needs_download ? t('ckpt_phase_restarting_dl') : t('ckpt_phase_restarting'),
-    verifying: t('ckpt_phase_verifying'),
+    configuring: t('ckpt_phase_configuring', args),
+    restarting: job.needs_download && !job.prepared_download ? t('ckpt_phase_restarting_dl', args) : t('ckpt_phase_restarting', args),
+    verifying: t('ckpt_phase_verifying', args),
     rolling_back: t('ckpt_phase_rolling_back'),
   };
   let base = phases[job.phase] || job.message || t('ckpt_msg_running');
@@ -466,30 +468,72 @@ function ckptPhaseText(job) {
   }
   return base;
 }
-function renderCheckpoint(data) {
+let ckptTarget = null;
+let ckptCurrent = null;
+function selectedCheckpoint(data) {
   const cp = data.checkpoint || {};
+  return (cp.choices || []).find(c => c.target_key === ckptTarget) || cp;
+}
+function renderCheckpoint(data) {
+  const base = data.checkpoint || {};
+  const choices = base.choices || [];
+  if (ckptCurrent !== base.current) {
+    ckptCurrent = base.current;
+    ckptTarget = choices.find(c => c.target === base.current)?.target_key || base.target_key || 'v2';
+    ckptArmed = false;
+  }
+  const cp = selectedCheckpoint(data);
   const cpJob = data.job && data.job.kind === 'checkpoint' ? data.job : null;
   const running = data.running && !!cpJob;
-  const done = !!cpJob && cpJob.phase === 'succeeded';
-  const failed = !!cpJob && ckptFailedPhase(cpJob.phase);
-  const show = (cp.available && !cp.blocked_reason) || running || failed || (done && !ckptDismissed(cpJob));
+  const terminalJob = cpJob && (!cpJob.target_key || cpJob.target_key === cp.target_key) && !ckptDismissed(cpJob);
+  const done = !!terminalJob && cpJob.phase === 'succeeded';
+  const failed = !!terminalJob && ckptFailedPhase(cpJob.phase);
+  const show = choices.length > 0 || cp.available || running || failed || done;
   $('checkpointStrip').hidden = !show;
   if (!show) { ckptArmed = false; return; }
   $('checkpointTitle').textContent = running ? t('ckpt_running_title')
     : done ? t('ckpt_done_title')
     : failed ? t('ckpt_failed_title')
-    : t('ckpt_title');
+    : t('ckpt_title', {label: cp.label || 'v2'});
+  $('checkpointChoice').hidden = !choices.length;
+  $('checkpointTarget').value = ckptTarget || 'v2';
+  $('checkpointTarget').disabled = running || ckptBusy || data.recovery_required;
+  $('checkpointDetails').textContent = t(cp.optional ? 'ckpt_ht43_detail' : 'ckpt_v2_detail');
   if (running) $('checkpointMessage').textContent = ckptPhaseText(cpJob);
-  else if (done) $('checkpointMessage').textContent = t('ckpt_done_msg');
+  else if (done) $('checkpointMessage').textContent = t('ckpt_done_msg', {label: cpJob.label || 'v2'});
   else if (failed) $('checkpointMessage').textContent = cpJob.message || t('ckpt_failed_msg');
-  else $('checkpointMessage').textContent = cp.needs_download
-    ? t('ckpt_msg_download', {gib: cp.download_gib})
-    : t('ckpt_msg_present');
-  $('checkpointWarn').hidden = !(cp.available && !cpJob && !cp.blocked_reason);
+  else $('checkpointMessage').textContent = cp.blocked_reason ? t('ckpt_blocked')
+    : !cp.available ? t('ckpt_active', {label: cp.label || 'v2'})
+    : cp.needs_download ? t('ckpt_msg_download', {gib: cp.download_gib, label: cp.label || 'v2'})
+    : t('ckpt_msg_present', {label: cp.label || 'v2'});
+  $('checkpointPlan').hidden = !cp.plan || running;
+  const fileBox = $('checkpointFiles');
+  fileBox.replaceChildren();
+  if (cp.plan && !running) {
+    for (const file of cp.plan.files) {
+      const row = document.createElement('p');
+      const link = document.createElement('a');
+      link.href = file.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = file.name;
+      const path = document.createElement('code');
+      path.textContent = file.path;
+      row.append(link, ` · ${t('swift_asset_' + file.status)} · ${(file.size / 2**30).toFixed(2)} GiB`, document.createElement('br'), path);
+      fileBox.append(row);
+    }
+    for (const fs of cp.plan.filesystems) {
+      const row = document.createElement('p');
+      row.textContent = t('ckpt_disk', {path: fs.path, free: (fs.free_bytes / 2**30).toFixed(1), required: ((fs.required_bytes + fs.reserve_bytes) / 2**30).toFixed(1)});
+      fileBox.append(row);
+    }
+  }
+  $('checkpointWarn').hidden = !(cp.available && !running && !cp.blocked_reason);
+  $('installCheckpoint').textContent = t(cp.repair ? 'ckpt_repair_btn' : 'ckpt_install_btn');
   const blocked = cp.blocked_reason;
   $('checkpointError').hidden = !blocked;
   if (blocked) $('checkpointError').textContent = blocked;
-  const actionable = cp.available && !cp.blocked_reason && !cpJob;
+  const actionable = cp.available && !cp.blocked_reason && !running;
   const canAct = cp.can_install && !running && !data.recovery_required && !ckptBusy && !appUpdatesData?.running;
   $('installCheckpoint').hidden = !actionable || ckptArmed;
   $('installCheckpoint').disabled = !canAct;
@@ -509,7 +553,7 @@ async function checkpointAction() {
   clearTimeout(ckptRevertTimer);
   try {
     const response = await apiFetch('/dashboard/api/updates/checkpoint', {
-      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'update'}, body: '{}',
+      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'update'}, body: JSON.stringify({target: ckptTarget || 'v2'}),
     });
     if (handleUnauthorized(response)) return;
     if (!response.ok) throw new Error((await response.text()) || t('update_action_failed'));
@@ -525,6 +569,12 @@ async function checkpointAction() {
     scheduleUpdates();
   }
 }
+$('checkpointTarget').addEventListener('change', () => {
+  ckptTarget = $('checkpointTarget').value;
+  ckptArmed = false;
+  clearTimeout(ckptRevertTimer);
+  renderCheckpoint(updatesData || {});
+});
 $('installCheckpoint').addEventListener('click', () => {
   if (ckptBusy) return;
   ckptArmed = true;
@@ -1220,6 +1270,7 @@ async function switchLanguage(lang) {
     if (liveData) renderLive(liveData);
     if (currentAnalytics) renderAnalytics(currentAnalytics);
     if (swiftPlanData) renderSwiftPlan();
+    if (updatesData) renderUpdates(updatesData);
     await Promise.all([refreshLive(), refreshAnalytics(), refreshUpdates(), refreshAppUpdates(), refreshDeploy(), pollJob()]);
   } catch {
     if (sequence !== localeSequence) return;

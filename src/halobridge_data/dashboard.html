@@ -22,7 +22,7 @@
   <div class="sidebar-bottom">
     <div class="sidebar-preference"><label for="themeSelect" data-i18n="theme_label">Appearance</label><select id="themeSelect" aria-label="Appearance" data-i18n-attr="aria-label:theme_label"><option value="system" data-i18n="theme_system">System</option><option value="light" data-i18n="theme_light">Light</option><option value="dark" data-i18n="theme_dark">Dark</option></select></div>
     <div class="sidebar-preference"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect" aria-label="Language" data-i18n-attr="aria-label:lang_label"><option value="en">English</option><option value="de">Deutsch</option></select></div>
-    <small>Halobridge <span id="appVersion">v0.1.23</span></small>
+    <small>Halobridge <span id="appVersion">v0.1.24</span></small>
   </div>
 </aside>
 <main class="shell" id="mainContent" tabindex="-1">
@@ -220,13 +220,22 @@
   <section class="update-strip checkpoint-strip" id="checkpointStrip" hidden data-i18n-attr="aria-label:ckpt_section">
     <div>
       <span id="checkpointTitle" role="status" data-i18n="ckpt_title">Model checkpoint</span>
-      <p id="checkpointMessage" data-i18n="ckpt_msg_default">A newer model checkpoint (v2) is available.</p>
-      <p id="checkpointWarn" class="explanation" data-i18n="ckpt_warning">Please read: this downloads about 110 GiB and restarts the backend. The first start can take up to an hour; new requests receive HTTP 503 during the switch.</p>
+      <div id="checkpointChoice" hidden>
+        <label for="checkpointTarget" data-i18n="ckpt_select">Official checkpoint:</label>
+        <select id="checkpointTarget">
+          <option value="v2" data-i18n="ckpt_v2_option">v2 (default)</option>
+          <option value="ht43" data-i18n="ckpt_ht43_option">HT43 (less memory, Halogen 0.16+)</option>
+        </select>
+      </div>
+      <p id="checkpointMessage" data-i18n="ckpt_msg_default">Choose an official model checkpoint.</p>
+      <p id="checkpointDetails" class="explanation"></p>
+      <details id="checkpointPlan" hidden><summary data-i18n="ckpt_plan">Download and shared files</summary><div id="checkpointFiles" class="shared-plan"></div></details>
+      <p id="checkpointWarn" class="explanation" data-i18n="ckpt_warning">The backend restarts after preparation. New requests receive HTTP 503 during activation. Previous checkpoint files are retained.</p>
       <p id="checkpointError" class="failure" role="alert" hidden></p>
     </div>
     <div class="controls">
-      <button id="installCheckpoint" class="update-action" data-i18n="ckpt_install_btn">Upgrade checkpoint to v2</button>
-      <button id="confirmCheckpoint" class="update-action" hidden data-i18n="ckpt_confirm_btn">Yes, download ~110 GiB and restart</button>
+      <button id="installCheckpoint" class="update-action" data-i18n="ckpt_install_btn">Switch checkpoint</button>
+      <button id="confirmCheckpoint" class="update-action" hidden data-i18n="ckpt_confirm_btn">Prepare and restart</button>
       <button id="cancelCheckpoint" class="ghost" hidden data-i18n="reset_no">Cancel</button>
       <button id="dismissCheckpoint" class="ghost" hidden data-i18n="ckpt_dismiss">OK</button>
     </div>

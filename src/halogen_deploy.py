@@ -1145,7 +1145,7 @@ class DeployManager(SwiftInstallMixin):
             latest = getattr(self.updater, "latest_version", None)
             if latest:
                 return str(latest)
-        return "0.13.2"
+        return "0.16.0"
 
     async def _any_other_service_active(self, profile_id: str) -> bool:
         if not self.quadlet_dir.is_dir():

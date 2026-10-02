@@ -191,9 +191,10 @@ class TransactionTests(unittest.IsolatedAsyncioTestCase):
         additions = {"halogen-swift15": "halogen-swift15.service",
                      "halogen-swift15-abliterated": "halogen-swift15-abliterated.service"}
         locations = SharedAssets(self.root / "models", self.quadlets, self.root / "state").locations()
-        with patch.dict(MODELS, additions), patch("test_updates.OLD", "0.15.1"), patch("test_updates.NEW", "0.15.2"):
+        with patch.dict(MODELS, additions), patch("test_updates.OLD", "0.16.0"), patch("test_updates.NEW", "0.16.1"):
             profiles = [bind_shared_assets(official_template(OLD, self.root / "models", self.root / "cache"), locations),
                         bind_shared_assets(uncensored_template(OLD, self.root / "models", self.root / "cache"), locations)]
+            profiles[0].env["HALOGEN_CHECKPOINT"] = "/models/qwen38-flash-next-ht43.hgn"
             profiles += [swift_quick_template(variant, self.root / "models", self.root / "cache", locations)
                          for variant in ("swift15", "swift15-abliterated")]
             originals = {}
@@ -208,7 +209,9 @@ class TransactionTests(unittest.IsolatedAsyncioTestCase):
             await self.execute()
             self.assertEqual(self.updater.job["phase"], "succeeded", self.updater.job)
             for path, original in originals.items():
-                self.assertEqual(path.read_bytes(), original.replace(f":{OLD}".encode(), f":{NEW}".encode()))
+                old_image = next(line for line in original.splitlines() if line.startswith(b"Image="))
+                expected = original.replace(old_image, f"Image={IMAGE_REPOSITORY}:{NEW}".encode(), 1)
+                self.assertEqual(path.read_bytes(), expected)
             starts = [c for c in self.commands if c[:3] == ("systemctl", "--user", "start")]
             self.assertEqual(starts, [("systemctl", "--user", "start", MODELS[MODEL])])
 

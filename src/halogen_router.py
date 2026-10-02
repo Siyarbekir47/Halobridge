@@ -1075,6 +1075,7 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
         )
         updater = ContainerUpdater(manager, session, models, config=config)
         deploy_manager = DeployManager(manager, config, updater=updater)
+        updater.checkpoint_assets = deploy_manager.assets
         manager.asset_validator = deploy_manager.assets.validate_start
         if models:
             await updater.recover_on_startup()

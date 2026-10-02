@@ -445,12 +445,46 @@ default.
 | Empty / automatic (Official Quick Setup) | Simplest setup; follows the official downloaded layout; fewer paths to maintain | Not suitable when you need to choose between several custom checkpoints |
 | Explicit `HALOGEN_CHECKPOINT` | Deterministically selects one `.hgn` or supported GGUF; useful for custom and converted models | The path must stay correct; a renamed, moved or missing file prevents startup |
 
-For the standard official model, leave the checkpoint field empty. Set it only
-when deliberately running a custom or converted checkpoint.
+For the standard official model, leave the checkpoint field empty. The dashboard
+checkpoint selector sets it explicitly when choosing v2 or HT43. Custom or
+converted checkpoints can still be configured manually.
 
-The checkpoint v2 upgrade changes only the active official profile. Uncensored
-profiles keep their converted OrcaRouter checkpoint and do not need the official
-v2 weights. Upgrading the container image is separate from upgrading a checkpoint.
+Official checkpoint changes affect only the active official profile. Uncensored
+profiles keep their converted OrcaRouter checkpoint; Swift profiles retain their
+own weights. Upgrading the container image is separate from choosing a checkpoint.
+
+#### Halogen 0.16.0: optional HT43 checkpoint
+
+Halogen **0.16.0 keeps v2 as the default**. Its new `qwen38-flash-next-ht43.hgn`
+checkpoint is optional: about **53.7 GiB** on disk and roughly **8 GiB less RAM**
+than v2, with somewhat slower prompt processing and draft decoding.
+See the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.0/CHANGELOG.md)
+and [official model card](https://huggingface.co/peonist-ai/halogen-qwen3.8-flash-next).
+
+1. Update the engine to `0.16.0` or newer in the dashboard.
+2. With Official active, select **HT43** under **System → model checkpoint**.
+3. Review the download/shared-file plan and confirm preparation and restart.
+
+Halobridge downloads only the selected checkpoint and missing shared files from
+pinned revisions, checks their sizes and hashes, and reuses the same N-Gram,
+tokenizer and vision files as v2, Orca and Swift. Existing unverified files are
+checked first. Downloads resume after interruption. Free space is checked per
+filesystem, including a 5 GiB reserve.
+
+Preparation runs while the existing model serves requests. Activation drains
+requests, saves only the official Quadlet, releases GPU memory and verifies the
+model, API/engine version, image and selected checkpoint. Failure or cancellation
+restores the previous official configuration; startup recovery uses the durable
+update journal. Downloads and previous weights are retained for retries and
+switching back to **v2** through the same selector. Missing or changed files can
+be prepared again with **Verify / repair checkpoint**. Prepared profiles start
+without `HALOGEN_DOWNLOAD`; model switches cannot silently download another
+checkpoint. Custom official checkpoints are excluded from this selector.
+
+The authenticated dashboard endpoint also accepts an explicit choice:
+`POST /dashboard/api/updates/checkpoint` with `{"target":"ht43"}` or
+`{"target":"v2"}`. The existing same-origin JSON/action-header checks apply.
+Engine updates preserve the chosen checkpoint for every profile.
 
 ### Advanced editor
 

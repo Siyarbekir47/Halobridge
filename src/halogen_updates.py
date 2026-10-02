@@ -1,7 +1,7 @@
-"""One-click updates of the two local Halogen Quadlets, coordinated with routing.
+"""Engine and official checkpoint updates, coordinated with routing.
 
 Only stable upstream tags and the fixed GHCR repository are accepted. A durable
-journal is written before changing either file, allowing recovery on restart.
+journal is written before changing Quadlets, allowing recovery on restart.
 """
 
 from __future__ import annotations
@@ -9,11 +9,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
 import shutil
 import stat
+import sys
 import tempfile
 import time
 from typing import Any
@@ -30,6 +32,8 @@ from profiles import (
 # Re-exported so existing callers/tests keep working; the definitions live in
 # semver.py, shared with discovery.
 from semver import normalize_version, version_tuple
+from official_checkpoints import OFFICIAL_CHECKPOINTS, checkpoint_choice
+from shared_assets import SharedAssets, AssetError
 
 
 LOG = logging.getLogger("halogen-updates")
@@ -41,12 +45,11 @@ CHECK_RETRY = 300
 DRAIN_TIMEOUT = 7200
 START_TIMEOUT = 600
 TERMINAL_PHASES = {"succeeded", "failed", "rolled_back"}
-JOB_PHASES = TERMINAL_PHASES | {"starting", "pulling", "draining", "configuring", "restarting", "verifying", "rolling_back", "recovery_required"}
+JOB_PHASES = TERMINAL_PHASES | {"starting", "preparing", "pulling", "draining", "configuring", "restarting", "verifying", "rolling_back", "recovery_required"}
 
-# Model checkpoint upgrade (0.15.0 introduced the v2 checkpoint). The image
-# update above never touches weights; this flow switches the active official
-# profile from the 0.14 w4b checkpoint to v2. v2 is 62.1 GiB plus a 47.7 GiB
-# lookup table, fetched by the backend itself on the first start.
+# Compatibility with the original w4b -> v2 API. Explicit dashboard choices
+# prepare pinned weights before maintenance. 0.16.0 adds opt-in HT43 and keeps
+# v2 as its default; engine updates never change checkpoint selection.
 CHECKPOINT_V2_PATH = "/models/qwen38-flash-next-v2.hgn"
 CHECKPOINT_V2_FILES = ("qwen38-flash-next-v2.hgn", "qwen38-flash-next-ngram.hgn")
 LEGACY_W4B_PATH = "/models/qwen38-flash-next-w4b.hgn"
@@ -95,7 +98,7 @@ def quadlet_checkpoint_upgrade(
     writable_models: bool = False,
     models_container_path: str = CONTAINER_MODELS_PATH,
 ) -> bytes:
-    """Point the checkpoint at v2, preserving every other byte.
+    """Set an official checkpoint, preserving unrelated settings.
 
     Sets HALOGEN_CHECKPOINT (inserting it after the Image line when the profile
     never declared one, as a quick-install profile does not), drops
@@ -285,6 +288,10 @@ class ContainerUpdater:
         self.task: asyncio.Task | None = None
         self.check_task: asyncio.Task | None = None
         self.recovery_required = False
+        self.checkpoint_assets = SharedAssets(
+            Path(config.deploy.models_root) if config else Path.home() / "halogen/models",
+            self.quadlet_dir, self.state_dir,
+        )
 
     @property
     def running(self) -> bool:
@@ -329,7 +336,7 @@ class ContainerUpdater:
         except OSError:
             return None
 
-    def _checkpoint_info(self) -> dict[str, Any]:
+    def _legacy_checkpoint_info(self) -> dict[str, Any]:
         """Whether the active official profile still runs the 0.14 w4b
         checkpoint while the image is 0.15+, and what switching to v2 needs."""
         info: dict[str, Any] = {
@@ -392,6 +399,64 @@ class ContainerUpdater:
                 )
                 return info
         info["available"] = True
+        return info
+
+    def _checkpoint_info(self, target: str | None = None) -> dict[str, Any]:
+        """v2 stays the automatic migration target; HT43 requires an explicit choice."""
+        if target is not None:
+            choice = checkpoint_choice(target)
+        else:
+            choice = OFFICIAL_CHECKPOINTS["v2"]
+        info = self._legacy_checkpoint_info() if target is None else {
+            "available": False, "current": None, "target": "/models/" + choice["asset"].name,
+            "needs_download": False, "download_gib": 0, "free_gib": None,
+            "blocked_reason": None, "can_install": False,
+        }
+        info.update(target_key=target or "v2", label=choice["label"], optional=target == "ht43", selectable=False)
+        model = getattr(self.manager, "current_model", None)
+        if model != "qwen3.8-flash" or model not in self.models:
+            return info
+        try:
+            profile = parse_quadlet(self._configuration()[model]["content"].decode("utf-8"))
+        except (OSError, UnicodeError, UpdateError, ProfileError):
+            return info
+        models_host = next((v[0] for v in profile.volumes if v[1] == CONTAINER_MODELS_PATH), None)
+        if profile.model_id != model or not models_host:
+            return info
+        root = Path(models_host).expanduser()
+        current = profile.env.get("HALOGEN_CHECKPOINT")
+        if not current:
+            # The entrypoint selects by the checkpoint file, not its companions,
+            # and never automatically selects HT43, even when it is on disk.
+            current = (CHECKPOINT_V2_PATH if (root / Path(CHECKPOINT_V2_PATH).name).is_file()
+                       else LEGACY_W4B_PATH if self._w4b_files_present(root) else CHECKPOINT_V2_PATH)
+        known = {LEGACY_W4B_PATH, *("/models/" + c["asset"].name for c in OFFICIAL_CHECKPOINTS.values())}
+        info["current"] = current
+        if current not in known:
+            return info  # A custom official checkpoint is never rewritten.
+        running = version_tuple(self.current_version)
+        configured = version_tuple(profile.image.rsplit(":", 1)[-1])
+        if not running or running < CHECKPOINT_MIN_IMAGE:
+            return info
+        info["selectable"] = True
+        if target is None:
+            return info
+        info["available"] = current != info["target"]
+        if not configured or min(running, configured) < choice["minimum_engine"]:
+            info["blocked_reason"] = "HT43 requires Halogen 0.16.0 or newer. Update the engine first."
+            return info
+        try:
+            plan = self.checkpoint_assets.plan(checkpoint=choice["asset"], checkpoint_root=root)
+        except (OSError, ValueError) as error:
+            info["blocked_reason"] = str(error)
+            return info
+        info.update(plan=plan, needs_download=plan["download_bytes"] > 0,
+                    download_gib=math.ceil(plan["download_bytes"] / 2**30),
+                    unverified_gib=round(plan["unverified_bytes"] / 2**30, 1))
+        info["repair"] = current == info["target"] and any(f["status"] != "verified" for f in plan["files"])
+        info["available"] = info["available"] or info["repair"]
+        if any(not fs["sufficient"] for fs in plan["filesystems"]):
+            info["blocked_reason"] = "Not enough free disk space for the checkpoint plan and 5 GiB reserve."
         return info
 
     async def _run(self, *args: str, timeout: float = 120) -> str:
@@ -523,16 +588,16 @@ class ContainerUpdater:
             blocked_reason = "Version mismatch: a configuration is newer than the GitHub tag. Automatic downgrade is disabled."
         fresh = self.checked_at is not None and time.time() - self.checked_at < self.check_interval
         checkpoint = self._checkpoint_info()
-        checkpoint["can_install"] = bool(
-            checkpoint["available"]
-            and checkpoint["blocked_reason"] is None
-            and self.enabled
-            and self.allow_install
-            and support_error is None
-            and self.check_error is None
-            and not self.running
-            and not self.recovery_required
-        )
+        choices = [self._checkpoint_info(key) for key in OFFICIAL_CHECKPOINTS] if checkpoint["selectable"] else []
+        for item in [checkpoint, *choices]:
+            item["can_install"] = bool(
+                item["available"] and item["blocked_reason"] is None
+                and self.enabled and self.allow_install and support_error is None
+                and self.check_error is None and not self.running and not self.recovery_required
+                and not getattr(self.manager, "maintenance", False)
+                and not getattr(self.manager, "switching", False)
+            )
+        checkpoint["choices"] = choices
         return {
             "latest_version": self.latest_version, "current_version": self.current_version,
             "configured_versions": configured, "checked_at": self.checked_at,
@@ -598,8 +663,13 @@ class ContainerUpdater:
             self._save_job()
             self.task = asyncio.create_task(self._update(version))
 
-    async def start_checkpoint(self) -> None:
-        """Switch the active official profile from the w4b checkpoint to v2."""
+    async def start_checkpoint(self, target: str | None = None) -> None:
+        """Migrate w4b to v2, or explicitly choose a supported official checkpoint."""
+        if target is not None:
+            try:
+                checkpoint_choice(target)
+            except ValueError as error:
+                raise web.HTTPBadRequest(text=str(error)) from error
         async with self.start_lock:
             if not self.enabled:
                 raise web.HTTPForbidden(text="Updates are disabled.")
@@ -610,7 +680,7 @@ class ContainerUpdater:
             support_error = self._support_error()
             if support_error:
                 raise web.HTTPConflict(text=support_error)
-            info = self._checkpoint_info()
+            info = self._checkpoint_info(target)
             if not info["available"]:
                 raise web.HTTPConflict(text="No checkpoint upgrade is available.")
             if info["blocked_reason"]:
@@ -629,6 +699,9 @@ class ContainerUpdater:
                 "changed": False, "backup_dir": None, "model": model,
                 "old_version": old_version, "old_image_id": old_image_id,
                 "needs_download": info["needs_download"],
+                "target_key": target or "v2", "target": info["target"],
+                "label": info["label"], "download_gib": info["download_gib"],
+                "prepared_download": target is not None,
             }
             self._save_job()
             self.task = asyncio.create_task(self._update_checkpoint(info))
@@ -644,57 +717,82 @@ class ContainerUpdater:
             health = await self.manager.backend_health()
             if not health or health.get("status") != "ok" or health.get("model") != model:
                 raise UpdateError("Could not verify the active backend before the checkpoint upgrade.")
+            locations = None
+            selection = self.job["target_key"] if self.job.get("prepared_download") else None
+            if selection:
+                from shared_assets import host_path
+                choice = checkpoint_choice(selection)
+                profile = parse_quadlet(configurations[model]["content"].decode("utf-8"))
+                root = host_path(profile, CONTAINER_MODELS_PATH)
+                self._save_job(phase="preparing", message="Preparing verified checkpoint and shared assets. Requests continue to run.")
+                locations = await self.checkpoint_assets.prepare(
+                    None, self._download_checkpoint_asset,
+                    lambda message: self._save_job(message=message),
+                    checkpoint=choice["asset"], checkpoint_root=root,
+                )
+                if self.manager.current_model != model:
+                    raise UpdateError("Active model changed during checkpoint preparation.")
             self._save_job(phase="draining", message="Waiting for model switches and active requests.")
             await asyncio.wait_for(self.manager.begin_maintenance(), self.drain_timeout)
             maintenance = True
             if self.manager.current_model != model:
                 raise UpdateError("Active model changed; check the checkpoint upgrade again.")
             await asyncio.wait_for(self.manager.drain_maintenance(), self.drain_timeout)
-            info = self._checkpoint_info()
-            if not info["available"] or info["blocked_reason"]:
+            info = self._checkpoint_info(selection)
+            if info["blocked_reason"] or (not info["available"] and
+                    (not selection or info["current"] != info["target"])):
                 raise UpdateError(info["blocked_reason"] or "No checkpoint upgrade is available.")
             paths = {model: self._paths()[model]}
+            for name, path in paths.items():
+                if path.is_symlink() or path.read_bytes() != configurations[name]["content"]:
+                    raise UpdateError("Quadlet was changed externally during checkpoint preparation.")
             backup = self.backup_root / f"checkpoint-update-{time.time_ns()}"
             backup.mkdir(parents=True, mode=0o700)
             modes = {}
             for name, path in paths.items():
                 modes[name] = stat.S_IMODE(path.stat().st_mode)
                 atomic_write(backup / path.name, configurations[name]["content"], modes[name])
-            self._save_job(phase="configuring", message="Official Quadlet backed up; switching the checkpoint to v2.",
+            self._save_job(phase="configuring", message=f"Official Quadlet backed up; switching to {self.job['label']}.",
                           backup_dir=str(backup), model=model, modes=modes,
                           changed_models=[model], changed=True)
             # changed is durable BEFORE the first write (including partial failure).
             for name, path in paths.items():
-                if path.read_bytes() != configurations[name]["content"]:
+                if path.is_symlink() or path.read_bytes() != configurations[name]["content"]:
                     raise UpdateError("Quadlet was changed externally during the upgrade.")
                 content = quadlet_checkpoint_upgrade(
                     configurations[name]["content"],
-                    CHECKPOINT_V2_PATH,
-                    download_repo=OFFICIAL_WEIGHTS_REPO if info["needs_download"] else None,
-                    writable_models=info["needs_download"],
+                    info["target"],
+                    download_repo=OFFICIAL_WEIGHTS_REPO if info["needs_download"] and not locations else None,
+                    writable_models=info["needs_download"] and not locations,
                 )
+                if locations:
+                    from swift_install import shared_quadlet_content
+                    content = shared_quadlet_content(content.decode("utf-8"), locations).encode("utf-8")
+                    content = self._without_checkpoint_download(content)
                 atomic_write(path, content, modes[name])
             await self._run("systemctl", "--user", "daemon-reload")
             self._save_job(
                 phase="restarting",
                 message=(
-                    f"Starting {model} with the v2 checkpoint. Downloading ~{CHECKPOINT_DOWNLOAD_GIB} GiB; "
+                    f"Starting {model} with {self.job['label']}. Downloading ~{info['download_gib']} GiB; "
                     "this can take a while."
                     if info["needs_download"]
-                    else f"Starting {model} with the v2 checkpoint."
+                    else f"Starting {model} with {self.job['label']}."
                 ),
             )
             await self._restart(model, timeout=CHECKPOINT_START_TIMEOUT)
-            self._save_job(phase="verifying", message="Verifying the v2 checkpoint is active.")
+            self._save_job(phase="verifying", message=f"Verifying {self.job['label']} is active.")
             await self._ready(model, self.job["old_version"], self.job["old_image_id"], timeout=CHECKPOINT_START_TIMEOUT)
+            if selection:
+                await self._verify_checkpoint(model, info["target"])
             self._save_job(
                 phase="succeeded",
-                message="The v2 checkpoint is active. The previous w4b files can be deleted to free disk space.",
+                message=f"The {self.job['label']} checkpoint is active. Previous checkpoint files are retained for switching back.",
                 changed=False,
             )
         except (Exception, asyncio.CancelledError) as error:
             LOG.warning("Checkpoint upgrade failed: %s", type(error).__name__)
-            reason = str(error) if isinstance(error, UpdateError) else "Checkpoint upgrade cancelled or timed out."
+            reason = str(error) if isinstance(error, (UpdateError, AssetError)) else "Checkpoint upgrade cancelled or timed out."
             if self.job and self.job.get("changed"):
                 try:
                     await self._rollback(reason)
@@ -706,6 +804,45 @@ class ContainerUpdater:
         finally:
             if maintenance and not self.recovery_required:
                 await self.manager.end_maintenance()
+
+    async def _download_checkpoint_asset(self, asset, stage):
+        from halogen_deploy import HF_CLI_PACKAGE
+        hf = shutil.which("hf")
+        local = Path(sys.executable).parent / ("hf.exe" if os.name == "nt" else "hf")
+        if not hf and local.is_file():
+            hf = str(local)
+        if not hf:
+            await self._run(sys.executable, "-m", "pip", "install", "--upgrade", HF_CLI_PACKAGE, timeout=900)
+            hf = shutil.which("hf") or (str(local) if local.is_file() else None)
+        if not hf:
+            raise UpdateError("HF CLI missing after installation.")
+        self._save_job(message=f"Downloading {asset.name} at pinned revision {asset.revision}. Requests continue to run.")
+        await self._run(hf, "download", asset.repo, asset.name, "--revision", asset.revision,
+                        "--local-dir", str(stage), timeout=CHECKPOINT_START_TIMEOUT)
+
+    @staticmethod
+    def _without_checkpoint_download(content: bytes) -> bytes:
+        lines, section = [], ""
+        for line in content.decode("utf-8").splitlines(keepends=True):
+            if line.strip().startswith("["):
+                section = line.strip()
+            if section == "[Container]" and re.match(r"\s*Environment\s*=\s*HALOGEN_DOWNLOAD=", line):
+                continue
+            lines.append(line)
+        return "".join(lines).encode("utf-8")
+
+    async def _verify_checkpoint(self, model: str, target: str):
+        from shared_assets import host_path
+        data = json.loads(await self._run("podman", "container", "inspect", self.models[model].removesuffix(".service")))
+        env = data[0].get("Config", {}).get("Env", [])
+        checkpoints = [value for value in env if value.startswith("HALOGEN_CHECKPOINT=")]
+        if checkpoints != [f"HALOGEN_CHECKPOINT={target}"]:
+            raise UpdateError("The running container does not use the selected checkpoint.")
+        profile = parse_quadlet(self._paths()[model].read_text(encoding="utf-8"))
+        asset = checkpoint_choice(self.job["target_key"])["asset"]
+        path = host_path(profile, target)
+        if path is None or not await self.checkpoint_assets.verify(path, asset):
+            raise UpdateError("The selected checkpoint changed during activation.")
 
     async def _verify_units(self, image: str) -> None:
         for service in self.models.values():
@@ -932,7 +1069,14 @@ class ContainerUpdater:
 
     async def api_install_checkpoint(self, request: web.Request) -> web.Response:
         self._require_same_origin(request)
-        await self.start_checkpoint()
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeError):
+            raise web.HTTPBadRequest(text="Invalid JSON")
+        if not isinstance(body, dict) or ("target" in body and
+                (not isinstance(body["target"], str) or body["target"] not in OFFICIAL_CHECKPOINTS)):
+            raise web.HTTPBadRequest(text="Checkpoint target must be v2 or ht43")
+        await self.start_checkpoint(body.get("target"))
         return web.json_response(self.status(), status=202, headers={"Cache-Control": "no-store"})
 
     def register_routes(self, app: web.Application) -> None:

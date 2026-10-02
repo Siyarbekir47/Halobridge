@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.24
+
+- Add optional HT43 checkpoint selection for Halogen 0.16.0+.
+- Keep v2 as default and preserve checkpoints during engine updates.
+- Use Halogen 0.16.0 for new Official and Orca templates.
+- Prepare pinned, verified checkpoints before switching; reuse shared assets.
+- Add download plans, checkpoint repair and rollback to the previous profile.
+
 ## 0.1.23
 
 - Add Swift 1.5 and Swift 1.5 Abliterated quick templates with vision.
