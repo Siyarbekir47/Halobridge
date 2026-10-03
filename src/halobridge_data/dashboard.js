@@ -125,6 +125,8 @@ function renderLive(data) {
   $('ram').textContent = `${bytes(memory.used_bytes)} / ${bytes(memory.total_bytes)}`;
   $('gpu').textContent = valid(system.gpu_busy_percent) ? `${integer(system.gpu_busy_percent)} %` : '–';
   $('pool').textContent = percent(data.cache?.pool?.usage_ratio);
+  const counters = data.cache?.counters || {};
+  $('cacheCounters').textContent = t('cache_counters', {hits: integer(counters.hits), evicted: integer(counters.evicted), dropped: integer(counters.dropped)});
   $('disk').textContent = `${bytes(system.disk_used_bytes)} / ${bytes(system.disk_total_bytes)}`;
   $('context').textContent = `${integer(backend.context)} / ${integer(backend.slots)}`;
   $('maxTokens').textContent = `${integer(backend.max_tokens_default)} / ${integer(backend.max_tokens_cap)}`;
@@ -831,6 +833,18 @@ const DEPLOY_ENV_FIELDS = [
   ['HALOGEN_DOWNLOAD', 'text', 'deploy_f_download'],
 ];
 const DEPLOY_ENV_NAMES = new Set(DEPLOY_ENV_FIELDS.map(f => f[0]));
+const NPU_ENV_FIELDS = [
+  ['HALOGEN_NPU_MODELS', 'text', 'deploy_f_npu_models'],
+  ['HALOGEN_NPU_QUEUE', 'number', 'deploy_f_npu_queue'],
+  ['HALOGEN_NPU_PORT', 'number', 'deploy_f_npu_port'],
+  ['HALOGEN_NPU_EMB_BATCH', 'select:0,1', 'deploy_f_npu_batch'],
+  ['HALOGEN_NPU_VERIFY', 'select:0,1', 'deploy_f_npu_verify'],
+  ['HALOGEN_CACHE_EVICT', 'select:0,1', 'deploy_f_cache_evict'],
+  ['HALOGEN_MTP', 'select:0,1', 'deploy_f_mtp'],
+  ['HALOGEN_PREFILL_CANCEL', 'select:0,1', 'deploy_f_prefill_cancel'],
+];
+let npuData = null, npuPlanData = null, npuDirty = false, npuRevision = 0, npuJobRunning = false;
+for (const [key] of NPU_ENV_FIELDS) DEPLOY_ENV_NAMES.add(key);
 DEPLOY_ENV_NAMES.add('HALOGEN_MODEL_ID');
 function setDeployBusy(busy) {
   deployBusy = busy;
@@ -845,6 +859,7 @@ function setDeployBusy(busy) {
   }
   if (swiftPlanData) renderSwiftPlan();
   else $('quickSwiftBtn').disabled = true;
+  renderNpuPlan();
 }
 function setLanguageAvailability() {
   $('langSelect').disabled = localeLoading || deployBusy || updateActionBusy || appUpdateActionBusy || resetBusy;
@@ -880,16 +895,18 @@ function renderDeployForm(profile) {
   $('deployFields').innerHTML = group('profile_identity', core.slice(0, 4).map(f => fieldHtml(...f)).join(''))
     + group('profile_storage', core.slice(4).map(f => fieldHtml(...f)).join('') + fields(DEPLOY_ENV_FIELDS.slice(0, 4)))
     + group('profile_capacity', fields(DEPLOY_ENV_FIELDS.slice(4, 11)))
-    + group('profile_generation', fields(DEPLOY_ENV_FIELDS.slice(11)));
+    + group('profile_generation', fields(DEPLOY_ENV_FIELDS.slice(11)))
+    + group('profile_npu', fields(NPU_ENV_FIELDS));
   for (const el of $('deployFields').querySelectorAll('input,select')) el.addEventListener('input', invalidateDeployPreview);
   $('deployEnvRows').innerHTML = '';
   for (const [k, v] of Object.entries(profile.env || {})) if (!DEPLOY_ENV_NAMES.has(k)) addEnvRow(k, v);
   $('deployMountRows').innerHTML = '';
-  for (const v of profile.volumes || []) if (v[1] !== '/models' && v[1] !== '/cache') addMountRow(v[0], v[1], v[2].includes('ro'));
+  for (const v of profile.volumes || []) if (v[1] !== '/models' && v[1] !== '/cache') addMountRow(v[0], v[1], v[2].includes('ro'), v[2]);
 }
-function addMountRow(host = '', container = '', ro = true) {
+function addMountRow(host = '', container = '', ro = true, mode = '') {
   const row = document.createElement('div');
   row.className = 'deploy-env-row';
+  row.dataset.mode = mode;
   row.innerHTML = `<input class="mount-host" value="${esc(host)}" placeholder="/host/path" aria-label="${esc(t('mount_host'))}" data-i18n-attr="aria-label:mount_host"><input class="mount-container" value="${esc(container)}" placeholder="/container/path" aria-label="${esc(t('mount_container'))}" data-i18n-attr="aria-label:mount_container"><label class="mount-ro-label"><input type="checkbox" class="mount-ro" ${ro ? 'checked' : ''}>ro</label><button type="button" class="mount-del" aria-label="${esc(t('remove'))}" data-i18n-attr="aria-label:remove">✕</button>`;
   row.querySelector('.mount-del').addEventListener('click', () => { row.remove(); invalidateDeployPreview(); });
   for (const el of row.querySelectorAll('input')) el.addEventListener('input', invalidateDeployPreview);
@@ -907,7 +924,7 @@ function collectDeploy() {
   const env = {};
   const set = (k, v) => { if (v !== '') env[k] = v; };
   set('HALOGEN_MODEL_ID', $('df_model_id').value.trim());
-  for (const [name, type] of DEPLOY_ENV_FIELDS) {
+  for (const [name, type] of [...DEPLOY_ENV_FIELDS, ...NPU_ENV_FIELDS]) {
     const el = $('df_' + name);
     set(name, type === 'check' ? (el.checked ? '1' : '') : el.value.trim());
   }
@@ -919,7 +936,11 @@ function collectDeploy() {
   for (const row of $('deployMountRows').children) {
     const host = row.querySelector('.mount-host').value.trim();
     const container = row.querySelector('.mount-container').value.trim();
-    if (host && container) mounts.push([host, container, row.querySelector('.mount-ro').checked ? (container.startsWith('/shared/') ? 'ro,z' : 'ro,Z') : 'Z']);
+    const ro = row.querySelector('.mount-ro').checked;
+    const original = row.dataset.mode;
+    const mode = original && original.split(',').includes('ro') === ro ? original
+      : ro ? ((container.startsWith('/shared/') || container === '/models/npu') ? 'ro,z' : 'ro,Z') : 'Z';
+    if (host && container) mounts.push([host, container, mode]);
   }
   return {
     profile_id: $('df_profile_id').value.trim(),
@@ -934,6 +955,92 @@ function collectDeploy() {
   };
 }
 function invalidateDeployPreview() { deployRevision++; deployPreviewOk = false; $('deployApply').disabled = true; $('deployDiff').hidden = true; $('deployWarnings').hidden = true; $('previewStatus').textContent = t('preview_required'); resetDeployArm(); }
+function npuSelection() {
+  const names = [...$('npuModelChoices').querySelectorAll('input:checked')].map(el => el.value);
+  const custom = $('npuCustom').value.split(',').map(value => value.trim()).filter(Boolean);
+  return {models: [...names, ...custom].join(','), profiles: $('npuProfiles').value ? [$('npuProfiles').value] : null};
+}
+function invalidateNpuPlan() {
+  npuDirty = true; npuRevision++; npuPlanData = null;
+  $('npuPlan').hidden = true; $('npuInstallBtn').disabled = true;
+  resetDeployArm();
+}
+async function refreshNpu() {
+  if (!deployData?.enabled || !deployData?.posix) { $('npuSetup').hidden = true; return; }
+  $('npuSetup').hidden = false;
+  try {
+    npuData = await deployRequest('/dashboard/api/deploy/npu');
+    const selectedProfile = $('npuProfiles').value;
+    const checked = new Set([...$('npuModelChoices').querySelectorAll('input:checked')].map(el => el.value));
+    if (!npuDirty) {
+      checked.clear();
+      const values = (npuData.profiles || []).filter(p => !selectedProfile || p.id === selectedProfile)
+        .flatMap(p => (p.models || '').split(',')).filter(Boolean);
+      values.filter(name => !name.startsWith('/')).forEach(name => checked.add(name));
+      $('npuCustom').value = [...new Set(values.filter(name => name.startsWith('/')))].join(',');
+    }
+    const errorKeys = {
+      'NPU setup requires Linux': 'npu_need_linux',
+      'NPU device missing: /dev/accel/accel0; install/load amdxdna and NPU firmware': 'npu_need_device',
+      "NPU device access denied; add the service user to the device's group and log in again": 'npu_need_access',
+      'IOMMU is disabled; remove amd_iommu=off / iommu=off (iommu=pt is compatible)': 'npu_need_iommu',
+      'XRT and its NPU plugin are missing; install the host\'s matching XRT libraries': 'npu_need_xrt',
+      'GPU fabric clock is not held; install and start halogen-fabric-clock.service before enabling NPU': 'npu_need_clock',
+    };
+    $('npuHost').textContent = npuData.ready ? t('npu_host_ready')
+      : t('npu_host_blocked') + ' ' + (npuData.errors || []).map(error => errorKeys[error] ? t(errorKeys[error]) : error).join(' · ');
+    $('npuHost').className = npuData.ready ? 'success' : 'warning';
+    $('npuHostCommands').textContent = (npuData.setup?.commands || []).join('\n');
+    $('npuModelChoices').innerHTML = (npuData.models || []).map(model => `<label class="chk"><input type="checkbox" value="${esc(model.id)}" ${checked.has(model.id) ? 'checked' : ''}><span><strong>${esc(model.id)}</strong> <small>${esc(t('npu_task_' + model.task))} · ${esc(model.endpoint)}</small></span></label>`).join('');
+    for (const input of $('npuModelChoices').querySelectorAll('input')) input.addEventListener('change', invalidateNpuPlan);
+    $('npuProfiles').innerHTML = `<option value="">${esc(t('npu_all_profiles'))}</option>`
+      + (npuData.profiles || []).map(profile => `<option value="${esc(profile.id)}" ${profile.id === selectedProfile ? 'selected' : ''}>${esc(profile.id)} · ${esc(profile.image.split(':').pop())}</option>`).join('');
+    renderNpuPlan();
+  } catch (error) { $('npuHost').textContent = error.message; }
+}
+function renderNpuPlan() {
+  $('npuInstallBtn').disabled = !npuPlanData || deployBusy || npuJobRunning || deployData?.recovery_required
+    || (npuPlanData.models.length > 0 && !npuData?.ready)
+    || !(npuPlanData.plans || []).every(plan => (plan.filesystems || []).every(fs => fs.sufficient));
+  if (!npuPlanData) return;
+  const data = npuPlanData;
+  const files = (data.plans || []).flatMap(plan => plan.files || []);
+  const space = (data.plans || []).flatMap(plan => plan.filesystems || []).map(fs => `<p class="${fs.sufficient ? 'muted' : 'failure'}">${esc(fs.path)} · ${esc(t('swift_space', {free: bytes(fs.free_bytes), need: bytes(fs.required_bytes + fs.reserve_bytes)}))}</p>`).join('');
+  const rows = files.map(file => `<tr><td><a href="${esc(file.url)}" target="_blank" rel="noopener noreferrer">${esc(file.name)}</a><small>${esc(file.path)}</small>${file.source_path ? `<small>${esc(t('swift_source'))}: ${esc(file.source_path)}</small>` : ''}</td><td>${esc(t('swift_asset_' + file.status))}</td><td class="num">${esc(bytes(file.size))}</td></tr>`).join('');
+  $('npuPlan').hidden = false;
+  $('npuPlan').innerHTML = `<p><strong>${esc(data.models.length ? t('swift_download', {size: bytes(data.download_bytes)}) : t('npu_disable_note'))}</strong> · ${esc(data.profiles.join(', '))}</p>${space}`
+    + (files.length ? `<details><summary>${esc(t('swift_files', {count: files.length}))}</summary><div class="table-scroll"><table><thead><tr><th>${esc(t('swift_file'))}</th><th>${esc(t('swift_status'))}</th><th class="num">${esc(t('swift_size'))}</th></tr></thead><tbody>${rows}</tbody></table></div></details>` : '')
+    + ((data.custom_models || []).length ? `<p class="muted">${esc(t('npu_custom_note'))}</p>` : '');
+}
+$('npuProfiles').addEventListener('change', () => { invalidateNpuPlan(); npuDirty = false; refreshNpu(); });
+$('npuCustom').addEventListener('input', invalidateNpuPlan);
+$('npuPlanBtn').addEventListener('click', async () => {
+  if (deployBusy || npuJobRunning) return;
+  const revision = npuRevision;
+  $('npuError').hidden = true;
+  $('npuPlanBtn').disabled = true;
+  try {
+    const selection = npuSelection();
+    const query = new URLSearchParams({models: selection.models});
+    if (selection.profiles) query.set('profiles', selection.profiles.join(','));
+    const data = await deployRequest('/dashboard/api/deploy/npu/plan?' + query);
+    if (revision === npuRevision) { npuPlanData = data; renderNpuPlan(); }
+  } catch (error) { $('npuError').hidden = false; $('npuError').textContent = error.message; }
+  finally { $('npuPlanBtn').disabled = false; }
+});
+$('npuInstallBtn').addEventListener('click', () => {
+  if (!npuPlanData || deployBusy || npuJobRunning) return;
+  armDeploy($('npuInstallBtn'), async () => {
+    setDeployBusy(true);
+    try {
+      await deployRequest('/dashboard/api/deploy/quick/npu', {method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify(npuSelection())});
+      npuJobRunning = true;
+      startJobPoll();
+    } catch (error) { $('npuError').hidden = false; $('npuError').textContent = error.message; }
+    finally { setDeployBusy(false); }
+  }, t('npu_confirm'));
+});
 function showDeployError(message) { const el = $('deployError'); el.hidden = false; el.textContent = message; el.scrollIntoView({block: 'nearest'}); }
 function resetDeployArm() { if (deployArm) { deployArm.btn.textContent = deployArm.label; deployArm = null; } }
 function armDeploy(btn, run, confirmLabel) {
@@ -957,7 +1064,7 @@ async function deployRequest(path, options = {}) {
   return data;
 }
 async function refreshDeploy() {
-  try { deployData = await deployRequest('/dashboard/api/deploy'); renderDeploy(); } catch { showDeployError(t('deploy_load_failed')); }
+  try { deployData = await deployRequest('/dashboard/api/deploy'); renderDeploy(); await refreshNpu(); } catch { showDeployError(t('deploy_load_failed')); }
 }
 function renderDeploy() {
   if (!deployData) return;
@@ -1119,6 +1226,8 @@ async function pollJob() {
   jobBusy = true;
   try {
     const job = await deployRequest('/dashboard/api/deploy/job');
+    npuJobRunning = job.kind === 'quick-npu' && job.state === 'running';
+    renderNpuPlan();
     if (!job.active) { $('jobBox').hidden = true; return; }
     $('jobBox').hidden = false;
     const step = job.total_steps ? ` (${job.step || 0}/${job.total_steps})` : '';
@@ -1137,6 +1246,7 @@ async function pollJob() {
     } else if (job.kind === 'hf-install') {
       await refreshHf();
     } else if (job.kind.startsWith('quick-')) {
+      if (job.kind === 'quick-npu') { npuDirty = false; npuPlanData = null; $('npuPlan').hidden = true; }
       await refreshDeploy();
       await refreshSwiftPlan();
       refreshLive();

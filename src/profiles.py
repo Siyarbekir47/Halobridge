@@ -48,6 +48,14 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_VISION_TOWER": FieldSpec("text"),
     "HALOGEN_MTP_HEAD": FieldSpec("path"),
     "HALOGEN_DOWNLOAD": FieldSpec("repo"),
+    "HALOGEN_NPU_MODELS": FieldSpec("models"),
+    "HALOGEN_NPU_QUEUE": FieldSpec("int", 1, 65536),
+    "HALOGEN_NPU_EMB_BATCH": FieldSpec("flag"),
+    "HALOGEN_NPU_VERIFY": FieldSpec("flag"),
+    "HALOGEN_NPU_PORT": FieldSpec("int", 1024, 65535),
+    "HALOGEN_CACHE_EVICT": FieldSpec("flag"),
+    "HALOGEN_MTP": FieldSpec("flag"),
+    "HALOGEN_PREFILL_CANCEL": FieldSpec("flag"),
     "HALOGEN_CK_OVERLAY": FieldSpec("text"),
     "HALOGEN_TEMPLATE_UNCHECKED": FieldSpec("flag"),
     "HALOGEN_API_PORT": FieldSpec("int", 1, 65535),
@@ -153,7 +161,7 @@ def validate_profile(profile: Profile) -> list[str]:
         spec = ENV_FIELDS.get(key)
         if spec is None:
             errors.append(f"env: variable is not on the allowlist: {key}")
-        elif not SAFE_VALUE_RE.match(value):
+        elif spec.kind != "models" and not SAFE_VALUE_RE.match(value):
             errors.append(f"env {key}: invalid characters")
         else:
             error = _validate_value(value, spec)
@@ -163,6 +171,18 @@ def validate_profile(profile: Profile) -> list[str]:
     cap = profile.env.get("HALOGEN_MAX_TOKENS_CAP")
     if default and cap and int(default) > int(cap):
         errors.append("env: MAX_TOKENS_DEFAULT must not exceed MAX_TOKENS_CAP")
+    if profile.env.get("HALOGEN_NPU_MODELS"):
+        from npu import parse_models
+        try:
+            models = parse_models(profile.env["HALOGEN_NPU_MODELS"])
+            if profile.model_id in [name.rsplit("/", 1)[-1] for name in models]:
+                errors.append("env: NPU model IDs must differ from the backend model ID")
+        except ValueError:
+            pass  # The field validation above reports the detailed error.
+        if profile.env.get("HALOGEN_NPU_PORT") == profile.env.get("HALOGEN_API_PORT", "8731"):
+            errors.append("env: NPU port must differ from the API port")
+        if profile.env.get("HALOGEN_NPU_PORT") == profile.env.get("HALOGEN_PORT", "8730"):
+            errors.append("env: NPU port must differ from the GPU engine port")
     return errors
 
 
@@ -197,6 +217,12 @@ def _validate_value(value: str, spec: FieldSpec) -> str | None:
     elif spec.kind == "repo":
         if not REPO_ID_RE.match(value):
             return "'org/repo' expected"
+    elif spec.kind == "models":
+        from npu import parse_models
+        try:
+            parse_models(value)
+        except ValueError as exc:
+            return str(exc)
     return None
 
 
@@ -220,6 +246,8 @@ def render_quadlet(profile: Profile) -> str:
         "AddDevice=/dev/dri",
         f"PublishPort=127.0.0.1:{profile.host_port}:{CONTAINER_API_PORT}",
     ]
+    if profile.env.get("HALOGEN_NPU_MODELS"):
+        lines.append("AddDevice=/dev/accel/accel0")
     for key in sorted(profile.env):
         lines.append(f"Environment={key}={profile.env[key]}")
     lines += [

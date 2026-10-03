@@ -110,6 +110,34 @@ class ModelManager:
         self.active_requests = 0
         self.maintenance = False
 
+    async def backend_model_entries(self) -> list[dict]:
+        if self.session is None:
+            return []
+        try:
+            async with self.session.get(f"{self.backend_url or BACKEND_URL}/v1/models",
+                                        timeout=ClientTimeout(total=5)) as response:
+                if response.status != 200:
+                    return []
+                body = await response.json()
+                data = body.get("data", []) if isinstance(body, dict) else []
+                return [item for item in data if isinstance(item, dict) and isinstance(item.get("id"), str)]
+        except (ClientError, asyncio.TimeoutError, ValueError):
+            return []
+
+    async def auxiliary_models(self) -> list[dict]:
+        provider = getattr(self, "npu_names", None)
+        if provider is None or self.switching or self.maintenance:
+            return []
+        model = self.current_model
+        expected = provider(model)
+        if not expected:
+            return []
+        entries = await self.backend_model_entries()
+        # A backend switch while probing must not advertise the previous NPU set.
+        if self.current_model != model or self.switching or not any(e["id"] == model for e in entries):
+            return []
+        return [e for e in entries if e["id"] in expected and e["id"] not in self.models]
+
     async def begin_maintenance(self) -> None:
         """Close admission atomically with model switching and reservation."""
         async with self.condition:
@@ -567,9 +595,10 @@ class ModelManager:
     async def reserve_request(
         self,
         requested_model: Optional[str],
+        *, auxiliary: bool = False,
     ) -> str:
         self._check_maintenance()
-        target_model = requested_model or self.current_model
+        target_model = self.current_model if auxiliary else requested_model or self.current_model
 
         if target_model not in self.models:
             raise web.HTTPNotFound(
@@ -593,6 +622,13 @@ class ModelManager:
                 while self.switching:
                     await self.condition.wait()
                     self._check_maintenance()
+
+                if auxiliary:
+                    target_model = self.current_model
+                    if requested_model not in {entry["id"] for entry in await self.auxiliary_models()}:
+                        raise web.HTTPServiceUnavailable(text=json.dumps({"error": {
+                            "type": "model_unavailable", "message": "NPU model is unavailable on the active backend"}}),
+                            content_type="application/json", headers={"Retry-After": "5"})
 
                 if self.current_model == target_model:
                     self.active_requests += 1
@@ -660,6 +696,7 @@ async def list_models(request: web.Request) -> web.Response:
     manager = request.app.get("manager")
     models = manager.models if manager is not None else request.app.get("models", MODELS)
 
+    auxiliary = await manager.auxiliary_models() if manager is not None and hasattr(manager, "auxiliary_models") else []
     return web.json_response(
         {
             "object": "list",
@@ -671,7 +708,7 @@ async def list_models(request: web.Request) -> web.Response:
                     "owned_by": settings.APP,
                 }
                 for model in models
-            ],
+            ] + auxiliary,
         }
     )
 
@@ -721,12 +758,22 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass
 
-    reserved_model = await manager.reserve_request(requested_model)
+    auxiliary = False
+    if requested_model and hasattr(manager, "auxiliary_models") and requested_model not in manager.models:
+        provider = getattr(manager, "npu_names", lambda _: set())
+        auxiliary = requested_model in provider(manager.current_model)
+        # Admission rechecks actual backend discovery after any pending GPU
+        # switch. A declared but unavailable NPU returns a retryable 503.
+        if (not auxiliary and request.path == "/v1/moderations"
+                and requested_model.startswith(("omni-moderation", "text-moderation"))):
+            requested_model = None  # Upstream resolves its OpenAI-compatible moderation alias.
+    reserved_model = (await manager.reserve_request(requested_model, auxiliary=True) if auxiliary
+                      else await manager.reserve_request(requested_model))
     track_usage = request.method == "POST" and request.path in INFERENCE_ENDPOINTS
     trace = await dashboard.begin_request(
         request,
         payload,
-        reserved_model,
+        requested_model if auxiliary else reserved_model,
     ) if track_usage else None
     headers = filtered_request_headers(request)
     if track_usage:
@@ -1076,11 +1123,22 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
         updater = ContainerUpdater(manager, session, models, config=config)
         deploy_manager = DeployManager(manager, config, updater=updater)
         updater.checkpoint_assets = deploy_manager.assets
-        manager.asset_validator = deploy_manager.assets.validate_start
+        updater.npu_assets = deploy_manager.npu_assets
+        async def validate_assets(model):
+            await deploy_manager.assets.validate_start(model)
+            for profile in deploy_manager.npu_assets.profiles():
+                if profile.model_id == model and profile.env.get("HALOGEN_NPU_MODELS"):
+                    await deploy_manager.npu_assets.validate_profile_start(profile)
+        manager.asset_validator = validate_assets
+        from npu import profile_model_names
+        manager.npu_names = lambda model: next((profile_model_names(p) for p in deploy_manager.npu_assets.profiles()
+                                                if p.model_id == model), set())
         if models:
             await updater.recover_on_startup()
         if not updater.recovery_required:
             await deploy_manager.recover_swift_on_startup()
+        if not updater.recovery_required and not deploy_manager.recovery_required:
+            await deploy_manager.recover_npu_on_startup()
         models = manager.models
         specs, skipped, _ = resolve_models(config)
         if models:
@@ -1231,6 +1289,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         )
     sub.add_parser("doctor", help="Check setup")
     sub.add_parser("update-check", help="Check update status without installing")
+    sub.add_parser("npu-check", help="Check NPU device, XRT, IOMMU and fabric clock")
+    sub.add_parser("npu-host-setup", help="Print verified download and installation commands for the fabric clock service")
 
     return parser.parse_args(argv)
 
@@ -1340,6 +1400,16 @@ def cli(argv: Optional[list[str]] = None) -> None:
         raise SystemExit(asyncio.run(run_doctor(config)))
     elif command == "update-check":
         raise SystemExit(asyncio.run(run_update_check(config)))
+    elif command == "npu-check":
+        from npu import host_status
+        status = host_status()
+        print(json.dumps(status, indent=2))
+        raise SystemExit(0 if status["ready"] else 1)
+    elif command == "npu-host-setup":
+        from npu import host_setup
+        print("Install the host NPU driver, firmware and matching XRT with its NPU plugin first.")
+        print("IOMMU must be enabled. Then install the GPU fabric clock unit:")
+        print("\n".join(host_setup(Path(config.dashboard.state_dir))["commands"]))
     else:
         print(f"Unknown command: {command}", file=sys.stderr)
         raise SystemExit(2)

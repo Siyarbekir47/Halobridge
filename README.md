@@ -31,6 +31,8 @@ one-click container updates.
 - Shows request counts, input/output tokens, cache ratio, latency, and history.
 - Uses only API-reported `usage` values for token accounting.
 - Provides a safe update flow for the official Halogen container image.
+- Runs five NPU tasks alongside the GPU model through the same API, with
+  shared downloads, host diagnostics and versioned update recovery.
 - Can be protected with a token gate for non-local access.
 
 ## What it does not do
@@ -571,6 +573,153 @@ You can keep the dashboard but disable installation:
 allow_install = false
 ```
 
+## NPU models with Halogen 0.16.2+
+
+The GPU model and the selected NPU models run together behind Halobridge's
+existing port. Requests select an NPU model by its `model` ID; they do not
+switch or unload the GPU model. `/v1/models` advertises only the NPU models
+loaded by the currently active backend.
+
+| Model ID | Task | Endpoint |
+| --- | --- | --- |
+| `decider-0.8b` | Schema-based decisions with option probabilities | `/v1/chat/completions` |
+| `qwen3-embedding-0.6b` | Text embeddings for search and RAG | `/v1/embeddings` |
+| `qwen3-reranker-0.6b` | Rank documents against a query | `/v1/rerank` |
+| `qwen3guard-gen-0.6b` | Moderation with safety labels | `/v1/moderations` |
+| `qwen3.5-2b` | Text generation and summaries, with streaming | `/v1/chat/completions` |
+
+### Host preparation
+
+1. Update the selected backend profiles to **Halogen 0.16.2 or newer** using
+   the dashboard's engine updater. Your GPU checkpoint remains selected.
+2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/docs/NPU.md#host)
+   for the Linux `amdxdna` driver, firmware, XRT and its NPU plugin. The service
+   user needs access to `/dev/accel/accel0`. Enable IOMMU; `amd_iommu=off` and
+   `iommu=off` are incompatible, while `iommu=pt` is supported.
+3. Run `halobridge npu-host-setup` and execute its printed commands once on the
+   host. They download the unmodified upstream fabric-clock helper and unit
+   from a pinned revision, verify SHA-256, and install and start the system
+   service with `sudo`. Halobridge itself does not execute privileged commands.
+4. Run `halobridge npu-check`. Resolve its reported prerequisites before
+   enabling any NPU models. Rootless Podman needs the host fabric-clock service
+   running: concurrent GPU/NPU work requires the GPU fabric clock to be held.
+5. In **Models → NPU models alongside your GPU model**, select the tasks and
+   target backend profiles, preview downloads, then apply the selection.
+
+Ubuntu and Fedora 44 remain the supported distributions. NPU support also
+depends on the host driver, firmware and XRT; actual device operation must be
+checked on your machine. Halobridge finds AMD's `/opt/xilinx/xrt` installation
+or resolves installed distribution library symlinks. XRT mounts are read-only
+and never receive a SELinux relabel operation.
+
+### Downloads, updates and recovery
+
+NPU weights, tokenizers and device programs are checked against the selected
+container image's pinned file record. They live under
+`models_root/shared/halogen-npu/<manifest-sha256>` and are shared by Official,
+Orca, Swift and custom GPU profiles. Containers mount this directory read-only.
+The embedder, reranker and guard share their device programs; unused model
+weights are not downloaded. Repeated setup verifies and reuses existing files.
+
+Preparation, disk checks and XRT compatibility checks happen while the current
+backend serves requests. Activation drains Halobridge requests and restarts
+only the affected active backend. Failures or cancellation restore its previous
+Quadlet and backend; a persistent journal recovers interrupted activation after
+a router restart. Downloaded files stay available for retry. External Quadlet
+edits pause recovery instead of being overwritten.
+
+Engine updates prepare a new versioned NPU directory when its file record
+changes. Unchanged files are reused; previous device programs stay intact for
+rollback. A later model start with missing or invalid NPU files fails with a
+repair instruction instead of starting an implicit download. Enable the same
+NPU selection on every backend profile if the NPU models should remain
+available after GPU model switches. Uncheck all tasks and apply to disable NPU
+models while retaining their downloads.
+
+Send inference through Halobridge so its request drain includes NPU work.
+Calls made directly to the backend bypass that admission gate. The upstream
+health counters describe GPU work; Halobridge tracks routed NPU requests too.
+All five tasks appear in request history, while the usage charts and token
+coverage remain scoped to generative endpoints.
+
+### API examples
+
+These examples use the default local router address. Add your normal bearer
+token header when the token gate is enabled.
+
+```bash
+# Decision: two to ten options; logprobs returns their probabilities.
+curl --fail-with-body -sS localhost:8731/v1/chat/completions \
+  -H 'Content-Type: application/json' -d '{
+  "model":"decider-0.8b",
+  "messages":[{"role":"user","content":"Please reset my account password."}],
+  "response_format":{"type":"json_schema","json_schema":{
+    "name":"topic","description":"Which support team should handle this?",
+    "schema":{"enum":["accounts","billing","shipping"]}}},
+  "logprobs":true,"top_logprobs":3}'
+
+# Embeddings: 32–1024 dimensions; input must be text, not token IDs.
+curl --fail-with-body -sS localhost:8731/v1/embeddings \
+  -H 'Content-Type: application/json' -d '{
+  "model":"qwen3-embedding-0.6b","dimensions":256,
+  "input":["Instruct: Retrieve useful documentation\nQuery:How do I enable the NPU?",
+           "Install the NPU driver, firmware and matching XRT plugin."]}'
+
+# Reranking: results include the original index and relevance score.
+curl --fail-with-body -sS localhost:8731/v1/rerank \
+  -H 'Content-Type: application/json' -d '{
+  "model":"qwen3-reranker-0.6b","query":"How do I enable the NPU?",
+  "documents":["Install amdxdna and XRT.","The dashboard has a dark theme."],
+  "top_n":2,"return_documents":true}'
+
+# Moderation: strict also flags the Controversial label.
+curl --fail-with-body -sS localhost:8731/v1/moderations \
+  -H 'Content-Type: application/json' -d '{
+  "model":"qwen3guard-gen-0.6b","input":"How do I bake bread?","strict":true}'
+
+# Small text model: streaming is optional; no thinking, vision or tool calls.
+curl --fail-with-body -sSN localhost:8731/v1/chat/completions \
+  -H 'Content-Type: application/json' -d '{
+  "model":"qwen3.5-2b","stream":true,"max_tokens":128,
+  "messages":[{"role":"user","content":"Explain what a local inference router does in three sentences."}]}'
+```
+
+The first four models accept up to 4096 input tokens. `qwen3.5-2b` accepts
+16384 prompt tokens, with 18432 total positions. Decisions choose a schema
+option without sampling. Moderation reports labels and probabilities rather
+than meaningful OpenAI category scores. NPU and GPU work share the chip's
+memory bandwidth and power budget. See the
+[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/docs/NPU.md)
+for supported request options.
+
+### Own NPU fine-tunes and advanced flags
+
+Fine-tunes of the first four models are supported. Put `config.json`,
+`model.safetensors` and `tokenizer.json` in a directory accessible through
+a profile's `/models` mount or an additional mount. Enter the container path
+in NPU Setup, for example `/models/my-guard`. Use a distinct directory basename:
+it becomes the API model ID. For all-profile setup, that path must be available
+in every selected profile.
+
+Setup probes the actual container engine before activation and installs the
+required base device programs. Fine-tune sources receive separate read-only
+mounts, so conversion writes temporary files inside the container and runs
+again at each start. The built-in shared files remain unchanged. A generation
+fine-tune is not supported by upstream 0.16.2.
+
+The profile editor exposes `HALOGEN_NPU_MODELS`, `HALOGEN_NPU_QUEUE` (default
+64), `HALOGEN_NPU_PORT` (internal, default 8740), `HALOGEN_NPU_EMB_BATCH`,
+`HALOGEN_NPU_VERIFY`, `HALOGEN_CACHE_EVICT`, `HALOGEN_MTP` and
+`HALOGEN_PREFILL_CANCEL`. Boolean selectors preserve explicit `0`; an empty
+value uses the engine's default. Use NPU Setup to provision files and mounts;
+editing the model list alone does not install models. Keep file verification
+enabled unless diagnosing a specific upstream issue.
+
+The System view shows cache hits, evictions and replaced entries (`dropped`).
+`HALOGEN_CACHE_EVICT=0` selects the earlier eviction policy; leaving it empty
+uses the improved upstream default. These engine flags do not change the
+selected GPU checkpoint.
+
 ## Updating Halobridge itself
 
 Under **System → Halobridge updates**, the dashboard checks GitHub every six
@@ -702,6 +851,8 @@ halobridge doctor
 halobridge router
 halobridge dashboard
 halobridge update-check
+halobridge npu-check
+halobridge npu-host-setup
 ```
 
 ## Development
@@ -711,6 +862,21 @@ Run tests:
 ```bash
 python -B -m unittest discover -s tests -v
 ```
+
+After enabling all five NPU models on a Linux host, run the opt-in hardware
+smoke test from a checkout:
+
+```bash
+python tests/npu_smoke.py --url http://127.0.0.1:8731
+# Optional GPU switches; the script restores the initially active model:
+python tests/npu_smoke.py --gpu-switches qwen3.8-flash halogen-swift15-abliterated
+```
+
+Set `HALOBRIDGE_TOKEN` if authentication is enabled. This test sends small
+inference requests, checks all five API response shapes and streaming, and
+verifies that NPU requests leave the active GPU model unchanged. It does not
+install models or alter host settings. Hardware smoke tests must be run on the
+target machine; the automated suite simulates XRT, Podman and systemd.
 
 Optional real-browser dashboard check:
 
@@ -742,7 +908,9 @@ unchanged, so each browser can select its own language.
 ## Credits
 
 - [Peonist (peonist-ai)](https://github.com/peonist-ai/halogen-flash-server)
-  for the Halogen engine, official checkpoints and shared model assets.
+  for the Halogen engine, official checkpoints, shared model assets and NPU
+  models and host tools. Host tools are fetched unmodified from upstream and
+  remain subject to its [license](https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/LICENSE.md).
 - [UkisAI](https://huggingface.co/ukisai/Swift1.5-Qwen3.8-Flash-Next)
   for the original Swift 1.5 fine-tune.
 - [Quat3rnion](https://huggingface.co/Quat3rnion/halogen-swift1.5-qwen3.8-flash-next-v2)

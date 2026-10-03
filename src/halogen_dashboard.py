@@ -24,12 +24,14 @@ STATE_DIR = Path.home() / ".local/state/halogen-dashboard"
 RETENTION_DAYS = 365
 TELEMETRY_VERSION = 2
 PERIOD_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "1y": 365 * 86400}
-INFERENCE_ENDPOINTS = {"/v1/chat/completions", "/v1/completions", "/v1/responses"}
+INFERENCE_ENDPOINTS = {"/v1/chat/completions", "/v1/completions", "/v1/responses",
+                       "/v1/embeddings", "/v1/rerank", "/v1/moderations"}
 SERVE_HEAD_RE = re.compile(
     r"serve_api: (?P<mode>\w+) (?P<tokens>\d+) tok in "
     r"(?P<seconds>[\d.]+)s = (?P<tps>[\d.]+|n/a) t/s"
 )
 REQUEST_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses')"
+HISTORY_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses','/v1/embeddings','/v1/rerank','/v1/moderations')"
 
 # Every aggregate uses this same population. Legacy counters cannot be repaired
 # from stored metadata: the original usage object was deliberately not retained.
@@ -733,7 +735,7 @@ class Dashboard:
         assert self.db is not None
         page_size = max(1, min(page_size, 100))
         total = self.db.execute(
-            f"SELECT COUNT(*) FROM requests WHERE completed_at >= ? AND completed_at <= ? AND {REQUEST_SCOPE}",
+            f"SELECT COUNT(*) FROM requests WHERE completed_at >= ? AND completed_at <= ? AND {HISTORY_SCOPE}",
             (start, end),
         ).fetchone()[0]
         pages = max(1, (total + page_size - 1) // page_size)
@@ -743,7 +745,7 @@ class Dashboard:
                 status, duration_ms, ttft_ms AS ttfb_ms, stream, thinking,
                 reasoning_effort, input_tokens, output_tokens, cached_tokens,
                 reasoning_tokens, tps, prompt_tps, error, telemetry_version
-            FROM requests WHERE completed_at >= ? AND completed_at <= ? AND {REQUEST_SCOPE}
+            FROM requests WHERE completed_at >= ? AND completed_at <= ? AND {HISTORY_SCOPE}
             ORDER BY completed_at DESC, id DESC LIMIT ? OFFSET ?
         """, (start, end, page_size, (page - 1) * page_size)).fetchall()
         return {"items": [dict(row) for row in rows], "page": page, "page_size": page_size, "pages": pages, "total": total}
@@ -841,7 +843,8 @@ class Dashboard:
                     "max_tokens_default", "max_tokens_cap", "reasoning_effort_default",
                 )
             },
-            "cache": {"pool": cache.get("pool") or {}, "model_bytes": self.cache_sizes},
+            "cache": {"pool": cache.get("pool") or {}, "model_bytes": self.cache_sizes,
+                      "counters": {key: cache.get(key) for key in ("entries", "hits", "evicted", "dropped")}},
             "system": {
                 "memory": _memory_info(),
                 "gpu_busy_percent": self._gpu_busy_percent(),

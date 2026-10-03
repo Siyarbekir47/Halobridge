@@ -45,7 +45,7 @@ CHECK_RETRY = 300
 DRAIN_TIMEOUT = 7200
 START_TIMEOUT = 600
 TERMINAL_PHASES = {"succeeded", "failed", "rolled_back"}
-JOB_PHASES = TERMINAL_PHASES | {"starting", "preparing", "pulling", "draining", "configuring", "restarting", "verifying", "rolling_back", "recovery_required"}
+JOB_PHASES = TERMINAL_PHASES | {"starting", "preparing", "preparing_npu", "pulling", "draining", "configuring", "restarting", "verifying", "rolling_back", "recovery_required"}
 
 # Compatibility with the original w4b -> v2 API. Explicit dashboard choices
 # prepare pinned weights before maintenance. 0.16.0 adds opt-in HT43 and keeps
@@ -292,6 +292,8 @@ class ContainerUpdater:
             Path(config.deploy.models_root) if config else Path.home() / "halogen/models",
             self.quadlet_dir, self.state_dir,
         )
+        from npu import NpuAssets
+        self.npu_assets = NpuAssets(self.checkpoint_assets, self.state_dir)
 
     @property
     def running(self) -> bool:
@@ -863,6 +865,12 @@ class ContainerUpdater:
                 if api == version and engine == version and probe_ok:
                     if await self._container_image(model) != image_id:
                         raise UpdateError("The started container uses an unexpected image ID.")
+                    from npu import profile_model_names
+                    content = self._paths()[model].read_text(encoding="utf-8")
+                    expected = profile_model_names(parse_quadlet(content)) if "HALOGEN_NPU_MODELS=" in content else set()
+                    if expected and not expected.issubset({entry["id"] for entry in await self.manager.backend_model_entries()}):
+                        await asyncio.sleep(2)
+                        continue
                     return
             await asyncio.sleep(2)
         raise UpdateError("Backend did not become ready with the expected API/engine version and capability probe.")
@@ -877,6 +885,43 @@ class ContainerUpdater:
         await self.manager.wait_for_gtt_release()
         await self._run("systemctl", "--user", "start", self.models[model], timeout=start_timeout)
 
+    async def _prepare_npu_update(self, configurations, image):
+        from npu import check_runtime, host_status, parse_models, patch_quadlet
+        from shared_assets import host_path
+        enabled = [parse_quadlet(value["content"].decode("utf-8"), self._paths()[name])
+                   for name, value in configurations.items() if b"HALOGEN_NPU_MODELS=" in value["content"]]
+        profiles = enabled
+        if not enabled:
+            return {}
+        state = host_status()
+        if not state["ready"]:
+            raise UpdateError("; ".join(state["errors"]))
+        # Cache the previous image's record before an update so rollback and
+        # later offline starts can validate legacy NPU volumes too.
+        for previous in dict.fromkeys(profile.image for profile in enabled):
+            await self.npu_assets.manifest(previous, self._run, refresh=True)
+        manifest = await self.npu_assets.manifest(image, self._run, refresh=True)
+        wanted = list(dict.fromkeys(model for profile in enabled
+                     for model in parse_models(profile.env["HALOGEN_NPU_MODELS"])))
+        bases = [m for m, info in manifest.models.items() if info["task"] != "generate"] if any(m.startswith("/") for m in wanted) else []
+        selection = self.npu_assets.selection(manifest, wanted, profiles, bases)
+        self._save_job(phase="preparing_npu", message="Preparing versioned NPU files; the current backend keeps serving.")
+        await selection.prepare(None, self._download_checkpoint_asset,
+                                lambda line: self._save_job(message=line))
+        mounts = [tuple(v) for v in state["xrt_mounts"]]
+        for profile in enabled:
+            custom = []
+            for model in parse_models(profile.env["HALOGEN_NPU_MODELS"]):
+                if model.startswith("/"):
+                    source = host_path(profile, model)
+                    if source is None or not all((source / name).is_file() for name in
+                                                 ("config.json", "model.safetensors", "tokenizer.json")):
+                        raise UpdateError(f"Incomplete NPU fine-tune: {model}")
+                    custom.append((str(source), model, "ro"))
+            await check_runtime(self._run, image, mounts, custom)
+        return {profile.quadlet_path: patch_quadlet(configurations[profile.model_id]["content"],
+                shared_root=selection.root, mounts=mounts) for profile in enabled}
+
     async def _update(self, version: str) -> None:
         maintenance = False
         try:
@@ -884,6 +929,8 @@ class ContainerUpdater:
             self._save_job(phase="pulling", message=f"Downloading image {version}. Requests continue to run.")
             await self._run("podman", "pull", image, timeout=1800)
             image_id = await self._inspect_image(image)
+            prepared_configurations = self._configuration()
+            npu_writes = await self._prepare_npu_update(prepared_configurations, image)
             self._save_job(phase="draining", message="Waiting for model switches and active requests.")
             await asyncio.wait_for(self.manager.begin_maintenance(), self.drain_timeout)
             maintenance = True
@@ -892,6 +939,8 @@ class ContainerUpdater:
             if model not in self.models:
                 raise UpdateError("Active model is unknown.")
             configurations = self._configuration()
+            if configurations != prepared_configurations:
+                raise UpdateError("Quadlets changed while preparing the update; retry with the current configuration.")
             if any(version_tuple(value["version"]) > version_tuple(version) for value in configurations.values()):
                 raise UpdateError("Configuration has changed; downgrade cancelled.")
             health = await self.manager.backend_health()
@@ -921,7 +970,7 @@ class ContainerUpdater:
             for name, path in self._paths().items():
                 if path.read_bytes() != configurations[name]["content"]:
                     raise UpdateError("Quadlet was changed externally during the update.")
-                _, content = quadlet_image(configurations[name]["content"], image, image_repo=self.image_repo)
+                _, content = quadlet_image(npu_writes.get(path, configurations[name]["content"]), image, image_repo=self.image_repo)
                 atomic_write(path, content, modes[name])
             await self._run("systemctl", "--user", "daemon-reload")
             await self._verify_units(image)
@@ -934,7 +983,7 @@ class ContainerUpdater:
             self._prune_backups()
         except (Exception, asyncio.CancelledError) as error:
             LOG.warning("Container update failed: %s", type(error).__name__)
-            reason = str(error) if isinstance(error, UpdateError) else "Update cancelled or timed out."
+            reason = str(error) if isinstance(error, (UpdateError, AssetError)) else "Update cancelled or timed out."
             if self.job and self.job.get("changed"):
                 try:
                     await self._rollback(reason)

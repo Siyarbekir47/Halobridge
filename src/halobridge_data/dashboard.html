@@ -113,6 +113,24 @@
         <p id="quickNote" class="muted" data-i18n="quick_note">Official downloads its checkpoint on first start. Uncensored downloads and converts the GGUF. Tokenizer, vision and N-Gram files are shared by all profiles.</p>
       </div>
 
+      <details id="npuSetup" class="quick-deploy"><summary data-i18n="npu_title">NPU models alongside your GPU model</summary>
+        <p class="explanation" data-i18n="npu_hint">Choose the tasks to run on the NPU. Requires Halogen 0.16.2 or newer and host NPU setup.</p>
+        <p id="npuHost" role="status"></p>
+        <details><summary data-i18n="npu_host_setup">Host setup &amp; diagnostics</summary><div class="detail-body">
+          <p data-i18n="npu_host_hint">Install the NPU driver, firmware and matching XRT plugin. Enable IOMMU and hold the GPU fabric clock with the host service.</p>
+          <pre id="npuHostCommands" class="deploy-diff"></pre>
+          <p><code>halobridge npu-check</code> · <a href="https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/docs/NPU.md" target="_blank" rel="noopener noreferrer" data-i18n="npu_docs">Upstream setup instructions</a></p>
+        </div></details>
+        <fieldset><legend data-i18n="npu_select_models">NPU tasks</legend><div id="npuModelChoices" class="deploy-fields"></div></fieldset>
+        <div class="deploy-fields">
+          <label><span data-i18n="npu_profiles">Backend profiles</span><select id="npuProfiles"><option value="" data-i18n="npu_all_profiles">All installed profiles</option></select></label>
+          <label><span data-i18n="npu_custom">Custom fine-tunes (comma-separated /models directories)</span><input id="npuCustom" type="text" placeholder="/models/my-guard"></label>
+        </div>
+        <p class="muted" data-i18n="npu_shared_hint">Files are shared across profiles and prepared before restarting. The previous version stays available for rollback.</p>
+        <div class="deploy-actions"><button id="npuPlanBtn" data-i18n="npu_preview">Preview downloads</button><button id="npuInstallBtn" class="primary" disabled data-i18n="npu_apply">Apply NPU selection</button></div>
+        <div id="npuPlan" class="shared-plan" role="status" hidden></div>
+        <p id="npuError" class="failure" role="alert" hidden></p>
+      </details>
       <details id="deployNew"><summary data-i18n="custom_profile">Configure a profile manually</summary><div class="deploy-new">
         <label for="deployTemplate" data-i18n="deploy_new_label">New profile from template:</label>
         <select id="deployTemplate">
@@ -181,6 +199,7 @@
       <dl class="detail-grid"><div><dt data-i18n="label_engine_tps">Generation, weighted</dt><dd id="engineTps">–</dd></div><div><dt data-i18n="label_prefill">Prefill, weighted</dt><dd id="prefillTps">–</dd></div><div><dt data-i18n="label_mtp">MTP commit / round</dt><dd id="mtp">–</dd></div><div><dt data-i18n="label_pld">PLD acceptance / round</dt><dd id="pld">–</dd></div></dl>
       <p class="explanation" data-i18n="engine_explanation">Engine measurements come from local completion logs. They may also include direct backend calls and are independent of the router requests above.</p>
       <div class="endpoint"><span class="muted" data-i18n="api_label">API</span><code id="endpoint">–</code><button id="copy" data-i18n="copy_btn">Copy</button><span id="copyStatus" class="muted" role="status"></span></div>
+      <p id="cacheCounters" class="muted"></p>
       <div id="storage" class="explanation"></div>
     </div></section><section class="updates-section"><h2 data-i18n="app_updates_section">Halobridge updates</h2><div class="update-strip">
     <div>
