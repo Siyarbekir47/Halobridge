@@ -12,7 +12,9 @@ from test_dashboard import database, insert
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from profiles import official_template, custom_template, swift_quick_template, profile_to_dict, ENV_FIELDS
 from swift_catalog import SHARED_ASSETS, variant_info
+from official_checkpoints import OFFICIAL_CHECKPOINTS
 from halogen_router import _login_response, _request_lang
+from npu import NPU_MODELS, TASK_ROUTES, bundled_manifest, parse_models
 
 
 def create_preview():
@@ -29,10 +31,11 @@ def create_preview():
                 'api': {'active_model': 'qwen3.8-flash', 'status': 'ok'},
                 'backend': {'status': 'ok', 'in_flight': 0, 'queued': 0, 'context': 262144,
                             'slots': 4, 'max_tokens_default': 8192, 'max_tokens_cap': 65536,
-                            'reasoning_effort_default': 'xhigh', 'version': {'api': '0.13.2'}},
+                            'reasoning_effort_default': 'xhigh', 'version': {'api': '0.16.2', 'engine': '0.16.2'}},
                 'system': {'gpu_busy_percent': 8, 'memory': {'used_bytes': 62*1024**3, 'total_bytes': 128*1024**3},
                            'disk_used_bytes': 420*1024**3, 'disk_total_bytes': 2000*1024**3},
-                'cache': {'pool': {'usage_ratio': .3}, 'model_bytes': {}}, 'active_requests': []}
+                'cache': {'pool': {'usage_ratio': .3}, 'model_bytes': {},
+                          'counters': {'hits': 32, 'evicted': 2, 'dropped': 7}}, 'active_requests': []}
     dashboard.snapshot = snapshot
     original_page = dashboard.page
     async def fixture_page(request):
@@ -55,18 +58,64 @@ def create_preview():
         insert(dashboard, request_id=f'fixture-{time.time_ns()}', completed_at=time.time(), **fields)
         raise web.HTTPSeeOther(location='/dashboard')
     app.router.add_post('/preview/request/{kind}', fixture_request)
-    updates = {'current_version': '0.13.2', 'latest_version': '0.13.2', 'checked_at': time.time(),
-               'configured_versions': {'qwen3.8-flash': '0.13.2'}, 'up_to_date': True, 'running': False,
-               'supported': False, 'support_error': 'Updates require a Linux host with Podman and systemd under the router\'s user account.'}
+    choices = []
+    for key, choice in OFFICIAL_CHECKPOINTS.items():
+        files = []
+        for asset in [choice['asset'], *SHARED_ASSETS]:
+            checkpoint = asset == choice['asset']
+            missing = checkpoint and key == 'ht43'
+            path = '/home/demo/models/' + ('official/' if checkpoint else 'shared/halogen-v2/' + asset.revision + '/') + asset.name
+            files.append({'name': asset.name, 'path': path, 'status': 'download' if missing else 'verified',
+                          'size': asset.size, 'download_bytes': asset.size if missing else 0,
+                          'url': f'https://huggingface.co/{asset.repo}/blob/{asset.revision}/{asset.name}'})
+        choices.append({'target_key': key, 'label': choice['label'], 'target': '/models/' + choice['asset'].name,
+                        'available': key == 'ht43', 'can_install': key == 'ht43', 'optional': key == 'ht43',
+                        'needs_download': key == 'ht43', 'download_gib': 54 if key == 'ht43' else 0,
+                        'plan': {'files': files, 'filesystems': [{'path': '/home/demo/models', 'free_bytes': 200 * 2**30,
+                                 'required_bytes': choice['asset'].size if key == 'ht43' else 0,
+                                 'reserve_bytes': 5 * 2**30 if key == 'ht43' else 0}]}})
+    updates = {'current_version': '0.16.2', 'latest_version': '0.16.2', 'checked_at': time.time(),
+               'configured_versions': {'qwen3.8-flash': '0.16.2'}, 'up_to_date': True, 'running': False,
+               'supported': True, 'support_error': None, 'checkpoint': {
+                   'current': choices[0]['target'], 'target': choices[0]['target'], 'target_key': 'v2',
+                   'label': 'v2', 'available': False, 'choices': choices}}
+    checkpoint_polls = 0
     async def update_status(request):
+        nonlocal checkpoint_polls
+        if updates['running']:
+            checkpoint_polls += 1
+            updates['job']['updated_at'] = time.time()
+            updates['job']['phase'] = 'preparing' if checkpoint_polls < 2 else 'verifying'
+            if checkpoint_polls >= 3:
+                updates['running'] = False
+                updates['job']['phase'] = 'succeeded'
+                updates['checkpoint']['current'] = updates['job']['target']
+                for choice in choices:
+                    choice.update(available=choice['target'] != updates['job']['target'],
+                                  can_install=choice['target'] != updates['job']['target'])
+                    if choice['target'] == updates['job']['target']:
+                        choice.update(needs_download=False, download_gib=0)
+                        for file in choice['plan']['files']:
+                            file.update(status='verified', download_bytes=0)
         return web.json_response(updates)
+    async def install_checkpoint(request):
+        nonlocal checkpoint_polls
+        payload = await request.json()
+        choice = next(c for c in choices if c['target_key'] == payload['target'])
+        checkpoint_polls = 0
+        updates.update(running=True, job={'kind': 'checkpoint', 'target_key': choice['target_key'],
+                       'target': choice['target'], 'label': choice['label'], 'needs_download': choice['needs_download'],
+                       'download_gib': choice['download_gib'], 'prepared_download': True,
+                       'started_at': time.time(), 'updated_at': time.time(), 'phase': 'preparing'})
+        return web.json_response(updates, status=202)
     app.router.add_get('/dashboard/api/updates', update_status)
     app.router.add_post('/dashboard/api/updates/check', update_status)
+    app.router.add_post('/dashboard/api/updates/checkpoint', install_checkpoint)
     # The self-update interaction is simulated; no installation or restart occurs.
-    app_updates = {'current_version': '0.1.23', 'latest_version': '0.1.24',
+    app_updates = {'current_version': '0.1.25', 'latest_version': '0.1.25',
                    'checked_at': time.time(), 'source_ref': 'develop',
-                   'update_available': True, 'up_to_date': False, 'running': False,
-                   'supported': True, 'can_install': True, 'job': None,
+                   'update_available': False, 'up_to_date': True, 'running': False,
+                   'supported': True, 'can_install': False, 'job': None,
                    'release_url': 'https://github.com/Siyarbekir47/Halobridge/blob/develop/CHANGELOG.md'}
     app_poll_count = 0
     async def app_update_status(request):
@@ -85,7 +134,43 @@ def create_preview():
         return web.json_response(app_updates)
     app.router.add_get('/dashboard/api/app-updates', app_update_status)
     app.router.add_post('/dashboard/api/app-updates/{action}', app_update_status)
-    profile = profile_to_dict(official_template('0.13.2', PurePosixPath('/home/demo/models'), PurePosixPath('/home/demo/cache')))
+    profile = profile_to_dict(official_template('0.16.2', PurePosixPath('/home/demo/models'), PurePosixPath('/home/demo/cache')))
+    profile['env'].update(HALOGEN_CACHE_EVICT='0', HALOGEN_NPU_EMB_BATCH='0', HALOGEN_NPU_VERIFY='1')
+    profile['volumes'].append(['/opt/xilinx/xrt', '/opt/xilinx/xrt', 'ro'])
+    npu_ready = True
+    npu_space = True
+    async def npu_fixture(request):
+        nonlocal npu_ready, npu_space
+        data = await request.json()
+        npu_ready = data.get('ready', npu_ready)
+        npu_space = data.get('space', npu_space)
+        return web.json_response({'ok': True})
+    async def npu_status(request):
+        return web.json_response({'ready': npu_ready,
+            'errors': [] if npu_ready else ['GPU fabric clock is not held; install and start halogen-fabric-clock.service before enabling NPU'],
+            'setup': {'commands': ['halobridge npu-host-setup', 'halobridge npu-check']},
+            'models': [{'id': model, 'task': task, 'endpoint': TASK_ROUTES[task]} for model, task in NPU_MODELS.items()],
+            'profiles': [{'id': 'official', 'image': profile['image'], 'models': profile['env'].get('HALOGEN_NPU_MODELS', '')}]})
+    async def npu_plan(request):
+        models = parse_models(request.query['models']) if request.query.get('models') else []
+        manifest = bundled_manifest()
+        files = [{'name': asset.model + '/' + asset.name,
+                  'path': '/home/demo/models/shared/halogen-npu/' + manifest.key + '/' + asset.model + '/' + asset.name,
+                  'size': asset.size, 'status': 'download', 'download_bytes': asset.size,
+                  'url': f'https://huggingface.co/{asset.repo}/blob/{asset.revision}/{asset.name}'}
+                 for asset in manifest.select(models)]
+        size = sum(file['size'] for file in files)
+        return web.json_response({'models': models, 'profiles': ['official'], 'download_bytes': size,
+            'plans': [{'files': files, 'filesystems': [{'path': '/home/demo/models', 'free_bytes': 80*2**30 if npu_space else 0,
+                      'required_bytes': size, 'reserve_bytes': 5*2**30, 'sufficient': npu_space}]}]})
+    async def npu_install(request):
+        nonlocal swift_job
+        data = await request.json()
+        assert request.headers.get('X-Halogen-Action') == 'deploy'
+        profile['env']['HALOGEN_NPU_MODELS'] = data['models']
+        swift_job = {'active': True, 'kind': 'quick-npu', 'state': 'running',
+                     'lines': ['Preparing NPU files (UI fixture; no downloads).'], 'step': 1, 'total_steps': 4, 'elapsed': 0}
+        return web.json_response({'ok': True}, status=202)
     async def deploy(request):
         return web.json_response({'enabled': True, 'posix': True, 'quadlet_dir': '/home/demo/.config/containers/systemd',
                                  'allowed_roots': ['/home/demo'], 'env_keys': list(ENV_FIELDS),
@@ -145,6 +230,10 @@ def create_preview():
     async def login(request):
         return _login_response(error=request.method == 'POST', lang=_request_lang(request))
     app.router.add_get('/dashboard/api/deploy', deploy)
+    app.router.add_post('/preview/npu', npu_fixture)
+    app.router.add_get('/dashboard/api/deploy/npu', npu_status)
+    app.router.add_get('/dashboard/api/deploy/npu/plan', npu_plan)
+    app.router.add_post('/dashboard/api/deploy/quick/npu', npu_install)
     app.router.add_get('/dashboard/api/deploy/template/{kind}', template)
     app.router.add_get('/dashboard/api/deploy/hf', hf)
     app.router.add_get('/dashboard/api/deploy/job', job)

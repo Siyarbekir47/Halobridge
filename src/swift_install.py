@@ -21,12 +21,16 @@ def shared_quadlet_content(content: str, locations: dict) -> str:
     profile = bind_shared_assets(parse_quadlet(content), locations)
     keys = {"HALOGEN_NGRAM_TABLE", "HALOGEN_TOKENIZER", "HALOGEN_VISION_TOWER"}
     additions = [f"Environment={key}={profile.env[key]}" for key in sorted(keys) if key in profile.env]
-    additions += [f"Volume={host}:{container}:{mode}" for host, container, mode in profile.volumes
-                  if container in {"/shared/ngram", "/shared/vision", "/shared/tokenizer"}]
+    mounts = [f"Volume={host}:{container}:{mode}" for host, container, mode in profile.volumes
+              if container in {"/shared/ngram", "/shared/vision", "/shared/tokenizer"}]
     lines, section = [], ""
     for line in content.splitlines():
         stripped = line.strip()
         if stripped.startswith("["):
+            if section == "[Container]":
+                # A legacy /models:Z parent can contain the shared tree. Apply
+                # shared :z mounts last so the parent cannot make them private.
+                lines.extend(mounts)
             section = stripped
         if section == "[Container]":
             if stripped == "[Container]":
@@ -38,6 +42,8 @@ def shared_quadlet_content(content: str, locations: dict) -> str:
                                                                        ("/shared/ngram", "/shared/vision", "/shared/tokenizer")):
                 continue
         lines.append(line)
+    if section == "[Container]":
+        lines.extend(mounts)
     return "\n".join(lines) + "\n"
 
 

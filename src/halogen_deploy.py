@@ -51,6 +51,8 @@ from profiles import (
 )
 from shared_assets import SharedAssets
 from swift_install import SwiftInstallMixin
+from npu_install import NpuInstallMixin
+from npu import NpuAssets, system_mount_allowed
 
 logger = logging.getLogger("halobridge.deploy")
 
@@ -116,7 +118,7 @@ def _hf_download_env(token: str | None = None) -> dict[str, str]:
     return env
 
 
-class DeployManager(SwiftInstallMixin):
+class DeployManager(SwiftInstallMixin, NpuInstallMixin):
     def __init__(
         self,
         manager: Any,
@@ -137,6 +139,8 @@ class DeployManager(SwiftInstallMixin):
         self.swift_journal = Path(config.dashboard.state_dir) / "swift-install.json"
         self.assets = SharedAssets(self._default_roots()[0], self.quadlet_dir,
                                    Path(config.dashboard.state_dir), self._validate_host_path)
+        self.npu_assets = NpuAssets(self.assets, Path(config.dashboard.state_dir))
+        self.npu_journal = Path(config.dashboard.state_dir) / "npu-install.json"
 
     # ------------------------------------------------------------------ state
 
@@ -272,6 +276,8 @@ class DeployManager(SwiftInstallMixin):
         profile = self._profile_from_payload(payload)
         created = []
         for host_path, _container, _mode in profile.volumes:
+            if system_mount_allowed(host_path, _container, _mode):
+                continue
             root = self._validate_host_path(host_path)
             root.mkdir(parents=True, exist_ok=True)
             created.append(str(root))
@@ -1094,6 +1100,8 @@ class DeployManager(SwiftInstallMixin):
     def _validate_host_paths(self, profile: Profile) -> list[str]:
         errors = []
         for host_path, _container, _mode in profile.volumes:
+            if system_mount_allowed(host_path, _container, _mode):
+                continue
             try:
                 self._validate_host_path(host_path)
             except DeployError as exc:
@@ -1103,6 +1111,11 @@ class DeployManager(SwiftInstallMixin):
     def _validate_conflicts(self, profile: Profile) -> list[str]:
         """Hard conflicts: the same model id may not exist twice."""
         errors = []
+        from npu import profile_model_names
+        try:
+            own_npu = profile_model_names(profile)
+        except ValueError:
+            return errors  # validate_profile reports the malformed list.
         if not self.quadlet_dir.is_dir():
             return errors
         for path in self.quadlet_dir.glob("halogen-*.container"):
@@ -1117,6 +1130,12 @@ class DeployManager(SwiftInstallMixin):
                     f"Model ID '{profile.model_id}' is already used by profile "
                     f"'{other.profile_id}'"
                 )
+            try:
+                other_npu = profile_model_names(other)
+            except ValueError:
+                other_npu = set()
+            if other.model_id in own_npu or profile.model_id in other_npu:
+                errors.append("NPU model IDs must not conflict with backend profile model IDs")
         return errors
 
     def _conflict_warnings(self, profile: Profile) -> list[str]:
@@ -1145,7 +1164,7 @@ class DeployManager(SwiftInstallMixin):
             latest = getattr(self.updater, "latest_version", None)
             if latest:
                 return str(latest)
-        return "0.13.2"
+        return "0.16.2"
 
     async def _any_other_service_active(self, profile_id: str) -> bool:
         if not self.quadlet_dir.is_dir():
@@ -1271,9 +1290,9 @@ class DeployRoutes:
     def _guard(self, request: web.Request) -> None:
         job = self.manager.job or {}
         if (self.manager.recovery_required or
-                (job.get("state") == "running" and job.get("kind", "").startswith("quick-swift"))):
+                (job.get("state") == "running" and job.get("kind", "").startswith(("quick-swift", "quick-npu")))):
             if request.path != "/dashboard/api/deploy/job/cancel":
-                raise DeployError("Swift installation or recovery is in progress")
+                raise DeployError("Model installation or recovery is in progress")
         expected = f"http://{request.headers.get('Host', '')}"
         origin = request.headers.get("Origin")
         if origin is not None and origin != expected:
@@ -1479,7 +1498,31 @@ class DeployRoutes:
         except Exception as exc:
             return self._error(exc, 500)
 
+    async def api_npu_status(self, _: web.Request) -> web.Response:
+        try:
+            return web.json_response(await self.manager.npu_status())
+        except Exception as exc:
+            return self._error(DeployError(str(exc)))
+
+    async def api_npu_plan(self, request: web.Request) -> web.Response:
+        try:
+            requested = request.query.get("profiles")
+            return web.json_response(await self.manager.npu_plan(request.query.get("models", ""),
+                                      requested.split(",") if requested else None))
+        except Exception as exc:
+            return self._error(DeployError(str(exc)))
+
+    async def api_quick_npu(self, request: web.Request) -> web.Response:
+        try:
+            self._guard(request)
+            return web.json_response(await self.manager.quick_npu(await self._payload(request)), status=202)
+        except Exception as exc:
+            return self._error(DeployError(str(exc)))
+
     def register_routes(self, app: web.Application) -> None:
+        app.router.add_get("/dashboard/api/deploy/npu", self.api_npu_status)
+        app.router.add_get("/dashboard/api/deploy/npu/plan", self.api_npu_plan)
+        app.router.add_post("/dashboard/api/deploy/quick/npu", self.api_quick_npu)
         app.router.add_get("/dashboard/api/deploy", self.api_status)
         app.router.add_get("/dashboard/api/deploy/template/{kind}", self.api_template)
         app.router.add_post("/dashboard/api/deploy/dry-run", self.api_dry_run)

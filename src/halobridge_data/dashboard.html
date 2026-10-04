@@ -22,7 +22,7 @@
   <div class="sidebar-bottom">
     <div class="sidebar-preference"><label for="themeSelect" data-i18n="theme_label">Appearance</label><select id="themeSelect" aria-label="Appearance" data-i18n-attr="aria-label:theme_label"><option value="system" data-i18n="theme_system">System</option><option value="light" data-i18n="theme_light">Light</option><option value="dark" data-i18n="theme_dark">Dark</option></select></div>
     <div class="sidebar-preference"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect" aria-label="Language" data-i18n-attr="aria-label:lang_label"><option value="en">English</option><option value="de">Deutsch</option></select></div>
-    <small>Halobridge <span id="appVersion">v0.1.23</span></small>
+    <small>Halobridge <span id="appVersion">v0.1.24</span></small>
   </div>
 </aside>
 <main class="shell" id="mainContent" tabindex="-1">
@@ -113,6 +113,24 @@
         <p id="quickNote" class="muted" data-i18n="quick_note">Official downloads its checkpoint on first start. Uncensored downloads and converts the GGUF. Tokenizer, vision and N-Gram files are shared by all profiles.</p>
       </div>
 
+      <details id="npuSetup" class="quick-deploy"><summary data-i18n="npu_title">NPU models alongside your GPU model</summary>
+        <p class="explanation" data-i18n="npu_hint">Choose the tasks to run on the NPU. Requires Halogen 0.16.2 or newer and host NPU setup.</p>
+        <p id="npuHost" role="status"></p>
+        <details><summary data-i18n="npu_host_setup">Host setup &amp; diagnostics</summary><div class="detail-body">
+          <p data-i18n="npu_host_hint">Install the NPU driver, firmware and matching XRT plugin. Enable IOMMU and hold the GPU fabric clock with the host service.</p>
+          <pre id="npuHostCommands" class="deploy-diff"></pre>
+          <p><code>halobridge npu-check</code> · <a href="https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/docs/NPU.md" target="_blank" rel="noopener noreferrer" data-i18n="npu_docs">Upstream setup instructions</a></p>
+        </div></details>
+        <fieldset><legend data-i18n="npu_select_models">NPU tasks</legend><div id="npuModelChoices" class="deploy-fields"></div></fieldset>
+        <div class="deploy-fields">
+          <label><span data-i18n="npu_profiles">Backend profiles</span><select id="npuProfiles"><option value="" data-i18n="npu_all_profiles">All installed profiles</option></select></label>
+          <label><span data-i18n="npu_custom">Custom fine-tunes (comma-separated /models directories)</span><input id="npuCustom" type="text" placeholder="/models/my-guard"></label>
+        </div>
+        <p class="muted" data-i18n="npu_shared_hint">Files are shared across profiles and prepared before restarting. The previous version stays available for rollback.</p>
+        <div class="deploy-actions"><button id="npuPlanBtn" data-i18n="npu_preview">Preview downloads</button><button id="npuInstallBtn" class="primary" disabled data-i18n="npu_apply">Apply NPU selection</button></div>
+        <div id="npuPlan" class="shared-plan" role="status" hidden></div>
+        <p id="npuError" class="failure" role="alert" hidden></p>
+      </details>
       <details id="deployNew"><summary data-i18n="custom_profile">Configure a profile manually</summary><div class="deploy-new">
         <label for="deployTemplate" data-i18n="deploy_new_label">New profile from template:</label>
         <select id="deployTemplate">
@@ -181,6 +199,7 @@
       <dl class="detail-grid"><div><dt data-i18n="label_engine_tps">Generation, weighted</dt><dd id="engineTps">–</dd></div><div><dt data-i18n="label_prefill">Prefill, weighted</dt><dd id="prefillTps">–</dd></div><div><dt data-i18n="label_mtp">MTP commit / round</dt><dd id="mtp">–</dd></div><div><dt data-i18n="label_pld">PLD acceptance / round</dt><dd id="pld">–</dd></div></dl>
       <p class="explanation" data-i18n="engine_explanation">Engine measurements come from local completion logs. They may also include direct backend calls and are independent of the router requests above.</p>
       <div class="endpoint"><span class="muted" data-i18n="api_label">API</span><code id="endpoint">–</code><button id="copy" data-i18n="copy_btn">Copy</button><span id="copyStatus" class="muted" role="status"></span></div>
+      <p id="cacheCounters" class="muted"></p>
       <div id="storage" class="explanation"></div>
     </div></section><section class="updates-section"><h2 data-i18n="app_updates_section">Halobridge updates</h2><div class="update-strip">
     <div>
@@ -220,13 +239,22 @@
   <section class="update-strip checkpoint-strip" id="checkpointStrip" hidden data-i18n-attr="aria-label:ckpt_section">
     <div>
       <span id="checkpointTitle" role="status" data-i18n="ckpt_title">Model checkpoint</span>
-      <p id="checkpointMessage" data-i18n="ckpt_msg_default">A newer model checkpoint (v2) is available.</p>
-      <p id="checkpointWarn" class="explanation" data-i18n="ckpt_warning">Please read: this downloads about 110 GiB and restarts the backend. The first start can take up to an hour; new requests receive HTTP 503 during the switch.</p>
+      <div id="checkpointChoice" hidden>
+        <label for="checkpointTarget" data-i18n="ckpt_select">Official checkpoint:</label>
+        <select id="checkpointTarget">
+          <option value="v2" data-i18n="ckpt_v2_option">v2 (default)</option>
+          <option value="ht43" data-i18n="ckpt_ht43_option">HT43 (less memory, Halogen 0.16+)</option>
+        </select>
+      </div>
+      <p id="checkpointMessage" data-i18n="ckpt_msg_default">Choose an official model checkpoint.</p>
+      <p id="checkpointDetails" class="explanation"></p>
+      <details id="checkpointPlan" hidden><summary data-i18n="ckpt_plan">Download and shared files</summary><div id="checkpointFiles" class="shared-plan"></div></details>
+      <p id="checkpointWarn" class="explanation" data-i18n="ckpt_warning">The backend restarts after preparation. New requests receive HTTP 503 during activation. Previous checkpoint files are retained.</p>
       <p id="checkpointError" class="failure" role="alert" hidden></p>
     </div>
     <div class="controls">
-      <button id="installCheckpoint" class="update-action" data-i18n="ckpt_install_btn">Upgrade checkpoint to v2</button>
-      <button id="confirmCheckpoint" class="update-action" hidden data-i18n="ckpt_confirm_btn">Yes, download ~110 GiB and restart</button>
+      <button id="installCheckpoint" class="update-action" data-i18n="ckpt_install_btn">Switch checkpoint</button>
+      <button id="confirmCheckpoint" class="update-action" hidden data-i18n="ckpt_confirm_btn">Prepare and restart</button>
       <button id="cancelCheckpoint" class="ghost" hidden data-i18n="reset_no">Cancel</button>
       <button id="dismissCheckpoint" class="ghost" hidden data-i18n="ckpt_dismiss">OK</button>
     </div>

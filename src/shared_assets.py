@@ -72,13 +72,15 @@ class SharedAssets:
     def shared_path(self, asset) -> Path:
         return self.models_root / "shared" / "halogen-v2" / asset.revision / asset.name
 
-    def staging_root(self, asset, variant=None) -> Path:
+    def staging_root(self, asset, variant=None, checkpoint_root=None) -> Path:
+        if checkpoint_root is not None and asset not in SHARED_ASSETS:
+            return checkpoint_root / ".downloads"
         root = (self.models_root / variant if variant and asset == variant_info(variant)["checkpoint"]
                 else self.models_root / "shared" / "halogen-v2" / asset.revision)
         return root / ".downloads"
 
-    def remaining_bytes(self, asset, variant=None) -> int:
-        stage = self.staging_root(asset, variant)
+    def remaining_bytes(self, asset, variant=None, checkpoint_root=None) -> int:
+        stage = self.staging_root(asset, variant, checkpoint_root)
         complete = stage / asset.name
         partial_dir = stage / ".cache" / "huggingface" / "download" / Path(asset.name).parent
         partials = list(partial_dir.glob(Path(asset.name).name + ".*.incomplete"))
@@ -185,7 +187,10 @@ class SharedAssets:
         atomic_json(self.cache_path, self.cache)
         return True
 
-    def entries(self, variant=None):
+    def entries(self, variant=None, *, checkpoint=None, checkpoint_root=None):
+        if checkpoint is not None:
+            dest = checkpoint_root / checkpoint.name
+            yield checkpoint, dest, [dest, self.staging_root(checkpoint, checkpoint_root=checkpoint_root) / checkpoint.name]
         if variant:
             asset = variant_info(variant)["checkpoint"]
             yield asset, self.models_root / variant / asset.name, [self.models_root / variant / asset.name,
@@ -193,9 +198,9 @@ class SharedAssets:
         for asset in SHARED_ASSETS:
             yield asset, self.shared_path(asset), self.candidates(asset)
 
-    def plan(self, variant=None) -> dict:
+    def plan(self, variant=None, *, checkpoint=None, checkpoint_root=None) -> dict:
         files = []
-        for asset, dest, candidates in self.entries(variant):
+        for asset, dest, candidates in self.entries(variant, checkpoint=checkpoint, checkpoint_root=checkpoint_root):
             if self.validate_path:
                 self.validate_path(str(dest))
             present = next((p for p in candidates if p.is_file() and p.stat().st_size == asset.size), None)
@@ -203,7 +208,7 @@ class SharedAssets:
             source = verified or present
             status = "verified" if verified else "unverified" if present else "download"
             files.append({"name": asset.name, "path": str(dest), "source_path": str(source) if source else None,
-                          "status": status, "size": asset.size, "download_bytes": 0 if source else self.remaining_bytes(asset, variant),
+                          "status": status, "size": asset.size, "download_bytes": 0 if source else self.remaining_bytes(asset, variant, checkpoint_root),
                           "copy_bytes": asset.size if source and source.stat().st_dev != existing_parent(dest).stat().st_dev else 0,
                           "revision": asset.revision, "sha": asset.digest, "algorithm": asset.algorithm,
                           "url": f"https://huggingface.co/{asset.repo}/blob/{asset.revision}/{asset.name}"})
@@ -232,11 +237,11 @@ class SharedAssets:
         if free < size + SPACE_RESERVE:
             raise AssetError(f"Insufficient disk space at {dest}: need {size + SPACE_RESERVE} bytes, have {free}")
 
-    async def prepare(self, variant, download, log):
+    async def prepare(self, variant, download, log, *, checkpoint=None, checkpoint_root=None):
         """download(asset, staging_root) resumes exact pinned files. No backend work."""
         async with self.lock:
             prepared, requirements = [], []
-            for asset, dest, candidates in self.entries(variant):
+            for asset, dest, candidates in self.entries(variant, checkpoint=checkpoint, checkpoint_root=checkpoint_root):
                 if self.validate_path:
                     self.validate_path(str(dest))
                 source = None
@@ -249,7 +254,7 @@ class SharedAssets:
                         log(f"Invalid or incomplete asset: {candidate}")
                 prepared.append((asset, dest, source))
                 cross_device = source and source.stat().st_dev != existing_parent(dest).stat().st_dev
-                requirements.append({"path": str(dest), "download_bytes": 0 if source else self.remaining_bytes(asset, variant),
+                requirements.append({"path": str(dest), "download_bytes": 0 if source else self.remaining_bytes(asset, variant, checkpoint_root),
                                      "copy_bytes": asset.size if cross_device else 0})
             if any(not fs["sufficient"] for fs in self.space_plan(requirements)):
                 raise AssetError("Insufficient disk space for the verified download plan and 5 GiB reserve")
@@ -292,9 +297,9 @@ class SharedAssets:
                     await self.promote_verified(temp, dest)
                     log(f"Shared asset ready: {dest}")
                 else:
-                    self.require_space(dest, self.remaining_bytes(asset, variant))
+                    self.require_space(dest, self.remaining_bytes(asset, variant, checkpoint_root))
                     # Keep Hugging Face's local-dir resume metadata after cancellation.
-                    stage = self.staging_root(asset, variant)
+                    stage = self.staging_root(asset, variant, checkpoint_root)
                     stage.mkdir(parents=True, exist_ok=True)
                     await download(asset, stage)
                     downloaded = stage / asset.name
@@ -341,6 +346,15 @@ class SharedAssets:
             return
         if not profile:
             raise AssetError("Swift profile missing; repair it with Quick Setup")
+        if model_id == "qwen3.8-flash" and profile.env.get("HALOGEN_CHECKPOINT") == "/models/qwen38-flash-next-ht43.hgn":
+            from official_checkpoints import OFFICIAL_CHECKPOINTS
+            from semver import version_tuple
+            if (version_tuple(profile.image.rsplit(":", 1)[-1]) or ()) < (0, 16, 0):
+                raise AssetError("HT43 requires Halogen 0.16.0 or newer")
+            checkpoint = OFFICIAL_CHECKPOINTS["ht43"]["asset"]
+            path = host_path(profile, profile.env["HALOGEN_CHECKPOINT"])
+            if path is None or not await self.verify(path, checkpoint):
+                raise AssetError("Missing or invalid HT43 checkpoint. Repair through the checkpoint selector (no startup download).")
         from semver import version_tuple
         if swift and (version_tuple(profile.image.rsplit(":", 1)[-1]) or (0, 0, 0)) < version_tuple(SWIFT_ENGINE_VERSION):
             raise AssetError("Swift requires Halogen 0.15.1 or newer; repair with Quick Setup")

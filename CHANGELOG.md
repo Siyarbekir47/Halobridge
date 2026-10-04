@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.25
+
+- Add NPU setup for decisions, embeddings, reranking, moderation and text generation.
+- Share verified, versioned NPU files across backend profiles.
+- Prepare NPU updates before downtime; recover interrupted activation.
+- Support custom NPU fine-tunes and host diagnostics.
+- Expose NPU and engine flags; show prompt-cache eviction counters.
+- Use Halogen 0.16.2 for new Official and Orca profiles.
+- Route NPU requests without switching GPU models; include all tasks in history.
+
+## 0.1.24
+
+- Add optional HT43 checkpoint selection for Halogen 0.16.0+.
+- Keep v2 as default and preserve checkpoints during engine updates.
+- Use Halogen 0.16.0 for new Official and Orca templates.
+- Prepare pinned, verified checkpoints before switching; reuse shared assets.
+- Add download plans, checkpoint repair and rollback to the previous profile.
+
 ## 0.1.23
 
 - Add Swift 1.5 and Swift 1.5 Abliterated quick templates with vision.
