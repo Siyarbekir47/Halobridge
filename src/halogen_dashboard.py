@@ -25,13 +25,14 @@ RETENTION_DAYS = 365
 TELEMETRY_VERSION = 2
 PERIOD_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "1y": 365 * 86400}
 INFERENCE_ENDPOINTS = {"/v1/chat/completions", "/v1/completions", "/v1/responses",
-                       "/v1/embeddings", "/v1/rerank", "/v1/moderations"}
+                       "/v1/messages", "/v1/embeddings", "/v1/rerank", "/v1/moderations",
+                       "/v1/systemone", "/v1/images/generations"}
 SERVE_HEAD_RE = re.compile(
     r"serve_api: (?P<mode>\w+) (?P<tokens>\d+) tok in "
     r"(?P<seconds>[\d.]+)s = (?P<tps>[\d.]+|n/a) t/s"
 )
-REQUEST_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses')"
-HISTORY_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses','/v1/embeddings','/v1/rerank','/v1/moderations')"
+REQUEST_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses','/v1/messages')"
+HISTORY_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses','/v1/messages','/v1/embeddings','/v1/rerank','/v1/moderations','/v1/systemone','/v1/images/generations')"
 
 # Every aggregate uses this same population. Legacy counters cannot be repaired
 # from stored metadata: the original usage object was deliberately not retained.
@@ -202,6 +203,7 @@ class Trace:
         self._event_size = 0
         self._discard_event = False
         self._discard_json = False
+        self._anthropic_usage = {}
 
     def _extract(self, data: Any) -> None:
         if not isinstance(data, dict):
@@ -210,6 +212,10 @@ class Trace:
         response = data.get("response")
         if isinstance(response, dict):
             self._extract(response)
+        # Anthropic's message_start wraps its initial usage in message.
+        message = data.get("message")
+        if self.endpoint == "/v1/messages" and isinstance(message, dict):
+            self._extract(message)
         usage = data.get("usage")
         if isinstance(usage, dict):
             for attr, keys in (
@@ -233,6 +239,18 @@ class Trace:
                         break
             if self.reasoning_tokens is not None and self.reasoning_tokens > 0:
                 self.thinking = "on"
+            if self.endpoint == "/v1/messages":
+                for key in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+                    if key in usage:
+                        count = _int(usage[key])
+                        if count is not None:
+                            self._anthropic_usage[key] = count
+                # Anthropic reports uncached input separately. Store the full
+                # logical input, as for Chat Completions, without adding events.
+                if "input_tokens" in self._anthropic_usage:
+                    self.input_tokens = _int(sum(self._anthropic_usage.values()))
+                if "cache_read_input_tokens" in self._anthropic_usage:
+                    self.cached_tokens = self._anthropic_usage["cache_read_input_tokens"]
 
         timings = data.get("timings")
         if isinstance(timings, dict):
@@ -277,6 +295,8 @@ class Trace:
         if self.first_byte_mono is None and chunk:
             self.first_byte_mono = time.monotonic()
         self.response_bytes += len(chunk)
+        if self.endpoint == "/v1/images/generations":
+            return  # No token usage; never buffer generated image payloads.
         if "text/event-stream" in content_type.lower():
             self._line_buffer.extend(chunk)
             while b"\n" in self._line_buffer:
@@ -841,6 +861,7 @@ class Dashboard:
                 key: health.get(key) for key in (
                     "status", "version", "context", "slots", "in_flight", "queued",
                     "max_tokens_default", "max_tokens_cap", "reasoning_effort_default",
+                    "admission",
                 )
             },
             "cache": {"pool": cache.get("pool") or {}, "model_bytes": self.cache_sizes,

@@ -8,7 +8,7 @@ import re
 import stat
 from pathlib import Path
 
-from npu import (DOC_URL, NPU_MODELS, TASK_ROUTES, check_runtime, host_setup, host_status,
+from npu import (CUSTOM_TASKS, DOC_URL, MODEL_MIN_VERSION, NPU_MODELS, TASK_ROUTES, check_runtime, host_setup, host_status,
                  parse_models, patch_quadlet)
 from profiles import parse_quadlet, validate_profile
 from semver import normalize_version, version_tuple
@@ -49,13 +49,18 @@ class NpuInstallMixin:
             return result
         manifests = {}
         for image in dict.fromkeys(p.image for p in profiles):
-            if (version_tuple(image.rsplit(":", 1)[-1]) or (0, 0, 0)) < (0, 16, 2):
+            version = version_tuple(image.rsplit(":", 1)[-1]) or (0, 0, 0)
+            if version < (0, 16, 2):
                 raise AssetError("Update all selected profiles to Halogen 0.16.2 or newer before NPU Setup")
+            for model in models:
+                minimum = MODEL_MIN_VERSION.get(model, (0, 16, 2))
+                if version < minimum:
+                    raise AssetError(f"NPU model {model} requires Halogen {'.'.join(map(str, minimum))} or newer")
             manifest = await self.npu_assets.manifest(image)
             if manifest.key in manifests:
                 manifests[manifest.key]["images"].append(image)
                 continue
-            bases = [m for m, info in manifest.models.items() if info["task"] != "generate"] if any(m.startswith("/") for m in models) else []
+            bases = [m for m, info in manifest.models.items() if info["task"] in CUSTOM_TASKS] if any(m.startswith("/") for m in models) else []
             selection = self.npu_assets.selection(manifest, models, profiles, bases)
             plan = selection.plan()
             plan["image"] = image
@@ -123,7 +128,7 @@ class NpuInstallMixin:
                         if await self.updater._inspect_image(image) != await self.updater._container_image(active_profile.model_id):
                             raise AssetError("The pulled image differs from the running image; use the engine update first")
                     manifest = await self.npu_assets.manifest(image, self._run, refresh=True)
-                    bases = [m for m, info in manifest.models.items() if info["task"] != "generate"] if any(m.startswith("/") for m in models) else []
+                    bases = [m for m, info in manifest.models.items() if info["task"] in CUSTOM_TASKS] if any(m.startswith("/") for m in models) else []
                     selection = self.npu_assets.selection(manifest, models, profiles, bases)
                     await selection.prepare(None, self._download_asset, self._append_job_line)
                     locations[image] = selection.root

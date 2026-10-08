@@ -23,17 +23,21 @@ NPU_MODELS = {
     "qwen3-reranker-0.6b": "score",
     "qwen3guard-gen-0.6b": "classify",
     "qwen3.5-2b": "generate",
+    "flux2-klein-4b": "image",
 }
+CUSTOM_TASKS = {"decision", "embedding", "score", "classify"}
+MODEL_MIN_VERSION = {"flux2-klein-4b": (0, 17, 0)}
 TASK_ROUTES = {
     "decision": "/v1/chat/completions", "generate": "/v1/chat/completions",
     "embedding": "/v1/embeddings", "score": "/v1/rerank",
     "classify": "/v1/moderations",
+    "image": "/v1/images/generations",
 }
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 PATH_RE = re.compile(r"^/models/[A-Za-z0-9_./-]+$")
 REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 XRT_LIBS = ("libxrt_coreutil.so.2", "libxrt_core.so.2", "libxrt_driver_xdna.so.2")
-DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/docs/NPU.md"
+DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.17.2/docs/NPU.md"
 
 
 def parse_models(value: str) -> list[str]:
@@ -128,6 +132,7 @@ class NpuManifest:
                     or f"{model}.hnpw" not in paths
                     or "tokenizer/tokenizer.json" not in paths
                     or "devices/devices.hnpm" not in programs
+                    or (info["task"] == "image" and "devices/taef2.safetensors" not in programs)
                     or not any(p.startswith("devices/") and p.endswith(".elf") for p in programs)):
                 raise AssetError(f"Incomplete NPU manifest for {model}")
 
@@ -142,15 +147,17 @@ class NpuManifest:
             wanted.add(model)
             devices.add(self.models[model].get("devices", model))
         for base in custom_bases:
-            if base not in self.models or self.models[base]["task"] == "generate":
+            if base not in self.models or self.models[base]["task"] not in CUSTOM_TASKS:
                 raise AssetError("Unsupported custom NPU base model")
             devices.add(self.models[base].get("devices", base))
         return [asset for asset in self.assets if asset.model in wanted
                 or (asset.model in devices and asset.name.startswith("devices/"))]
 
 
-def bundled_manifest() -> NpuManifest:
-    return NpuManifest(files("halobridge_data").joinpath("npu/models-0.16.2.txt").read_text(encoding="utf-8"))
+def bundled_manifest(version="0.17.2") -> NpuManifest:
+    if version not in {"0.16.2", "0.17.2"}:
+        raise AssetError("No bundled NPU catalog for this engine version")
+    return NpuManifest(files("halobridge_data").joinpath(f"npu/models-{version}.txt").read_text(encoding="utf-8"))
 
 
 async def check_runtime(run, image, mounts, custom_mounts=()):
@@ -169,7 +176,7 @@ async def check_runtime(run, image, mounts, custom_mounts=()):
                            *(arg for h, t, m in (*mounts, (host, target, mode))
                              for arg in ("--volume", f"{h}:{t}:{m}")), image, "probe", target, timeout=120)
         info = dict(part.split("=", 1) for part in output.split() if "=" in part)
-        if info.get("base") not in NPU_MODELS or info.get("task") not in {"decision", "embedding", "score", "classify"}:
+        if info.get("base") not in NPU_MODELS or info.get("task") not in CUSTOM_TASKS:
             raise AssetError(f"Unsupported NPU fine-tune: {target}")
         bases.append(info["base"])
     return bases
@@ -236,8 +243,8 @@ def host_setup(state_dir: Path) -> dict:
     directory.mkdir(parents=True, exist_ok=True)
     # Download upstream's unmodified host helpers at setup time; no vendor
     # executable code is redistributed with Halobridge.
-    revision = "7f31bbd4021f217a1be9776bdb7304bcf8eca62d"
-    helpers = [("halogen-fabric-clock", "a3a4f7f4e0142e71ac1390415f9bf418064f6b3b962dc43112e071306a0ac281", "755", "/usr/local/sbin/"),
+    revision = "3bd33c6f6c203e429282239e69d04147016c59db"
+    helpers = [("halogen-fabric-clock", "908c99539e2753204a143720f2113a7c9c4ca47207ad4aaf290f521a03565861", "755", "/usr/local/sbin/"),
                ("halogen-fabric-clock.service", "5f9f1cc4c85a1c027e907aa355bbabc87d40eba544512b51146b543a49bf8a71", "644", "/etc/systemd/system/")]
     commands = []
     for name, digest, mode, destination in helpers:
@@ -367,10 +374,10 @@ class NpuAssets:
                 return NpuManifest(json.loads(cache.read_text(encoding="utf-8"))["text"])
             except (OSError, ValueError, KeyError):
                 pass
-            if version == "0.16.2":
-                return bundled_manifest()
+            if version in {"0.16.2", "0.17.2"}:
+                return bundled_manifest(version)
         if run is None:
-            raise AssetError("NPU catalog unavailable; pull this image or update the engine to 0.16.2 first")
+            raise AssetError("NPU catalog unavailable; pull this image or update the engine to 0.17.2 first")
         text = await run("podman", "run", "--rm", "--network=none", "--entrypoint", "/bin/cat",
                          image, "/opt/halogen/npu/models.txt", timeout=120)
         manifest = NpuManifest(text)
@@ -402,7 +409,7 @@ class NpuAssets:
             raise AssetError("Invalid NPU shared manifest; repair with NPU Setup") from exc
         else:
             legacy = False
-        bases = [model for model, info in manifest.models.items() if info["task"] != "generate"] if any(m.startswith("/") for m in models) else []
+        bases = [model for model, info in manifest.models.items() if info["task"] in CUSTOM_TASKS] if any(m.startswith("/") for m in models) else []
         for model in models:
             if model.startswith("/"):
                 source = host_path(profile, model)

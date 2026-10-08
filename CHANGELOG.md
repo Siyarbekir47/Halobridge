@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.26
+
+- Add shared, verified Flux NPU image generation setup.
+- Route System One questions without switching GPU models.
+- Track image, decision and Anthropic Messages requests correctly.
+- Expose priority slots, cache, schema and decode settings.
+- Use Halogen 0.17.2 for new Official and Orca profiles.
+- Document endpoints, examples and hardware requirements.
+
 ## 0.1.25
 
 - Add NPU setup for decisions, embeddings, reranking, moderation and text generation.

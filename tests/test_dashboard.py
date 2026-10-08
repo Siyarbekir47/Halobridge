@@ -84,6 +84,46 @@ class TraceTests(unittest.TestCase):
         t.finalize_parsing()
         self.assertEqual((t.input_tokens, t.output_tokens), (12, 0))
 
+    def test_messages_stream_counts_full_prompt_from_final_cached_usage(self):
+        t = trace("/v1/messages", True)
+        events = [
+            {"type": "message_start", "message": {"usage": {
+                "input_tokens": 9, "output_tokens": 0, "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0}}},
+            {"type": "message_delta", "usage": {"input_tokens": 2, "output_tokens": 4,
+                "cache_read_input_tokens": 7, "cache_creation_input_tokens": 0}},
+            {"type": "message_stop"},
+        ]
+        raw = b"".join(b"event: " + e["type"].encode() + b"\ndata: " + json.dumps(e).encode() + b"\n\n"
+                       for e in events)
+        for byte in raw:
+            t.observe(bytes([byte]), "text/event-stream")
+        t.finalize_parsing()
+        self.assertEqual((t.input_tokens, t.output_tokens, t.cached_tokens), (9, 4, 7))
+
+    def test_messages_cache_creation_and_output_only_delta_preserve_prompt(self):
+        t = trace("/v1/messages", True)
+        t._extract({"message": {"usage": {"input_tokens": 3, "output_tokens": 0,
+                         "cache_read_input_tokens": 7, "cache_creation_input_tokens": 2}}})
+        t._extract({"usage": {"output_tokens": 5}})
+        t.finalize_parsing()
+        self.assertEqual((t.input_tokens, t.output_tokens, t.cached_tokens), (12, 5, 7))
+        nonstream = trace("/v1/messages")
+        nonstream._extract({"usage": {"input_tokens": 3, "output_tokens": 5,
+                         "cache_read_input_tokens": 7, "cache_creation_input_tokens": 2}})
+        nonstream.finalize_parsing()
+        self.assertEqual(nonstream.input_tokens, t.input_tokens)
+
+    def test_image_history_counts_bytes_without_buffering_image_payloads(self):
+        t = trace("/v1/images/generations")
+        chunk = b'{"data":[{"b64_json":"' + b"a" * 1024 + b'"}]}'
+        t.observe(chunk, "application/json")
+        t.finalize_parsing()
+        self.assertEqual(t.response_bytes, len(chunk))
+        self.assertFalse(t._json_buffer)
+        self.assertIsNone(t.input_tokens)
+        self.assertIsNone(t.output_tokens)
+
     def test_multiline_sse_and_unterminated_final_event(self):
         t = trace(stream=True)
         t.observe(b': keepalive\n\ndata: {"usage":\ndata: {"prompt_tokens": 4, "completion_tokens": 2}}', "text/event-stream")
@@ -140,6 +180,16 @@ class AnalyticsTests(unittest.TestCase):
 
     def tearDown(self):
         self.dashboard.db.close()
+
+    def test_messages_are_in_usage_while_images_and_decisions_only_enter_history(self):
+        insert(self.dashboard, endpoint="/v1/messages", input_tokens=12, output_tokens=5, cached_tokens=7,
+               reasoning_tokens=None)
+        insert(self.dashboard, endpoint="/v1/systemone", input_tokens=40, output_tokens=3, cached_tokens=None)
+        insert(self.dashboard, endpoint="/v1/images/generations", input_tokens=None, output_tokens=None, cached_tokens=None)
+        summary = self.dashboard._summary(0, 20000)
+        self.assertEqual((summary["requests"], summary["input_tokens"], summary["output_tokens"]), (1, 12, 5))
+        self.assertEqual(summary["usage_reported"], 1)
+        self.assertEqual(self.dashboard._history(0, 20000)["total"], 3)
 
     def test_coverage_acknowledges_existing_requests_across_reporting_periods(self):
         insert(self.dashboard, completed_at=1000, input_tokens=None)

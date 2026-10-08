@@ -119,7 +119,7 @@
         <details><summary data-i18n="npu_host_setup">Host setup &amp; diagnostics</summary><div class="detail-body">
           <p data-i18n="npu_host_hint">Install the NPU driver, firmware and matching XRT plugin. Enable IOMMU and hold the GPU fabric clock with the host service.</p>
           <pre id="npuHostCommands" class="deploy-diff"></pre>
-          <p><code>halobridge npu-check</code> · <a href="https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/docs/NPU.md" target="_blank" rel="noopener noreferrer" data-i18n="npu_docs">Upstream setup instructions</a></p>
+          <p><code>halobridge npu-check</code> · <a href="https://github.com/peonist-ai/halogen-flash-server/blob/v0.17.2/docs/NPU.md" target="_blank" rel="noopener noreferrer" data-i18n="npu_docs">Upstream setup instructions</a></p>
         </div></details>
         <fieldset><legend data-i18n="npu_select_models">NPU tasks</legend><div id="npuModelChoices" class="deploy-fields"></div></fieldset>
         <div class="deploy-fields">
@@ -195,6 +195,7 @@
       <p class="list-title" data-i18n="system_title">System · current state</p>
       <dl class="detail-grid"><div><dt data-i18n="label_ram">RAM</dt><dd id="ram">–</dd></div><div><dt data-i18n="label_gpu">GPU</dt><dd id="gpu">–</dd></div><div><dt data-i18n="label_pool">KV pool</dt><dd id="pool">–</dd></div><div><dt data-i18n="label_disk">Disk</dt><dd id="disk">–</dd></div></dl>
       <dl class="detail-grid"><div><dt data-i18n="label_context">Context / Slots</dt><dd id="context">–</dd></div><div><dt data-i18n="label_max_tokens">Output default / cap</dt><dd id="maxTokens">–</dd></div><div><dt data-i18n="label_reasoning">Reasoning default</dt><dd id="reasoning">–</dd></div><div><dt data-i18n="label_version">Version</dt><dd id="version">–</dd></div></dl>
+      <p id="admissionStatus" class="explanation" hidden></p>
       <p class="list-title" id="engineCaption" data-i18n="engine_caption_static">Engine · selected period</p>
       <dl class="detail-grid"><div><dt data-i18n="label_engine_tps">Generation, weighted</dt><dd id="engineTps">–</dd></div><div><dt data-i18n="label_prefill">Prefill, weighted</dt><dd id="prefillTps">–</dd></div><div><dt data-i18n="label_mtp">MTP commit / round</dt><dd id="mtp">–</dd></div><div><dt data-i18n="label_pld">PLD acceptance / round</dt><dd id="pld">–</dd></div></dl>
       <p class="explanation" data-i18n="engine_explanation">Engine measurements come from local completion logs. They may also include direct backend calls and are independent of the router requests above.</p>

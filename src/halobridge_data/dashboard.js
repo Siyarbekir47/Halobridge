@@ -131,6 +131,12 @@ function renderLive(data) {
   $('context').textContent = `${integer(backend.context)} / ${integer(backend.slots)}`;
   $('maxTokens').textContent = `${integer(backend.max_tokens_default)} / ${integer(backend.max_tokens_cap)}`;
   $('reasoning').textContent = backend.reasoning_effort_default || '–';
+  const admission = backend.admission;
+  $('admissionStatus').hidden = !admission;
+  $('admissionStatus').textContent = admission ? t('admission_status', {
+    reserve: integer(admission.reserve), running: integer(admission.priority_in_flight),
+    waiting: integer(admission.waiting_for_reserve),
+  }) : '';
   $('version').textContent = typeof backend.version === 'string' ? backend.version : backend.version?.api || '–';
   $('storage').textContent = Object.entries(data.cache?.model_bytes || {}).map(([name, size]) => `${name}: ${bytes(size)} Cache`).join(' · ');
   $('updated').textContent = t('live_updated', {time: new Date(data.generated_at * 1000).toLocaleTimeString(NUM)});
@@ -827,7 +833,7 @@ const DEPLOY_ENV_FIELDS = [
   ['HALOGEN_HOST_RESERVE_GIB', 'number', 'deploy_f_host_reserve'],
   ['HALOGEN_CACHE_DISK_GIB', 'number', 'deploy_f_cache_gib'],
   ['HALOGEN_CACHE_PRUNE_OLD', 'check', 'deploy_f_cache_prune'],
-  ['HALOGEN_REASONING_EFFORT', 'select:minimal,low,medium,high,xhigh', 'deploy_f_reasoning'],
+  ['HALOGEN_REASONING_EFFORT', 'select:minimal,low,medium,high,xhigh,max', 'deploy_f_reasoning'],
   ['HALOGEN_MAX_TOKENS_DEFAULT', 'number', 'deploy_f_out_default'],
   ['HALOGEN_MAX_TOKENS_CAP', 'number', 'deploy_f_out_cap'],
   ['HALOGEN_DOWNLOAD', 'text', 'deploy_f_download'],
@@ -839,12 +845,22 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_NPU_PORT', 'number', 'deploy_f_npu_port'],
   ['HALOGEN_NPU_EMB_BATCH', 'select:0,1', 'deploy_f_npu_batch'],
   ['HALOGEN_NPU_VERIFY', 'select:0,1', 'deploy_f_npu_verify'],
+];
+const ENGINE_ENV_FIELDS = [
   ['HALOGEN_CACHE_EVICT', 'select:0,1', 'deploy_f_cache_evict'],
   ['HALOGEN_MTP', 'select:0,1', 'deploy_f_mtp'],
   ['HALOGEN_PREFILL_CANCEL', 'select:0,1', 'deploy_f_prefill_cancel'],
+  ['HALOGEN_ADMISSION_RESERVE', 'number', 'deploy_f_admission_reserve'],
+  ['HALOGEN_SCHEMA_ESCAPE', 'select:on,off', 'deploy_f_schema_escape'],
+  ['HALOGEN_CACHE_DISK_DEEPEN', 'select:0,1', 'deploy_f_cache_disk_deepen'],
+  ['HALOGEN_PLE_PAR', 'select:0,1', 'deploy_f_ple_par'],
+  ['HALOGEN_MTP_DEPTH', 'number', 'deploy_f_mtp_depth'],
+  ['HALOGEN_ADMIT_TICKS', 'number', 'deploy_f_admit_ticks'],
+  ['HALOGEN_PREFILL_KEEP_TRUNK', 'select:0,1', 'deploy_f_keep_trunk'],
+  ['HALOGEN_REPETITION_PENALTY', 'number', 'deploy_f_repetition_penalty'],
 ];
 let npuData = null, npuPlanData = null, npuDirty = false, npuRevision = 0, npuJobRunning = false;
-for (const [key] of NPU_ENV_FIELDS) DEPLOY_ENV_NAMES.add(key);
+for (const [key] of [...NPU_ENV_FIELDS, ...ENGINE_ENV_FIELDS]) DEPLOY_ENV_NAMES.add(key);
 DEPLOY_ENV_NAMES.add('HALOGEN_MODEL_ID');
 function setDeployBusy(busy) {
   deployBusy = busy;
@@ -896,7 +912,8 @@ function renderDeployForm(profile) {
     + group('profile_storage', core.slice(4).map(f => fieldHtml(...f)).join('') + fields(DEPLOY_ENV_FIELDS.slice(0, 4)))
     + group('profile_capacity', fields(DEPLOY_ENV_FIELDS.slice(4, 11)))
     + group('profile_generation', fields(DEPLOY_ENV_FIELDS.slice(11)))
-    + group('profile_npu', fields(NPU_ENV_FIELDS));
+    + group('profile_npu', fields(NPU_ENV_FIELDS))
+    + group('profile_engine', fields(ENGINE_ENV_FIELDS));
   for (const el of $('deployFields').querySelectorAll('input,select')) el.addEventListener('input', invalidateDeployPreview);
   $('deployEnvRows').innerHTML = '';
   for (const [k, v] of Object.entries(profile.env || {})) if (!DEPLOY_ENV_NAMES.has(k)) addEnvRow(k, v);
@@ -924,7 +941,7 @@ function collectDeploy() {
   const env = {};
   const set = (k, v) => { if (v !== '') env[k] = v; };
   set('HALOGEN_MODEL_ID', $('df_model_id').value.trim());
-  for (const [name, type] of [...DEPLOY_ENV_FIELDS, ...NPU_ENV_FIELDS]) {
+  for (const [name, type] of [...DEPLOY_ENV_FIELDS, ...NPU_ENV_FIELDS, ...ENGINE_ENV_FIELDS]) {
     const el = $('df_' + name);
     set(name, type === 'check' ? (el.checked ? '1' : '') : el.value.trim());
   }

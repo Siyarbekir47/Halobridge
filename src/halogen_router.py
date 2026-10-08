@@ -595,9 +595,10 @@ class ModelManager:
     async def reserve_request(
         self,
         requested_model: Optional[str],
-        *, auxiliary: bool = False,
+        *, auxiliary: bool = False, auxiliary_task: Optional[str] = None,
     ) -> str:
         self._check_maintenance()
+        auxiliary = auxiliary or auxiliary_task is not None
         target_model = self.current_model if auxiliary else requested_model or self.current_model
 
         if target_model not in self.models:
@@ -625,14 +626,26 @@ class ModelManager:
 
                 if auxiliary:
                     target_model = self.current_model
-                    if requested_model not in {entry["id"] for entry in await self.auxiliary_models()}:
+                    entries = await self.auxiliary_models()
+                    served_model = requested_model
+                    if auxiliary_task:
+                        from npu import NPU_MODELS
+                        candidates = [entry["id"] for entry in entries
+                                      if entry.get("task", NPU_MODELS.get(entry["id"])) == auxiliary_task]
+                        if requested_model not in candidates:
+                            if len(candidates) > 1:
+                                raise web.HTTPUnprocessableEntity(text=json.dumps({"error": {
+                                    "type": "model_not_found", "message": "Name a loaded NPU model for this task",
+                                    "available_models": candidates}}), content_type="application/json")
+                            served_model = candidates[0] if candidates else None
+                    if served_model not in {entry["id"] for entry in entries}:
                         raise web.HTTPServiceUnavailable(text=json.dumps({"error": {
                             "type": "model_unavailable", "message": "NPU model is unavailable on the active backend"}}),
                             content_type="application/json", headers={"Retry-After": "5"})
 
                 if self.current_model == target_model:
                     self.active_requests += 1
-                    return target_model
+                    return served_model if auxiliary else target_model
 
                 self.switching = True
                 self.switch_target = target_model
@@ -697,20 +710,15 @@ async def list_models(request: web.Request) -> web.Response:
     models = manager.models if manager is not None else request.app.get("models", MODELS)
 
     auxiliary = await manager.auxiliary_models() if manager is not None and hasattr(manager, "auxiliary_models") else []
-    return web.json_response(
-        {
-            "object": "list",
-            "data": [
-                {
-                    "id": model,
-                    "object": "model",
-                    "created": created,
-                    "owned_by": settings.APP,
-                }
-                for model in models
-            ] + auxiliary,
-        }
-    )
+    data = [
+        {"id": model, "object": "model", "type": "model", "display_name": model,
+         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created)),
+         "created": created, "owned_by": settings.APP}
+        for model in models
+    ] + auxiliary
+    return web.json_response({"object": "list", "data": data, "has_more": False,
+                              "first_id": data[0]["id"] if data else None,
+                              "last_id": data[-1]["id"] if data else None})
 
 
 async def router_status(request: web.Request) -> web.Response:
@@ -759,6 +767,9 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
             pass
 
     auxiliary = False
+    auxiliary_task = None
+    if hasattr(manager, "auxiliary_models"):
+        auxiliary_task = {"/v1/systemone": "decision", "/v1/images/generations": "image"}.get(request.path)
     if requested_model and hasattr(manager, "auxiliary_models") and requested_model not in manager.models:
         provider = getattr(manager, "npu_names", lambda _: set())
         auxiliary = requested_model in provider(manager.current_model)
@@ -766,14 +777,20 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
         # switch. A declared but unavailable NPU returns a retryable 503.
         if (not auxiliary and request.path == "/v1/moderations"
                 and requested_model.startswith(("omni-moderation", "text-moderation"))):
-            requested_model = None  # Upstream resolves its OpenAI-compatible moderation alias.
-    reserved_model = (await manager.reserve_request(requested_model, auxiliary=True) if auxiliary
-                      else await manager.reserve_request(requested_model))
+            auxiliary_task = "classify"  # Preserve the alias in the forwarded body.
+    if request.path == "/v1/moderations" and not requested_model and hasattr(manager, "auxiliary_models"):
+        auxiliary_task = "classify"
+    if auxiliary_task:
+        reserved_model = await manager.reserve_request(requested_model, auxiliary_task=auxiliary_task)
+    elif auxiliary:
+        reserved_model = await manager.reserve_request(requested_model, auxiliary=True)
+    else:
+        reserved_model = await manager.reserve_request(requested_model)
     track_usage = request.method == "POST" and request.path in INFERENCE_ENDPOINTS
     trace = await dashboard.begin_request(
         request,
         payload,
-        requested_model if auxiliary else reserved_model,
+        reserved_model,
     ) if track_usage else None
     headers = filtered_request_headers(request)
     if track_usage:

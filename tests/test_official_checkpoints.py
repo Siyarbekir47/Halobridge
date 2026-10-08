@@ -97,7 +97,7 @@ class OfficialCheckpointTests(unittest.IsolatedAsyncioTestCase):
         deploy = DeployManager(self.manager, make_config(self.root))
         for kind in ("official", "official-quick", "uncensored", "uncensored-quick"):
             template = deploy.template(kind)["profile"]
-            self.assertTrue(template["image"].endswith(":0.16.2"))
+            self.assertTrue(template["image"].endswith(":0.17.2"))
         self.assertEqual(deploy.template("official")["profile"]["env"]["HALOGEN_CHECKPOINT"], CHECKPOINT_V2_PATH)
 
     async def test_download_verify_shared_activate_and_switch_back(self):

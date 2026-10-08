@@ -1164,7 +1164,7 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             latest = getattr(self.updater, "latest_version", None)
             if latest:
                 return str(latest)
-        return "0.16.2"
+        return "0.17.2"
 
     async def _any_other_service_active(self, profile_id: str) -> bool:
         if not self.quadlet_dir.is_dir():

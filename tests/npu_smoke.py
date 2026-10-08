@@ -1,5 +1,6 @@
 """Opt-in Linux NPU API smoke test. Installs nothing; sends small requests."""
 import argparse
+import base64
 import concurrent.futures
 import json
 import math
@@ -44,6 +45,18 @@ def check_tasks(api):
     assert len(choice["logprobs"]["content"][0]["top_logprobs"]) == 3
     print("PASS decisions and option probabilities")
 
+    response = api.call("/v1/systemone", {"model": "decider-0.8b", "state": "I was charged twice.",
+        "questions": {"team": {"type": "choice", "instructions": "Which support team handles this?",
+            "criteria": {"billing": "Payment issues", "technical": "Software bugs"}},
+            "urgency": {"type": "score", "instructions": "How urgent is this?", "criteria": ["Routine", "Urgent"]},
+            "refund": {"type": "noul", "instructions": "Does the customer ask for a refund?"}}})
+    answers = response["answers"]
+    assert answers["team"]["choice"] in {"billing", "technical"}
+    assert abs(sum(answers["team"]["probabilities"].values()) - 1) < .01
+    assert 0 <= answers["team"]["confidence"] <= 1
+    assert 0 <= answers["urgency"]["score"] <= 1 and 0 <= answers["refund"]["noul"] <= 1
+    print("PASS System One choice, score and yes/no probability")
+
     response = api.call("/v1/embeddings", {"model": "qwen3-embedding-0.6b", "dimensions": 256,
         "input": ["Instruct: Retrieve documentation\nQuery:How do I enable the NPU?",
                   "Install the NPU driver, firmware and XRT."]})
@@ -86,21 +99,36 @@ def check_tasks(api):
     print("PASS generation, streaming and usage")
 
 
+def check_images(api):
+    response = api.call("/v1/images/generations", {"model": "flux2-klein-4b", "size": "256x256",
+        "n": 1, "seed": 7, "prompt": "A green cloud icon on white", "response_format": "b64_json"})
+    assert len(response["data"]) == 1
+    png = base64.b64decode(response["data"][0]["b64_json"], validate=True)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n" and png[12:16] == b"IHDR"
+    assert (int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")) == (256, 256)
+    print("PASS Flux NPU image generation and PNG dimensions")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:8731")
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--gpu-switches", nargs="*", default=[])
+    parser.add_argument("--images", action="store_true", help="Also test Flux; enable it first (about 8 GB memory)")
     args = parser.parse_args()
     api = Api(args.url, args.timeout)
     initial = api.call("/health").get("model")
     assert initial, "Backend health did not report the active model"
     expected = {"decider-0.8b", "qwen3-embedding-0.6b", "qwen3-reranker-0.6b", "qwen3guard-gen-0.6b", "qwen3.5-2b"}
+    if args.images:
+        expected.add("flux2-klein-4b")
     names = {row["id"] for row in api.call("/v1/models")["data"]}
-    assert expected <= names, f"Enable all five NPU models first; missing: {expected - names}"
+    assert expected <= names, f"Enable the required NPU models first; missing: {expected - names}"
     started = time.monotonic()
     try:
         check_tasks(api)
+        if args.images:
+            check_images(api)
         assert api.call("/health")["model"] == initial, "NPU requests changed the GPU model"
         for model in args.gpu_switches:
             api.gpu(model)

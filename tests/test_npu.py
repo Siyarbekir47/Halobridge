@@ -37,6 +37,8 @@ def fixture_manifest(program=b"new program"):
                  "tokenizer/tokenizer.json": (model + " tokenizer").encode()}
         if owner == model:
             paths.update({"devices/devices.hnpm": b"device record", "devices/u0.elf": program})
+        if task == "image":
+            paths["devices/taef2.safetensors"] = b"image decoder"
         for name, data in paths.items():
             digest = hashlib.sha256(data).hexdigest()
             lines.append(f"file {model} {name} {len(data)} {digest}")
@@ -45,7 +47,7 @@ def fixture_manifest(program=b"new program"):
 
 
 class ManifestTests(unittest.TestCase):
-    def test_real_image_manifest_lists_all_five_and_shares_dense_program(self):
+    def test_real_image_manifest_lists_all_six_and_shares_dense_program(self):
         manifest = bundled_manifest()
         self.assertEqual(set(manifest.models), set(NPU_MODELS))
         assets = manifest.select(["qwen3-reranker-0.6b", "qwen3guard-gen-0.6b"])
@@ -53,6 +55,19 @@ class ManifestTests(unittest.TestCase):
         self.assertNotIn(("qwen3-embedding-0.6b", "qwen3-embedding-0.6b.hnpw"), paths)
         self.assertIn(("qwen3-embedding-0.6b", "devices/devices.hnpm"), paths)
         self.assertEqual(len(paths), len(assets))
+        flux = manifest.select(["flux2-klein-4b"])
+        self.assertEqual({a.model for a in flux}, {"flux2-klein-4b"})
+        self.assertIn("devices/taef2.safetensors", {a.name for a in flux})
+        self.assertEqual(sum(a.size for a in flux), 8_072_427_547)
+        self.assertEqual(set(bundled_manifest("0.16.2").models), set(NPU_MODELS) - {"flux2-klein-4b"})
+
+    def test_custom_programs_exclude_image_and_generation_models(self):
+        manifest = bundled_manifest()
+        with self.assertRaises(AssetError):
+            manifest.select(["/models/custom"], ["flux2-klein-4b"])
+        without_decoder = "\n".join(line for line in manifest.text.splitlines() if "taef2.safetensors" not in line)
+        with self.assertRaisesRegex(AssetError, "Incomplete NPU manifest"):
+            NpuManifest(without_decoder)
 
     def test_model_list_accepts_custom_paths_and_rejects_unsafe_or_duplicate_ids(self):
         self.assertEqual(parse_models("qwen3.5-2b,/models/my-guard"), ["qwen3.5-2b", "/models/my-guard"])
@@ -75,7 +90,10 @@ class ManifestTests(unittest.TestCase):
     def test_profile_roundtrip_supports_npu_and_new_flags(self):
         profile = official_template("0.16.2", Path("/models"), Path("/cache"))
         profile.env.update(HALOGEN_NPU_MODELS="qwen3.5-2b,qwen3guard-gen-0.6b", HALOGEN_CACHE_EVICT="0",
-                           HALOGEN_NPU_QUEUE="128", HALOGEN_NPU_EMB_BATCH="0", HALOGEN_MTP="0")
+                           HALOGEN_NPU_QUEUE="128", HALOGEN_NPU_EMB_BATCH="0", HALOGEN_MTP="0",
+                           HALOGEN_ADMISSION_RESERVE="1", HALOGEN_SCHEMA_ESCAPE="off", HALOGEN_CACHE_DISK_DEEPEN="0",
+                           HALOGEN_PLE_PAR="0", HALOGEN_MTP_DEPTH="3", HALOGEN_PREFILL_KEEP_TRUNK="0",
+                           HALOGEN_ADMIT_TICKS="2", HALOGEN_REPETITION_PENALTY="1.1", HALOGEN_REASONING_EFFORT="max")
         self.assertEqual(validate_profile(profile), [])
         rendered = render_quadlet(profile)
         self.assertIn("AddDevice=/dev/accel/accel0", rendered)
@@ -220,15 +238,22 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.received = []
         self.hold, self.entered = asyncio.Event(), asyncio.Event()
-        self.backend_entries = [{"id": "halogen-swift15"}] + [{"id": name} for name in NPU_MODELS] + [{"id": "unexpected"}]
+        self.backend_entries = [{"id": "halogen-swift15"}] + [{"id": name, "task": task} for name, task in NPU_MODELS.items()] + [{"id": "unexpected"}]
+        self.headers = []
         async def backend(request):
             if request.path == "/v1/models":
                 return web.json_response({"data": self.backend_entries})
             payload = await request.json()
             self.received.append((request.path, payload))
+            self.headers.append(dict(request.headers))
             if payload.get("hold"):
                 self.entered.set()
                 await self.hold.wait()
+            if request.path == "/v1/messages/count_tokens":
+                return web.json_response({"input_tokens": 9})
+            if request.path == "/v1/messages" and payload.get("stream"):
+                return web.Response(text='event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":9,"output_tokens":0,"cache_read_input_tokens":0}}}\n\nevent: message_delta\ndata: {"type":"message_delta","usage":{"input_tokens":2,"output_tokens":4,"cache_read_input_tokens":7}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
+                                    content_type="text/event-stream")
             if payload.get("stream"):
                 return web.Response(text='data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2}}\n\ndata: [DONE]\n\n',
                                     content_type="text/event-stream")
@@ -273,7 +298,76 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         rows = self.dashboard.db.execute("SELECT model FROM requests").fetchall()
         self.assertEqual({row[0] for row in rows}, set(NPU_MODELS))
         history = self.dashboard._history(0, 99999999999)
-        self.assertEqual(history["total"], 5)
+        self.assertEqual(history["total"], len(NPU_MODELS))
+
+    async def test_systemone_alias_and_missing_model_use_decider_without_gpu_switch(self):
+        self.manager.models["other-gpu"] = "halogen-other.service"
+        for model in (None, "typesafe-model", "other-gpu", "decider-0.8b"):
+            payload = {"state": {"text": "Charged twice"}, "questions": {
+                "refund": {"type": "noul", "instructions": "Does this require billing support?"}}}
+            if model is not None:
+                payload["model"] = model
+            response = await self.client.post("/v1/systemone", json=payload)
+            self.assertEqual(response.status, 200)
+            await response.read()
+            self.assertEqual(self.received[-1], ("/v1/systemone", payload))
+        self.manager.perform_switch.assert_not_awaited()
+        rows = self.dashboard.db.execute("SELECT model FROM requests").fetchall()
+        self.assertEqual({row[0] for row in rows}, {"decider-0.8b"})
+
+    async def test_task_discovery_uses_custom_decider_and_rejects_ambiguity(self):
+        self.manager.npu_names = lambda _: {"my-decider", "other-decider"}
+        self.backend_entries = [{"id": "halogen-swift15"}, {"id": "my-decider", "task": "decision"}]
+        response = await self.client.post("/v1/systemone", json={"model": "anything", "state": "text"})
+        self.assertEqual(response.status, 200)
+        await response.read()
+        row = self.dashboard.db.execute("SELECT model FROM requests").fetchone()
+        self.assertEqual(row[0], "my-decider")
+        self.backend_entries.append({"id": "other-decider", "task": "decision"})
+        response = await self.client.post("/v1/systemone", json={"model": "anything"})
+        self.assertEqual(response.status, 422)
+        response = await self.client.post("/v1/systemone", json={"model": "other-decider"})
+        self.assertEqual(response.status, 200)
+        self.manager.perform_switch.assert_not_awaited()
+
+    async def test_image_alias_uses_loaded_flux_and_priority_header_is_preserved(self):
+        payload = {"model": "dall-e-3", "prompt": "A cloud icon", "seed": 7, "size": "256x256", "n": 2}
+        response = await self.client.post("/v1/images/generations", json=payload,
+                                          headers={"X-Halogen-Priority": "1"})
+        self.assertEqual(response.status, 200)
+        await response.read()
+        self.assertEqual(self.received[-1], ("/v1/images/generations", payload))
+        self.assertEqual(self.headers[-1]["X-Halogen-Priority"], "1")
+        row = self.dashboard.db.execute("SELECT model,input_tokens,output_tokens FROM requests").fetchone()
+        self.assertEqual(tuple(row), ("flux2-klein-4b", None, None))
+        self.manager.perform_switch.assert_not_awaited()
+
+    async def test_unavailable_task_route_is_retryable_and_does_not_use_gpu_model(self):
+        self.backend_entries = [{"id": "halogen-swift15"}]
+        for route in ("/v1/systemone", "/v1/images/generations"):
+            response = await self.client.post(route, json={"model": "halogen-swift15"})
+            self.assertEqual(response.status, 503)
+            self.assertEqual(response.headers["Retry-After"], "5")
+        self.assertEqual(self.received, [])
+        self.manager.perform_switch.assert_not_awaited()
+
+    async def test_messages_stream_and_count_tokens_preserve_anthropic_shapes(self):
+        payload = {"model": "halogen-swift15", "messages": [{"role": "user", "content": "hello"}],
+                   "max_tokens": 32, "stream": True}
+        response = await self.client.post("/v1/messages", json=payload,
+                                          headers={"anthropic-version": "2023-06-01"})
+        self.assertIn("event: message_stop", await response.text())
+        self.assertEqual(self.received[-1][1], payload)
+        self.assertEqual(self.headers[-1]["anthropic-version"], "2023-06-01")
+        row = self.dashboard.db.execute("SELECT model,input_tokens,output_tokens,cached_tokens FROM requests").fetchone()
+        self.assertEqual(tuple(row), ("halogen-swift15", 9, 4, 7))
+        response = await self.client.post("/v1/messages/count_tokens", json={"model": "halogen-swift15", "messages": payload["messages"]})
+        self.assertEqual((await response.json())["input_tokens"], 9)
+        self.assertEqual(self.dashboard.db.execute("SELECT count(*) FROM requests").fetchone()[0], 1)
+        models = await (await self.client.get("/v1/models")).json()
+        self.assertFalse(models["has_more"])
+        self.assertEqual(models["data"][0]["type"], "model")
+        self.assertIn("created_at", models["data"][0])
 
     async def test_models_only_advertises_loaded_declared_auxiliary_models(self):
         response = await self.client.get("/v1/models")
@@ -495,6 +589,30 @@ class InstallTests(unittest.IsolatedAsyncioTestCase):
         await self.install("")
         self.assertEqual(self.path.read_bytes(), self.original)
         self.assertEqual(self.deploy.job["state"], "done")
+
+    async def test_flux_requires_new_engine_before_any_download_or_mutation(self):
+        with self.assertRaisesRegex(AssetError, "requires Halogen 0.17.0"):
+            await self.deploy.npu_plan("flux2-klein-4b")
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.assertEqual(self.downloads, [])
+        self.deploy._run_stream.assert_not_awaited()
+
+    async def test_flux_setup_uses_versioned_shared_decoder_and_reuses_existing_files(self):
+        self.profile.image = IMAGE.replace("0.16.2", "0.17.2")
+        self.original = render_quadlet(self.profile).encode()
+        self.path.write_bytes(self.original)
+        self.manager.backend_health.return_value["version"] = {"api": "0.17.2", "engine": "0.17.2"}
+        await self.install("flux2-klein-4b")
+        self.assertEqual(self.deploy.job["state"], "done", self.deploy.job)
+        current = parse_quadlet(self.path.read_text())
+        root = next(Path(h) for h, c, _ in current.volumes if c == "/models/npu")
+        self.assertTrue((root / "flux2-klein-4b/devices/taef2.safetensors").is_file())
+        self.assertEqual(current.env["HALOGEN_CHECKPOINT"], self.profile.env["HALOGEN_CHECKPOINT"])
+        self.downloads.clear()
+        self.manager.start_service.reset_mock()
+        await self.install("flux2-klein-4b")
+        self.assertEqual(self.downloads, [])
+        self.manager.start_service.assert_not_awaited()
 
     async def test_failed_activation_restores_quadlet_and_previous_backend(self):
         self.manager.backend_model_entries.return_value = []

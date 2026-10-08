@@ -56,6 +56,14 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_CACHE_EVICT": FieldSpec("flag"),
     "HALOGEN_MTP": FieldSpec("flag"),
     "HALOGEN_PREFILL_CANCEL": FieldSpec("flag"),
+    "HALOGEN_ADMISSION_RESERVE": FieldSpec("int", 0, 63),
+    "HALOGEN_SCHEMA_ESCAPE": FieldSpec("enum", choices=("on", "off")),
+    "HALOGEN_CACHE_DISK_DEEPEN": FieldSpec("flag"),
+    "HALOGEN_PLE_PAR": FieldSpec("flag"),
+    "HALOGEN_MTP_DEPTH": FieldSpec("int", 1, 63),
+    "HALOGEN_ADMIT_TICKS": FieldSpec("int", 0, 65536),
+    "HALOGEN_PREFILL_KEEP_TRUNK": FieldSpec("flag"),
+    "HALOGEN_REPETITION_PENALTY": FieldSpec("float", 0.01, 100),
     "HALOGEN_CK_OVERLAY": FieldSpec("text"),
     "HALOGEN_TEMPLATE_UNCHECKED": FieldSpec("flag"),
     "HALOGEN_API_PORT": FieldSpec("int", 1, 65535),
@@ -71,7 +79,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_MAX_TOKENS_CAP": FieldSpec("int", 1, 1_048_576),
     "HALOGEN_MAX_TOKENS_DEFAULT": FieldSpec("int", 1, 1_048_576),
     "HALOGEN_REASONING_EFFORT": FieldSpec(
-        "enum", choices=("minimal", "low", "medium", "high", "xhigh")
+        "enum", choices=("minimal", "low", "medium", "high", "xhigh", "max")
     ),
     "HALOGEN_ENABLE_THINKING": FieldSpec("flag"),
     "HALOGEN_MAX_THINKING_TOKENS": FieldSpec("int", 0, 1_048_576),

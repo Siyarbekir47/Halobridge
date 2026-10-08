@@ -344,5 +344,7 @@
   "env: NPU port must differ from the API port": "env: NPU-Port muss sich vom API-Port unterscheiden",
   "env: NPU port must differ from the GPU engine port": "env: NPU-Port muss sich vom GPU-Engine-Port unterscheiden",
   "Model installation or recovery is in progress.": "Modellinstallation oder Wiederherstellung läuft.",
-  "Model installation or recovery is in progress": "Modellinstallation oder Wiederherstellung läuft"
+  "Model installation or recovery is in progress": "Modellinstallation oder Wiederherstellung läuft",
+  "NPU model {p0} requires Halogen {p1} or newer": "NPU-Modell {p0} benötigt Halogen ab {p1}",
+  "NPU catalog unavailable; pull this image or update the engine to 0.17.2 first": "NPU-Katalog nicht verfügbar; lade das Image oder aktualisiere zuerst die Engine auf 0.17.2"
 }

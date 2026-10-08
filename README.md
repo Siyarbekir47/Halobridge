@@ -573,7 +573,28 @@ You can keep the dashboard but disable installation:
 allow_install = false
 ```
 
-## NPU models with Halogen 0.16.2+
+## Halogen 0.17.2 support
+
+Halobridge supports the new NPU image and System One routes, priority admission,
+and the engine's new cache, schema and decode settings. Update Halobridge, then
+use **System → Engine updates** to update the backend profiles to **0.17.2**.
+New Official and Orca templates use 0.17.2; existing settings are preserved.
+Swift's initial template keeps its model-card version until you update the engine.
+
+The GPU checkpoints are unchanged from 0.16.2. The engine update brings faster
+decode and long-prompt processing, speculative decoding for two conversations,
+better disk-cache reuse, corrected streamed tool calls, JSON-schema/tool fixes,
+nullable-string argument fixes, and support for late system/developer turns.
+These changes work through the existing chat, Responses and Messages routes.
+Leave `HALOGEN_MTP_DEPTH` empty for the engine's adaptive depth; an explicit
+value continues to fix the depth.
+
+See the [endpoint guide](docs/API.md) for use cases, prerequisites and runnable
+examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.17.2/CHANGELOG.md)
+for the engine changes. The upstream Compose recipe is an alternative deployment;
+Halobridge's managed setup continues to use Podman Quadlets.
+
+## NPU models with Halogen 0.17.2
 
 The GPU model and the selected NPU models run together behind Halobridge's
 existing port. Requests select an NPU model by its `model` ID; they do not
@@ -587,12 +608,14 @@ loaded by the currently active backend.
 | `qwen3-reranker-0.6b` | Rank documents against a query | `/v1/rerank` |
 | `qwen3guard-gen-0.6b` | Moderation with safety labels | `/v1/moderations` |
 | `qwen3.5-2b` | Text generation and summaries, with streaming | `/v1/chat/completions` |
+| `decider-0.8b` | Typed questions with probabilities and confidence | `/v1/systemone` |
+| `flux2-klein-4b` | Text-to-image generation on the NPU | `/v1/images/generations` |
 
 ### Host preparation
 
-1. Update the selected backend profiles to **Halogen 0.16.2 or newer** using
+1. Update the selected backend profiles to **Halogen 0.17.2** using
    the dashboard's engine updater. Your GPU checkpoint remains selected.
-2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/docs/NPU.md#host)
+2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.17.2/docs/NPU.md#host)
    for the Linux `amdxdna` driver, firmware, XRT and its NPU plugin. The service
    user needs access to `/dev/accel/accel0`. Enable IOMMU; `amd_iommu=off` and
    `iommu=off` are incompatible, while `iommu=pt` is supported.
@@ -618,6 +641,11 @@ NPU weights, tokenizers and device programs are checked against the selected
 container image's pinned file record. They live under
 `models_root/shared/halogen-npu/<manifest-sha256>` and are shared by Official,
 Orca, Swift and custom GPU profiles. Containers mount this directory read-only.
+Flux needs about **7.5 GiB of downloads and 8 GB of host memory** in addition to
+the GPU and other loaded models. Its decoder and device programs are included
+in the plan. Images require Halogen 0.17.0 or newer; System One requires 0.16.3
+or newer. The five earlier NPU models continue to work on 0.16.2.
+
 The embedder, reranker and guard share their device programs; unused model
 weights are not downloaded. Repeated setup verifies and reuses existing files.
 
@@ -639,8 +667,10 @@ models while retaining their downloads.
 Send inference through Halobridge so its request drain includes NPU work.
 Calls made directly to the backend bypass that admission gate. The upstream
 health counters describe GPU work; Halobridge tracks routed NPU requests too.
-All five tasks appear in request history, while the usage charts and token
-coverage remain scoped to generative endpoints.
+All six NPU tasks and System One requests appear in request history. Image and
+System One requests stay outside text-generation token coverage. Anthropic
+Messages enters the usage charts with its full input, including cached tokens;
+generated image bodies are streamed through without buffering them for telemetry.
 
 ### API examples
 
@@ -689,7 +719,7 @@ The first four models accept up to 4096 input tokens. `qwen3.5-2b` accepts
 option without sampling. Moderation reports labels and probabilities rather
 than meaningful OpenAI category scores. NPU and GPU work share the chip's
 memory bandwidth and power budget. See the
-[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/docs/NPU.md)
+[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.17.2/docs/NPU.md)
 for supported request options.
 
 ### Own NPU fine-tunes and advanced flags
@@ -705,7 +735,7 @@ Setup probes the actual container engine before activation and installs the
 required base device programs. Fine-tune sources receive separate read-only
 mounts, so conversion writes temporary files inside the container and runs
 again at each start. The built-in shared files remain unchanged. A generation
-fine-tune is not supported by upstream 0.16.2.
+or image fine-tune is not supported by upstream 0.17.2.
 
 The profile editor exposes `HALOGEN_NPU_MODELS`, `HALOGEN_NPU_QUEUE` (default
 64), `HALOGEN_NPU_PORT` (internal, default 8740), `HALOGEN_NPU_EMB_BATCH`,
@@ -719,6 +749,21 @@ The System view shows cache hits, evictions and replaced entries (`dropped`).
 `HALOGEN_CACHE_EVICT=0` selects the earlier eviction policy; leaving it empty
 uses the improved upstream default. These engine flags do not change the
 selected GPU checkpoint.
+
+Under **Configure a profile manually → Engine scheduling & compatibility**,
+`HALOGEN_ADMISSION_RESERVE=1` holds one of the GPU engine's slots for requests
+that send `X-Halogen-Priority: 1`. Background requests wait for the other slots;
+running requests are not interrupted. The engine keeps at least one background
+slot, and the System view shows the reserve, active priority work and waiting
+background requests. `/health` and `/metrics` expose the same counters.
+
+The editor also exposes `HALOGEN_SCHEMA_ESCAPE`, `HALOGEN_CACHE_DISK_DEEPEN`,
+`HALOGEN_PLE_PAR`, `HALOGEN_MTP_DEPTH`, `HALOGEN_ADMIT_TICKS`,
+`HALOGEN_PREFILL_KEEP_TRUNK` and `HALOGEN_REPETITION_PENALTY`. Empty fields retain
+upstream defaults; explicit `0` and `off` survive edits and updates. Keeping
+the unpacked trunk costs about 5.5 GiB; a repetition penalty other than 1 needs
+sampling (`temperature > 0`). `reasoning_effort=max` is accepted as an alias
+of `xhigh`.
 
 ## Updating Halobridge itself
 
@@ -863,17 +908,19 @@ Run tests:
 python -B -m unittest discover -s tests -v
 ```
 
-After enabling all five NPU models on a Linux host, run the opt-in hardware
+After updating to Halogen 0.17.2 and enabling the five text NPU models on a Linux host, run the opt-in hardware
 smoke test from a checkout:
 
 ```bash
 python tests/npu_smoke.py --url http://127.0.0.1:8731
+# Include Flux image generation after enabling its model:
+python tests/npu_smoke.py --images
 # Optional GPU switches; the script restores the initially active model:
 python tests/npu_smoke.py --gpu-switches qwen3.8-flash halogen-swift15-abliterated
 ```
 
 Set `HALOBRIDGE_TOKEN` if authentication is enabled. This test sends small
-inference requests, checks all five API response shapes and streaming, and
+inference requests, checks the text tasks, System One and streaming, and
 verifies that NPU requests leave the active GPU model unchanged. It does not
 install models or alter host settings. Hardware smoke tests must be run on the
 target machine; the automated suite simulates XRT, Podman and systemd.
@@ -910,7 +957,9 @@ unchanged, so each browser can select its own language.
 - [Peonist (peonist-ai)](https://github.com/peonist-ai/halogen-flash-server)
   for the Halogen engine, official checkpoints, shared model assets and NPU
   models and host tools. Host tools are fetched unmodified from upstream and
-  remain subject to its [license](https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/LICENSE.md).
+  remain subject to its [license](https://github.com/peonist-ai/halogen-flash-server/blob/v0.17.2/LICENSE.md).
+- [Black Forest Labs](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B)
+  for FLUX.2-klein-4B, used by the NPU image profile.
 - [UkisAI](https://huggingface.co/ukisai/Swift1.5-Qwen3.8-Flash-Next)
   for the original Swift 1.5 fine-tune.
 - [Quat3rnion](https://huggingface.co/Quat3rnion/halogen-swift1.5-qwen3.8-flash-next-v2)
