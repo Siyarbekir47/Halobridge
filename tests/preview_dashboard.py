@@ -11,7 +11,7 @@ from test_dashboard import database, insert
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from profiles import official_template, custom_template, swift_quick_template, profile_to_dict, ENV_FIELDS
-from swift_catalog import SHARED_ASSETS, variant_info
+from swift_catalog import SHARED_ASSETS, SWIFT_VARIANTS, variant_info, variant_assets, variant_engine
 from official_checkpoints import OFFICIAL_CHECKPOINTS
 from halogen_router import _login_response, _request_lang
 from npu import NPU_MODELS, TASK_ROUTES, bundled_manifest, parse_models
@@ -112,7 +112,7 @@ def create_preview():
     app.router.add_post('/dashboard/api/updates/check', update_status)
     app.router.add_post('/dashboard/api/updates/checkpoint', install_checkpoint)
     # The self-update interaction is simulated; no installation or restart occurs.
-    app_updates = {'current_version': '0.1.26', 'latest_version': '0.1.26',
+    app_updates = {'current_version': '0.1.27', 'latest_version': '0.1.27',
                    'checked_at': time.time(), 'source_ref': 'develop',
                    'update_available': False, 'up_to_date': True, 'running': False,
                    'supported': True, 'can_install': False, 'job': None,
@@ -177,9 +177,12 @@ def create_preview():
                                  'profiles': [{**profile, 'model_id': 'qwen3.8-flash', 'service_active': True, 'has_backup': True}]})
     async def template(request):
         kind = request.match_info['kind']
-        if kind in {'swift15-quick', 'swift15-abliterated-quick'}:
-            locations = {a.name: '/home/demo/models/shared/halogen-v2/' + a.revision + '/' + a.name for a in SHARED_ASSETS}
-            p = swift_quick_template(kind.removesuffix('-quick'), Path('/home/demo/models'), Path('/home/demo/cache'), locations)
+        if kind.removesuffix('-quick') in SWIFT_VARIANTS:
+            variant = kind.removesuffix('-quick')
+            locations = {a.name: '/home/demo/models/shared/' + a.family + '/' + a.revision + '/' + a.name for a in variant_assets(variant)}
+            p = swift_quick_template(variant, Path('/home/demo/models'), Path('/home/demo/cache'), locations)
+            if variant == 'cyber-frost':
+                p.env['HALOGEN_TEMPLATE_UNCHECKED'] = '0'
             p.volumes = [(host.replace('\\', '/'), container, mode) for host, container, mode in p.volumes]
             return web.json_response({'profile': profile_to_dict(p)})
         factory = custom_template if request.match_info['kind'] == 'custom' else official_template
@@ -194,24 +197,30 @@ def create_preview():
         variant = request.query.get('variant', 'swift15')
         info = variant_info(variant)
         files = []
-        for i, asset in enumerate([info['checkpoint'], *SHARED_ASSETS]):
-            path = '/home/demo/models/' + (variant if i == 0 else 'shared/halogen-v2/' + asset.revision) + '/' + asset.name
-            files.append({'name': asset.name, 'path': path, 'source_path': path if i else None,
-                          'status': 'download' if i == 0 else 'verified' if i < 3 else 'unverified',
-                          'size': asset.size, 'download_bytes': asset.size if i == 0 else 0,
+        local = [info['checkpoint'], *info.get('model_assets', ())]
+        for i, asset in enumerate([*local, *variant_assets(variant)]):
+            missing = variant == 'cyber-frost' or i == 0
+            path = '/home/demo/models/' + (variant if asset in local else 'shared/' + asset.family + '/' + asset.revision) + '/' + asset.name
+            files.append({'name': asset.name, 'path': path, 'source_path': None if missing else path,
+                          'status': 'download' if missing else 'verified' if i < 3 else 'unverified',
+                          'size': asset.size, 'download_bytes': asset.size if missing else 0,
                           'url': f'https://huggingface.co/{asset.repo}/blob/{asset.revision}/{asset.name}'})
         return web.json_response({'variant': variant, 'files': files,
-                                  'shared_root': '/home/demo/models/shared/halogen-v2',
+                                  'shared_root': '/home/demo/models/shared/' + variant_assets(variant)[0].family,
+                                  'engine_version': variant_engine(variant),
+                                  'template_unchecked': bool(info.get('template_unchecked')),
                                   'model_card': 'https://huggingface.co/' + info['checkpoint'].repo,
-                                  'download_bytes': info['checkpoint'].size,
+                                  'download_bytes': sum(f['download_bytes'] for f in files),
                                   'unverified_bytes': sum(f['size'] for f in files if f['status'] == 'unverified'),
                                   'filesystems': [{'path': '/home/demo/models', 'free_bytes': 300 * 1024**3,
-                                                   'required_bytes': info['checkpoint'].size,
+                                                   'required_bytes': sum(f['download_bytes'] for f in files),
                                                    'reserve_bytes': 5 * 1024**3, 'sufficient': True}]})
     async def swift_install(request):
         nonlocal swift_job
         data = await request.json()
-        variant_info(data['variant'])
+        info = variant_info(data['variant'])
+        if info.get('template_unchecked') and data.get('accept_forced_thinking') is not True:
+            raise web.HTTPBadRequest(text='Explicitly accept forced thinking')
         assert request.headers.get('X-Halogen-Action') == 'deploy'
         swift_job = {'active': True, 'kind': 'quick-' + data['variant'], 'state': 'running',
                      'lines': ['Preparing verified shared assets (UI fixture; no downloads).'],
@@ -239,6 +248,8 @@ def create_preview():
     app.router.add_get('/dashboard/api/deploy/job', job)
     app.router.add_get('/dashboard/api/deploy/quick/swift/plan', swift_plan)
     app.router.add_post('/dashboard/api/deploy/quick/swift', swift_install)
+    app.router.add_get('/dashboard/api/deploy/quick/model/plan', swift_plan)
+    app.router.add_post('/dashboard/api/deploy/quick/model', swift_install)
     app.router.add_post('/dashboard/api/deploy/job/cancel', cancel_job)
     app.router.add_post('/dashboard/api/deploy/dry-run', preview)
     app.router.add_route('*', '/dashboard/login', login)

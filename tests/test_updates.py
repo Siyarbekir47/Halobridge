@@ -185,18 +185,19 @@ class TransactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(starts, [("systemctl", "--user", "start", MODELS[MODEL])])
         self.assertFalse(self.updater.status()["update_available"])
 
-    async def test_engine_update_preserves_all_four_profiles_and_shared_mounts(self):
+    async def test_engine_update_preserves_all_five_profiles_and_shared_mounts(self):
         from profiles import official_template, uncensored_template, swift_quick_template, bind_shared_assets, render_quadlet
         from shared_assets import SharedAssets
-        additions = {"halogen-swift15": "halogen-swift15.service",
-                     "halogen-swift15-abliterated": "halogen-swift15-abliterated.service"}
-        locations = SharedAssets(self.root / "models", self.quadlets, self.root / "state").locations()
-        with patch.dict(MODELS, additions), patch("test_updates.OLD", "0.16.0"), patch("test_updates.NEW", "0.16.1"):
+        additions = {"halogen-" + variant: "halogen-" + variant + ".service"
+                     for variant in ("swift15", "swift15-abliterated", "cyber-frost")}
+        assets = SharedAssets(self.root / "models", self.quadlets, self.root / "state")
+        locations = assets.locations()
+        with patch.dict(MODELS, additions), patch("test_updates.OLD", "0.17.5"), patch("test_updates.NEW", "0.17.6"):
             profiles = [bind_shared_assets(official_template(OLD, self.root / "models", self.root / "cache"), locations),
                         bind_shared_assets(uncensored_template(OLD, self.root / "models", self.root / "cache"), locations)]
             profiles[0].env["HALOGEN_CHECKPOINT"] = "/models/qwen38-flash-next-ht43.hgn"
-            profiles += [swift_quick_template(variant, self.root / "models", self.root / "cache", locations)
-                         for variant in ("swift15", "swift15-abliterated")]
+            profiles += [swift_quick_template(variant, self.root / "models", self.root / "cache", assets.locations(variant))
+                         for variant in ("swift15", "swift15-abliterated", "cyber-frost")]
             originals = {}
             for profile in profiles:
                 path = self.quadlets / f"halogen-{profile.profile_id}.container"

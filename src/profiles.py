@@ -499,14 +499,16 @@ def bind_shared_assets(profile: Profile, locations: dict[str, str]) -> Profile:
 
 def swift_quick_template(variant: str, models_root: Path, cache_root: Path,
                          locations: dict[str, str], existing: Profile | None = None) -> Profile:
-    from swift_catalog import SWIFT_ENGINE_VERSION, variant_info
+    from swift_catalog import variant_info, variant_engine
     from semver import version_tuple
-    checkpoint = variant_info(variant)["checkpoint"]
+    info = variant_info(variant)
+    checkpoint = info["checkpoint"]
+    engine = variant_engine(variant)
     env = {**_COMMON_RUNTIME_ENV, "HALOGEN_CTX": "262144",
            "HALOGEN_KV_POOL_POSITIONS": "262144", "HALOGEN_KV_SLOTS": "2",
            "HALOGEN_MAX_TOK": "8192", "HALOGEN_WEIGHTS_LOCK": "1",
            "HALOGEN_SPEC_ADAPT": "0", "HALOGEN_TEMPERATURE": "1.0",
-           "HALOGEN_TOP_P": "0.95", "HALOGEN_TOP_K": "20"}
+           "HALOGEN_TOP_P": "0.95", "HALOGEN_TOP_K": "20", **info.get("runtime", {})}
     if existing:
         env.update(existing.env)
     env.update({"HALOGEN_MODEL_ID": "halogen-" + variant,
@@ -514,8 +516,10 @@ def swift_quick_template(variant: str, models_root: Path, cache_root: Path,
                 "HALOGEN_VISION_TOWER": "/shared/vision/qwen38-flash-next-vision.hgn"})
     env.pop("HALOGEN_DOWNLOAD", None)
     env.pop("HALOGEN_MTP_HEAD", None)
-    image = f"{OFFICIAL_IMAGE_REPO}:{SWIFT_ENGINE_VERSION}"
-    if existing and (version_tuple(existing.image.rsplit(":", 1)[-1]) or (0, 0, 0)) >= version_tuple(SWIFT_ENGINE_VERSION):
+    if info.get("template_unchecked"):
+        env["HALOGEN_TEMPLATE_UNCHECKED"] = "1"
+    image = f"{OFFICIAL_IMAGE_REPO}:{engine}"
+    if existing and (version_tuple(existing.image.rsplit(":", 1)[-1]) or (0, 0, 0)) >= version_tuple(engine):
         image = existing.image
     volumes = [(str(models_root / variant), "/models", "ro,Z"),
                (str(cache_root / variant), "/cache", "Z")]

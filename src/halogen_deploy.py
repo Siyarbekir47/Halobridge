@@ -51,6 +51,7 @@ from profiles import (
 )
 from shared_assets import SharedAssets
 from swift_install import SwiftInstallMixin
+from swift_catalog import SWIFT_VARIANTS
 from npu_install import NpuInstallMixin
 from npu import NpuAssets, system_mount_allowed
 
@@ -191,9 +192,13 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             profile = uncensored_quick_template(tag, models_root, cache_root)
         elif kind == "custom":
             profile = custom_template(tag, models_root, cache_root)
-        elif kind in {"swift15-quick", "swift15-abliterated-quick"}:
-            profile = swift_quick_template(kind.removesuffix("-quick"), models_root,
-                                           cache_root, self.assets.locations())
+        elif kind.endswith("-quick") and kind.removesuffix("-quick") in SWIFT_VARIANTS:
+            variant = kind.removesuffix("-quick")
+            profile = swift_quick_template(variant, models_root,
+                                           cache_root, self.assets.locations(variant))
+            if variant == "cyber-frost":
+                # Manual setup must also explicitly enable the template override.
+                profile.env["HALOGEN_TEMPLATE_UNCHECKED"] = "0"
         else:
             raise DeployError(f"Unknown template: {kind}")
         if kind in {"official", "uncensored", "official-quick", "uncensored-quick"}:
@@ -1544,6 +1549,8 @@ class DeployRoutes:
         app.router.add_post("/dashboard/api/deploy/quick/official", self.api_quick_official)
         app.router.add_get("/dashboard/api/deploy/quick/swift/plan", self.api_swift_plan)
         app.router.add_post("/dashboard/api/deploy/quick/swift", self.api_quick_swift)
+        app.router.add_get("/dashboard/api/deploy/quick/model/plan", self.api_swift_plan)
+        app.router.add_post("/dashboard/api/deploy/quick/model", self.api_quick_swift)
         app.router.add_post(
             "/dashboard/api/deploy/quick/uncensored", self.api_quick_uncensored
         )

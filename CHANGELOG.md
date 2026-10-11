@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.27
+
+- Add CYBER-FROST 3.8 quick template with vision.
+- Keep verified model-specific sidecars in separate shared directories.
+- Require explicit consent for the forced-thinking template override.
+
 ## 0.1.26
 
 - Add shared, verified Flux NPU image generation setup.

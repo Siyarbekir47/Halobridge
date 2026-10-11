@@ -290,12 +290,12 @@ class OfficialCheckpointTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_swift_quadlets_stay_byte_identical(self):
         originals = {}
-        for variant in ("swift15", "swift15-abliterated"):
+        for variant in ("swift15", "swift15-abliterated", "cyber-frost"):
             model = "halogen-" + variant
             service = model + ".service"
             self.updater.models[model] = self.manager.models[model] = service
             p = self.quadlets / (model + ".container")
-            originals[p] = render_quadlet(swift_quick_template(variant, self.models, self.root / "cache", self.assets.locations())).encode()
+            originals[p] = render_quadlet(swift_quick_template(variant, self.models, self.root / "cache", self.assets.locations(variant))).encode()
             p.write_bytes(originals[p])
         self.assertEqual((await self.select())["phase"], "succeeded")
         for p, original in originals.items():

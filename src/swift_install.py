@@ -13,7 +13,7 @@ from pathlib import Path
 
 from profiles import bind_shared_assets, parse_quadlet, profile_to_dict, render_quadlet, swift_quick_template
 from shared_assets import AssetError, atomic_json
-from swift_catalog import variant_info
+from swift_catalog import variant_info, variant_engine
 
 
 def shared_quadlet_content(content: str, locations: dict) -> str:
@@ -53,7 +53,8 @@ class SwiftInstallMixin:
         info = variant_info(variant)
         result = self.assets.plan(variant)
         result.update(label=info["label"], model_card=f"https://huggingface.co/{info['checkpoint'].repo}",
-                      engine_version="0.15.1")
+                      engine_version=variant_engine(variant),
+                      template_unchecked=bool(info.get("template_unchecked")))
         return result
 
     def _swift_available(self):
@@ -68,7 +69,9 @@ class SwiftInstallMixin:
         self._swift_available()
         variant = str(payload.get("variant", ""))
         try:
-            self.swift_plan(variant)
+            plan = self.swift_plan(variant)
+            if plan["template_unchecked"] and payload.get("accept_forced_thinking") is not True:
+                raise ValueError("CYBER-FROST forces thinking. Explicitly accept the template override before installing.")
         except (ValueError, OSError) as exc:
             from halogen_deploy import DeployError
             raise DeployError(str(exc)) from exc
@@ -125,12 +128,13 @@ class SwiftInstallMixin:
         if (health.get("status") != "ok" or health.get("model") != profile.model_id
                 or not isinstance(versions, dict) or normalize_version(versions.get("engine")) != expected
                 or normalize_version(versions.get("api")) != expected):
-            raise AssetError("Swift health/model/API/engine version verification failed")
+            raise AssetError("Quick model health/model/API/engine version verification failed")
 
     async def _run_quick_swift(self, variant):
         record = None
+        label = variant_info(variant)["label"]
         stop = asyncio.Event()
-        heartbeat = asyncio.create_task(self._heartbeat(stop, "preparing Swift assets"))
+        heartbeat = asyncio.create_task(self._heartbeat(stop, f"preparing {label} assets"))
         try:
             self.job["step"] = 1
             locations = await self.assets.prepare(variant, self._download_asset, self._append_job_line)
@@ -150,7 +154,7 @@ class SwiftInstallMixin:
             # canonical shared tree. Preserve every unrelated setting verbatim.
             writes = {target: render_quadlet(profile).encode()}
             for other in self.assets.profiles():
-                if other.profile_id == variant:
+                if other.profile_id == variant or self.assets.profile_assets(other) != self.assets.shared_assets(variant):
                     continue
                 path = other.quadlet_path
                 originals[path] = path.read_bytes()
@@ -172,8 +176,8 @@ class SwiftInstallMixin:
                     record["phase"] = "activating"
                     atomic_json(self.swift_journal, record)
                 self.job["step"] = 3
-                self._append_job_line("Assets verified; drain requests and activate Swift")
-                await self._switch_with_heartbeat(profile.model_id, "waiting for Swift", before_stop=configure)
+                self._append_job_line(f"Assets verified; drain requests and activate {label}")
+                await self._switch_with_heartbeat(profile.model_id, f"waiting for {label}", before_stop=configure)
                 self.job["step"] = 4
                 await self._swift_ready(profile)
                 record["phase"] = "complete"

@@ -83,7 +83,12 @@ function modelTab(assets) {
 $('profilesTab').addEventListener('click', () => modelTab(false));
 $('assetsTab').addEventListener('click', () => modelTab(true));
 $('quickModel').addEventListener('change', () => {
-  const swift = $('quickModel').value.startsWith('swift15');
+  const swift = isPinnedQuickModel($('quickModel').value);
+  const cyber = $('quickModel').value === 'cyber-frost';
+  $('cyberTemplateNotice').hidden = !cyber;
+  $('acceptForcedThinking').checked = false;
+  $('quickSwiftBtn').dataset.i18n = cyber ? 'quick_cyber' : 'quick_swift';
+  $('quickSwiftBtn').textContent = t($('quickSwiftBtn').dataset.i18n);
   const uncensored = $('quickModel').value === 'uncensored';
   $('quickTokenField').hidden = !uncensored;
   $('quickHfAccessHint').hidden = !uncensored;
@@ -795,15 +800,16 @@ $('resetConfirm').addEventListener('click', async () => {
 // ---------- Deployment ----------
 let deployData = null, deployBusy = false, deployPreviewOk = false, deployArm = null, deployRevision = 0, editorReturnFocus;
 let swiftPlanData = null, swiftPlanSequence = 0;
+function isPinnedQuickModel(variant) { return variant.startsWith('swift15') || variant === 'cyber-frost'; }
 async function refreshSwiftPlan() {
   const variant = $('quickModel').value, sequence = ++swiftPlanSequence;
   swiftPlanData = null;
   $('quickSwiftBtn').disabled = true;
-  $('swiftPlan').hidden = !variant.startsWith('swift15');
+  $('swiftPlan').hidden = !isPinnedQuickModel(variant);
   if ($('swiftPlan').hidden) return;
   $('swiftPlan').textContent = t('swift_plan_loading');
   try {
-    const data = await deployRequest(`/dashboard/api/deploy/quick/swift/plan?variant=${encodeURIComponent(variant)}`);
+    const data = await deployRequest(`/dashboard/api/deploy/quick/model/plan?variant=${encodeURIComponent(variant)}`);
     if (sequence !== swiftPlanSequence) return;
     swiftPlanData = data;
     renderSwiftPlan();
@@ -815,7 +821,8 @@ function renderSwiftPlan() {
   if (!swiftPlanData) return;
   const data = swiftPlanData;
   const sufficient = (data.filesystems || []).every(fs => fs.sufficient);
-  $('quickSwiftBtn').disabled = !sufficient || deployBusy || deployData?.recovery_required;
+  $('quickSwiftBtn').disabled = !sufficient || deployBusy || deployData?.recovery_required
+    || (data.template_unchecked && !$('acceptForcedThinking').checked);
   const files = (data.files || []).map(file => `<tr><td><a href="${esc(file.url)}" target="_blank" rel="noopener noreferrer">${esc(file.name)}</a><small>${esc(file.path)}</small>${file.source_path && file.source_path !== file.path ? `<small>${esc(t('swift_source'))}: ${esc(file.source_path)}</small>` : ''}</td><td>${esc(t('swift_asset_' + file.status))}</td><td class="num">${esc(bytes(file.size))}</td></tr>`).join('');
   const space = (data.filesystems || []).map(fs => `<p class="${fs.sufficient ? 'muted' : 'failure'}">${esc(fs.path)} · ${esc(t('swift_space', {free: bytes(fs.free_bytes), need: bytes(fs.required_bytes + fs.reserve_bytes)}))}</p>`).join('');
   const presentBytes = (data.files || []).filter(f => f.status !== 'download').reduce((sum, f) => sum + f.size, 0);
@@ -858,6 +865,7 @@ const ENGINE_ENV_FIELDS = [
   ['HALOGEN_ADMIT_TICKS', 'number', 'deploy_f_admit_ticks'],
   ['HALOGEN_PREFILL_KEEP_TRUNK', 'select:0,1', 'deploy_f_keep_trunk'],
   ['HALOGEN_REPETITION_PENALTY', 'number', 'deploy_f_repetition_penalty'],
+  ['HALOGEN_TEMPLATE_UNCHECKED', 'select:0,1', 'deploy_f_template_unchecked'],
 ];
 let npuData = null, npuPlanData = null, npuDirty = false, npuRevision = 0, npuJobRunning = false;
 for (const [key] of [...NPU_ENV_FIELDS, ...ENGINE_ENV_FIELDS]) DEPLOY_ENV_NAMES.add(key);
@@ -914,6 +922,13 @@ function renderDeployForm(profile) {
     + group('profile_generation', fields(DEPLOY_ENV_FIELDS.slice(11)))
     + group('profile_npu', fields(NPU_ENV_FIELDS))
     + group('profile_engine', fields(ENGINE_ENV_FIELDS));
+  if ((profile.env || {}).HALOGEN_MODEL_ID === 'halogen-cyber-frost') {
+    const note = document.createElement('p');
+    note.className = 'warning';
+    note.textContent = t('cyber_template_editor');
+    note.dataset.i18n = 'cyber_template_editor';
+    $('deployFields').appendChild(note);
+  }
   for (const el of $('deployFields').querySelectorAll('input,select')) el.addEventListener('input', invalidateDeployPreview);
   $('deployEnvRows').innerHTML = '';
   for (const [k, v] of Object.entries(profile.env || {})) if (!DEPLOY_ENV_NAMES.has(k)) addEnvRow(k, v);
@@ -1337,8 +1352,10 @@ $('quickUncensoredBtn').addEventListener('click', () => {
 });
 $('quickSwiftBtn').addEventListener('click', async () => {
   if (!swiftPlanData || $('quickSwiftBtn').disabled) return;
-  await startModelJob('/dashboard/api/deploy/quick/swift', {variant: $('quickModel').value});
+  await startModelJob('/dashboard/api/deploy/quick/model', {variant: $('quickModel').value,
+    accept_forced_thinking: $('acceptForcedThinking').checked});
 });
+$('acceptForcedThinking').addEventListener('change', renderSwiftPlan);
 $('convBtn').addEventListener('click', async () => {
   await startModelJob('/dashboard/api/deploy/convert', {image: $('convImage').value.trim(), gguf: $('convGguf').value.trim(), output: $('convOut').value.trim(), download_head: $('convHead').checked});
 });

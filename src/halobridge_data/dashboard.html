@@ -99,7 +99,7 @@
 
 <div class="section-head"><h2 data-i18n="installed_models">Installed models</h2><button id="deployRefresh" data-i18n="refresh_models">Refresh</button></div>      <div id="deployList"><p>–</p></div>
       <div id="quickDeploy" class="quick-deploy" hidden>
-        <h2 data-i18n="quick_title">Install a model</h2><label for="quickModel" class="muted" data-i18n="choose_model">Model to install</label><select id="quickModel"><option value="official" data-i18n="model_official">Official model</option><option value="uncensored" data-i18n="model_uncensored">Uncensored model</option><option value="swift15">Swift 1.5</option><option value="swift15-abliterated">Swift 1.5 Abliterated</option></select>
+        <h2 data-i18n="quick_title">Install a model</h2><label for="quickModel" class="muted" data-i18n="choose_model">Model to install</label><select id="quickModel"><option value="official" data-i18n="model_official">Official model</option><option value="uncensored" data-i18n="model_uncensored">Uncensored model</option><option value="swift15">Swift 1.5</option><option value="swift15-abliterated">Swift 1.5 Abliterated</option><option value="cyber-frost">CYBER-FROST 3.8</option></select>
         <div class="deploy-fields">
           <label id="quickTokenField" hidden><span data-i18n="hf_token">HF token — READ only required</span><input id="quickHfToken" type="password" autocomplete="off" autocapitalize="off"></label>
         </div>
@@ -110,6 +110,10 @@
           <button type="button" id="quickSwiftBtn" class="primary" hidden disabled data-i18n="quick_swift">Install Swift model</button>
         </div>
         <div id="swiftPlan" class="shared-plan" role="status" hidden></div>
+        <div id="cyberTemplateNotice" hidden>
+          <p class="warning" data-i18n="cyber_template_note">This model always thinks. Its own sidecars and tokenizer are required.</p>
+          <label class="chk"><input id="acceptForcedThinking" type="checkbox"><span data-i18n="cyber_template_accept">Allow this model's template with forced thinking.</span></label>
+        </div>
         <p id="quickNote" class="muted" data-i18n="quick_note">Official downloads its checkpoint on first start. Uncensored downloads and converts the GGUF. Tokenizer, vision and N-Gram files are shared by all profiles.</p>
       </div>
 
@@ -138,6 +142,7 @@
           <option value="uncensored" data-i18n="deploy_tpl_uncensored">Uncensored (OrcaRouter IQ4_XS)</option>
           <option value="swift15-quick">Swift 1.5</option>
           <option value="swift15-abliterated-quick">Swift 1.5 Abliterated</option>
+          <option value="cyber-frost-quick">CYBER-FROST 3.8</option>
           <option value="custom" data-i18n="deploy_tpl_custom">Custom model (GGUF or .hgn files)</option>
         </select>
         <button type="button" id="deployLoadTemplate" data-i18n="deploy_load_template">Edit template</button>

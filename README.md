@@ -352,6 +352,10 @@ at it. You do not have to stop the running model by hand first.
   neither downloads the official v2 checkpoint. Services are
   `halogen-swift15.service` and `halogen-swift15-abliterated.service`, with API
   model IDs `halogen-swift15` and `halogen-swift15-abliterated`.
+- **CYBER-FROST 3.8** — ready HGN v2 template with vision and tool use. Review
+  its download plan, accept the forced-thinking template and click
+  **Install CYBER-FROST**. Service: `halogen-cyber-frost.service`; API model:
+  `halogen-cyber-frost`.
 
 The Official and Uncensored buttons ask for a confirmation click (labelled "Stop active model &
 install?") and respect the same safety boundaries as the advanced editor
@@ -370,6 +374,40 @@ tokenizer is re-downloaded even when the `.hgn` already exists, so a partial
 earlier install is repaired automatically.
 
 #### Shared model assets and Swift installation
+
+CYBER-FROST has its **own converted N-Gram and vision sidecars** and Blackfrost
+chat template. Its assets are isolated under
+`<models_root>/shared/cyber-frost/03b64836b1fbd4104fb258e1b1eb23e3567dfb96/`,
+mounted read-only with `ro,z`. Official, Orca and Swift bindings stay unchanged
+when installing it; stock sidecars are never substituted. Identical tokenizer
+files can be verified and imported. The pinned checkpoint and accompanying
+config, processor files, conversion manifest and license live in
+`<models_root>/cyber-frost/`. A fresh installation downloads about **110.7 GiB**
+plus the installer's 5 GiB free-space reserve. Repeated setup reuses verified
+files and preserves runtime changes.
+
+The CYBER-FROST template uses **Halogen 0.17.5**, **262144 context/KV pool**,
+**two slots**, and the same generation defaults as Swift Abliterated. Its model
+card only exercised 32768 context and one slot; the larger configuration still
+needs a smoke test on the target host. No NPU models are enabled by default.
+The original Blackfrost template **always thinks** and needs
+`HALOGEN_TEMPLATE_UNCHECKED=1`. Quick Setup requires explicit consent before
+setting this override. Manual templates start with it at `0`; deliberately
+change it to `1` to use the original template. Use `reasoning_effort` **low**,
+**medium** or **xhigh**; requesting thinking off does not turn it off. See the
+[pinned model card](https://huggingface.co/Quat3rnion/CYBER-FROST-3.8-HGN/blob/03b64836b1fbd4104fb258e1b1eb23e3567dfb96/README.md)
+and its [Qwen Community License](https://huggingface.co/Quat3rnion/CYBER-FROST-3.8-HGN/blob/03b64836b1fbd4104fb258e1b1eb23e3567dfb96/LICENSE).
+
+```text
+GET  /dashboard/api/deploy/quick/model/plan?variant=cyber-frost
+POST /dashboard/api/deploy/quick/model
+     {"variant": "cyber-frost", "accept_forced_thinking": true}
+```
+
+The existing dashboard authentication, action header, progress, cancellation
+and activation recovery apply. Later starts validate the pinned files offline
+and never download weights. To test an installed profile on the Linux host:
+`python3 tests/smoke_swift_linux.py --models halogen-cyber-frost`.
 
 N-Gram, all six tokenizer files and the vision tower live under
 `<models_root>/shared/halogen-v2/<pinned-revision>/`. Official, Orca and both
@@ -963,7 +1001,10 @@ unchanged, so each browser can select its own language.
 - [UkisAI](https://huggingface.co/ukisai/Swift1.5-Qwen3.8-Flash-Next)
   for the original Swift 1.5 fine-tune.
 - [Quat3rnion](https://huggingface.co/Quat3rnion/halogen-swift1.5-qwen3.8-flash-next-v2)
-  for the Halogen builds of Swift 1.5 and Swift 1.5 Abliterated.
+  for the Halogen builds of Swift 1.5, Swift 1.5 Abliterated and
+  [CYBER-FROST 3.8](https://huggingface.co/Quat3rnion/CYBER-FROST-3.8-HGN).
+- [Blackfrost-AI](https://huggingface.co/Blackfrost-AI/CYBER-FROST-3.8-BF16)
+  for the original CYBER-FROST fine-tune.
 - **johnlockejrr** for providing diagnostics that helped bring Ubuntu support.
 
 ## License
