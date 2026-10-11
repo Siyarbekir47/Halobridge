@@ -91,13 +91,13 @@ class OfficialCheckpointTests(unittest.IsolatedAsyncioTestCase):
             await self.updater.start_checkpoint()
         self.assertEqual(self.downloads, [])
 
-    async def test_fresh_templates_use_016_engine_and_keep_v2_default(self):
+    async def test_fresh_templates_use_018_engine_and_keep_v2_default(self):
         from halogen_deploy import DeployManager
         from test_deploy import make_config
         deploy = DeployManager(self.manager, make_config(self.root))
         for kind in ("official", "official-quick", "uncensored", "uncensored-quick"):
             template = deploy.template(kind)["profile"]
-            self.assertTrue(template["image"].endswith(":0.17.2"))
+            self.assertTrue(template["image"].endswith(":0.18.0"))
         self.assertEqual(deploy.template("official")["profile"]["env"]["HALOGEN_CHECKPOINT"], CHECKPOINT_V2_PATH)
 
     async def test_download_verify_shared_activate_and_switch_back(self):

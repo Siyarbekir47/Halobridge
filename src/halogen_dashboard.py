@@ -26,13 +26,13 @@ TELEMETRY_VERSION = 2
 PERIOD_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "1y": 365 * 86400}
 INFERENCE_ENDPOINTS = {"/v1/chat/completions", "/v1/completions", "/v1/responses",
                        "/v1/messages", "/v1/embeddings", "/v1/rerank", "/v1/moderations",
-                       "/v1/systemone", "/v1/images/generations"}
+                       "/v1/systemone", "/v1/images/generations", "/v1/audio/transcriptions", "/classify"}
 SERVE_HEAD_RE = re.compile(
     r"serve_api: (?P<mode>\w+) (?P<tokens>\d+) tok in "
     r"(?P<seconds>[\d.]+)s = (?P<tps>[\d.]+|n/a) t/s"
 )
 REQUEST_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses','/v1/messages')"
-HISTORY_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses','/v1/messages','/v1/embeddings','/v1/rerank','/v1/moderations','/v1/systemone','/v1/images/generations')"
+HISTORY_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses','/v1/messages','/v1/embeddings','/v1/rerank','/v1/moderations','/v1/systemone','/v1/images/generations','/v1/audio/transcriptions','/classify')"
 
 # Every aggregate uses this same population. Legacy counters cannot be repaired
 # from stored metadata: the original usage object was deliberately not retained.
@@ -295,8 +295,8 @@ class Trace:
         if self.first_byte_mono is None and chunk:
             self.first_byte_mono = time.monotonic()
         self.response_bytes += len(chunk)
-        if self.endpoint == "/v1/images/generations":
-            return  # No token usage; never buffer generated image payloads.
+        if self.endpoint in {"/v1/images/generations", "/v1/audio/transcriptions"}:
+            return  # Keep image/audio/transcript content out of telemetry buffers.
         if "text/event-stream" in content_type.lower():
             self._line_buffer.extend(chunk)
             while b"\n" in self._line_buffer:
@@ -591,7 +591,9 @@ class Dashboard:
 
     async def _get_json(self, path: str) -> dict[str, Any]:
         try:
-            async with self.session.get(f"{self.backend_url}{path}", timeout=ClientTimeout(total=4)) as response:
+            async with self.session.get(f"{self.backend_url}{path}",
+                                        headers=getattr(self.manager, "backend_headers", lambda: {})(),
+                                        timeout=ClientTimeout(total=4)) as response:
                 if response.status != 200:
                     return {}
                 value = await response.json()

@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.26 supports Halogen 0.17.2. Install the Halobridge update, then
+Halobridge 0.1.28 supports Halogen 0.18.0. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -24,13 +24,17 @@ A request for another installed GPU profile switches the GPU backend.
 | `POST /v1/moderations` | NPU `qwen3guard-gen-0.6b` | Check prompts or replies for the Safe, Unsafe and Controversial labels. |
 | `POST /v1/chat/completions` | NPU `qwen3.5-2b` | Short text jobs and summaries beside the GPU model; no thinking, tools or vision. |
 | `POST /v1/images/generations` **new in 0.17.0** | NPU `flux2-klein-4b` | Generate icons, illustrations, placeholders or simple diagrams from a text prompt. |
+| `POST /v1/audio/transcriptions` **new in 0.18.0** | NPU `qwen3-asr-0.6b` or `qwen3-asr-1.7b` | Convert a WAV recording to text for meeting notes, dictation or searchable audio. |
+| `POST /classify` | Custom sequence classifier | Label inputs with the labels trained into your classifier. |
+| `GET /halogen/handles` | Sessions enabled on the active GPU profile | Inspect kept conversation states. |
+| `DELETE /halogen/handles/<name>` | Sessions enabled on the active GPU profile | Release one kept state. |
 | `GET /v1/models` | No generation | Discover GPU profile IDs and currently loaded NPU IDs, tasks and context limits. |
 | `GET /health` | Running backend | Check engine health and priority admission counters. |
 | `GET /metrics` | Running backend | Scrape Prometheus metrics, including priority-slot gauges. |
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, and 0.17.2 is the recommended engine for all of them. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, and ASR needs 0.18.0+. Use 0.18.0 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## System One: classify a ticket and estimate urgency
@@ -81,16 +85,145 @@ curl --fail-with-body -sS localhost:8731/v1/images/generations \
 python3 -c 'import base64,json,pathlib; r=json.load(open("/tmp/halobridge-image.json")); pathlib.Path("/tmp/halobridge-image.png").write_bytes(base64.b64decode(r["data"][0]["b64_json"]))'
 ```
 
-Supported sizes are `256x256` and `512x512`; `auto` means `512x512`. `n` is
+Supported sizes are `256x256`, `512x512`, `768x768`, `1024x1024`, `768x512`, `512x768`, `1024x768`, `768x1024`, `1024x576`, `576x1024`, `640x512`, `512x640`, `896x512`, `512x896`, `1024x448`, `448x1024`, `1024x512`, `512x1024`, `1024x640`, `640x1024`; `auto` means `512x512`. Set `steps` (or `num_inference_steps`) to **4**, or omit it; every other step count is rejected. `n` is
 1–4, drawn sequentially. Output is PNG. `response_format=url` returns an inline
 `data:image/png;base64,...` URL, not a hosted download. A fixed seed makes a
 request repeatable; image `i` uses `seed + i`. The prompt is truncated to 512
 tokens. `quality=low` is currently refused; the other quality values produce
 the same image. Only one image request runs on the NPU at a time.
 
-Images are generated locally. These are small illustrations, rather than a
-high-resolution image-editing endpoint. Image bodies pass through Halobridge;
+Images are generated locally. With ASR loaded, sizes above 512x512 may exceed shared NPU memory and return an error; the server keeps running. After `qwen3-asr-1.7b` has transcribed, larger sizes no longer fit. Use 256x256 or 512x512 with ASR, or disable ASR through NPU Setup for larger images. Image bodies pass through Halobridge;
 request history stores duration, status, model and response size, not the image.
+
+## Speech: turn a WAV recording into text
+
+Update the target GPU profiles to 0.18.0 and select **one** speech model in
+NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
+(about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
+programs and audio encoder together; they are shared across profiles.
+
+```bash
+curl --fail-with-body -sS localhost:8731/v1/audio/transcriptions \
+  -F model=qwen3-asr-0.6b -F file=@meeting.wav \
+  -F language=en -F response_format=json
+```
+
+The response is `{"text":"..."}`. Use `response_format=text` for plain text.
+`language` is optional; `prompt` may supply names or terminology. Clients may
+send `model=whisper-1`; the request still uses the single loaded ASR model.
+Only WAV is accepted: PCM 8–32 bit or floating point, any sample rate,
+mono or multiple channels, up to **20 minutes or 25 MiB**, whichever is first.
+Other formats and streaming are rejected by Halogen. Audio uploads and response
+text pass through unchanged. History records the loaded model, duration, status
+and response size; it stores neither audio nor transcript, and invents no token
+counts. Transcription queues with the other NPU work and keeps the GPU loaded.
+
+## Larger NPU models and custom classification
+
+Select `decider-4b`, `qwen3-embedding-4b` or `qwen3-reranker-4b` in NPU Setup
+on 0.17.4+. They use the same endpoints as their smaller counterparts; change
+the request's model ID. The embedding model supports up to 2560 dimensions.
+If several decision models are loaded, `/v1/systemone` needs the exact model ID.
+
+A sequence-classifier fine-tune (`Qwen3ForSequenceClassification`) of Qwen3-0.6B,
+Qwen3-Embedding-0.6B or Qwen3-Embedding-4B can be mounted and selected by path
+in NPU Setup. Halogen determines its task and base programs. Send its directory
+basename as the model:
+
+```bash
+curl --fail-with-body -sS localhost:8731/classify \
+  -H 'Content-Type: application/json' -d '{
+  "model":"my-classifier","input":["Win a free prize now","Lunch at noon?"]}'
+```
+
+Each entry in `data` includes `index`, `label`, `probs` and `num_classes`.
+`usage` counts prompt tokens. Use this for labels learned by your classifier,
+such as spam or ticket categories. Moderation remains `/v1/moderations`.
+
+## Sessions: reuse and branch an exact conversation
+
+In the GPU profile editor, enable `HALOGEN_FORK=1` and apply/restart the profile.
+The optional limits default to 8 handles, 600 seconds idle expiry and 2 GiB.
+Keep `/cache` mounted and `HALOGEN_CACHE_DIR` set for restart persistence.
+
+```bash
+curl --fail-with-body -sS localhost:8731/v1/chat/completions \
+  -H 'Content-Type: application/json' -H 'X-Halogen-Keep: example-start' \
+  -d '{"model":"qwen3.8-flash","max_tokens":128,"enable_thinking":false,
+       "messages":[{"role":"user","content":"Suggest three names for a local search tool."}]}' \
+  > /tmp/halobridge-session.json
+
+# Reuse the exact assistant message returned by the first request.
+python3 - <<'PY' > /tmp/halobridge-session-branch.json
+import json
+with open('/tmp/halobridge-session.json') as f:
+    reply = json.load(f)['choices'][0]['message']
+print(json.dumps({'model': 'qwen3.8-flash', 'max_tokens': 128,
+                  'enable_thinking': False, 'messages': [
+    {'role': 'user', 'content': 'Suggest three names for a local search tool.'},
+    reply,
+    {'role': 'user', 'content': 'Explain the first name in one sentence.'}]}))
+PY
+
+curl --fail-with-body -sS localhost:8731/v1/chat/completions \
+  -H 'Content-Type: application/json' -H 'X-Halogen-From: example-start' \
+  -H 'X-Halogen-Keep: example-branch' \
+  --data-binary @/tmp/halobridge-session-branch.json
+
+curl --fail-with-body -sS localhost:8731/halogen/handles
+curl --fail-with-body -sS -X DELETE localhost:8731/halogen/handles/example-start
+```
+
+Start several requests with the same `X-Halogen-From` to fork. A request that
+also supplies `X-Halogen-Keep` saves its resulting branch. These headers work
+on Chat Completions, Messages and Responses. Response header `X-Halogen-From`
+reports `used`, `unmatched` or `unknown`; an unmatched/expired state becomes an
+ordinary request. This accelerates repeated context, rather than replacing the
+conversation in the request. Handles belong to the active GPU profile's cache;
+GET/DELETE manage that backend, so select the intended GPU profile first.
+Clients of that backend share names. Changing `HALOGEN_FORK`, `FORK_GIB` or
+`FORK_TTL_S` invalidates its disk cache configuration.
+
+## Prompt progress and stream silence
+
+On 0.17.5+, send `"stream":true,"return_progress":true` on Chat Completions
+or Completions. The SSE stream includes `prompt_progress` with `total`, `cache`,
+`processed` and `time_ms` before generated tokens. This lets a client show
+progress while a long prompt is processed. Halobridge forwards these chunks
+and still reads final usage. Dashboard latency is **time to first response byte**,
+so progress or keepalive events can arrive before the first generated token.
+
+Leave `HALOGEN_NEXT_TOKEN_S` empty to use Halogen's watchdog-derived silence
+limit (990 seconds at its default settings). Set it in the Engine section only
+when a different limit is required. Halobridge imposes no fixed stream read
+timeout. The engine's memory-stall and cache fixes work after an engine update.
+
+## Optional backend keys and request records
+
+Halobridge's dashboard login and Halogen's backend API key are separate.
+Set `HALOGEN_API_KEY_FILE` in the profile editor to a container path backed by
+an existing secret file, for example `/secrets/backend.key`, and add a read-only
+mount for its host directory. The key file accepts comma-separated or newline-
+separated ASCII keys. Inline `HALOGEN_API_KEY` is also supported; set one option,
+not both. Inline values are hidden in the editor and redacted in Quadlet previews.
+
+Halobridge resolves that file using the profile's actual mounts for discovery
+and cache monitoring. Clients can send a backend key directly. Clients that
+authenticate with Halobridge's configured login token can use the profile's
+backend credential through the bridge. Unauthenticated clients never receive
+the bridge's credential. `/health` stays open on the backend; other backend
+routes require a key when this option is enabled. Configure each GPU profile
+that should enforce it. For externally managed backends without a matching
+Quadlet, `[router].backend_api_key_file` is an optional **host** file path.
+
+To keep Halogen's own diagnostic request records, set `HALOGEN_RECORD_DIR` to
+a writable mounted path such as `/cache/request-records`. Set
+`HALOGEN_RECORD_TEXT=none` for metadata only, or `all` / a comma list of
+`prompt,reply,reasoning,args,results`. If omitted, text defaults to **all**.
+`HALOGEN_RECORD_GIB` defaults to 2 and `HALOGEN_RECORD_DAYS` to 90; 0 days
+keeps all days. These are optional local files, separate from Halobridge's
+usage database. They have no read/delete API. Full or failing record storage
+drops records while inference continues.
 
 ## Priority slots: keep interactive chat responsive
 
@@ -144,9 +277,9 @@ speculate together automatically. Faster decode and prompt processing, improved
 disk-prefix cache reuse, streamed tool-call cleanup and schema/tool fixes work
 without a new endpoint. Late system/developer turns in Chat Completions are
 treated as user text at their position; images in those late turns are refused.
-GPU checkpoints remain unchanged from 0.16.2.
+GPU checkpoints remain unchanged from 0.16.2 through 0.18.0. The 0.18.0 prompt-cache fixes, Flux tokenizer correction, NPU health listing and clean container stops take effect automatically after the engine update.
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.17.2/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.17.2/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.0/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.0/CHANGELOG.md).

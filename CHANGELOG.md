@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.28
+
+- Support Halogen 0.18.0 and verified NPU asset upgrades.
+- Add ASR transcription, 4B NPU models and custom classification.
+- Support larger Flux images, sessions and prompt progress.
+- Expose request records, stream limits and backend API keys.
+- Authenticate internal probes and redact key previews.
+- Default new templates to Halogen 0.18.0.
+- Document endpoints and extend hardware smoke checks.
+
 ## 0.1.27
 
 - Add CYBER-FROST 3.8 quick template with vision.

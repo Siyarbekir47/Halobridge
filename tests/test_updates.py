@@ -192,7 +192,7 @@ class TransactionTests(unittest.IsolatedAsyncioTestCase):
                      for variant in ("swift15", "swift15-abliterated", "cyber-frost")}
         assets = SharedAssets(self.root / "models", self.quadlets, self.root / "state")
         locations = assets.locations()
-        with patch.dict(MODELS, additions), patch("test_updates.OLD", "0.17.5"), patch("test_updates.NEW", "0.17.6"):
+        with patch.dict(MODELS, additions), patch("test_updates.OLD", "0.17.5"), patch("test_updates.NEW", "0.18.0"):
             profiles = [bind_shared_assets(official_template(OLD, self.root / "models", self.root / "cache"), locations),
                         bind_shared_assets(uncensored_template(OLD, self.root / "models", self.root / "cache"), locations)]
             profiles[0].env["HALOGEN_CHECKPOINT"] = "/models/qwen38-flash-next-ht43.hgn"
@@ -200,6 +200,7 @@ class TransactionTests(unittest.IsolatedAsyncioTestCase):
                          for variant in ("swift15", "swift15-abliterated", "cyber-frost")]
             originals = {}
             for profile in profiles:
+                profile.image = f"{IMAGE_REPOSITORY}:{OLD}"
                 path = self.quadlets / f"halogen-{profile.profile_id}.container"
                 originals[path] = render_quadlet(profile).encode() + b"# custom service\nRestartSec=17\n"
                 path.write_bytes(originals[path])

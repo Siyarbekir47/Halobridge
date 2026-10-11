@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from aiohttp import ClientSession, web
+from aiohttp import ClientSession, FormData, web
 from aiohttp.test_utils import TestClient, TestServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -37,6 +37,8 @@ def fixture_manifest(program=b"new program"):
                  "tokenizer/tokenizer.json": (model + " tokenizer").encode()}
         if owner == model:
             paths.update({"devices/devices.hnpm": b"device record", "devices/u0.elf": program})
+        if task == "transcribe":
+            paths.update({"enc/weights.hnpw": b"audio weights", "enc/devices.hnpm": b"audio record", "enc/u0.elf": program})
         if task == "image":
             paths["devices/taef2.safetensors"] = b"image decoder"
         for name, data in paths.items():
@@ -47,9 +49,32 @@ def fixture_manifest(program=b"new program"):
 
 
 class ManifestTests(unittest.TestCase):
+    def test_0180_catalog_accepts_asr_and_verifies_encoder_dependencies(self):
+        latest = bundled_manifest("0.18.0")
+        self.assertEqual(set(latest.models), set(NPU_MODELS))
+        for model in ("qwen3-asr-0.6b", "qwen3-asr-1.7b"):
+            selected = latest.select([model])
+            self.assertEqual({a.model for a in selected}, {model})
+            self.assertTrue({"enc/weights.hnpw", "enc/devices.hnpm", "enc/u0.elf"}
+                            <= {a.name for a in selected})
+            incomplete = "\n".join(line for line in latest.text.splitlines()
+                                   if not line.startswith(f"file {model} enc/"))
+            with self.assertRaisesRegex(AssetError, "Incomplete NPU manifest"):
+                NpuManifest(incomplete)
+        with self.assertRaisesRegex(ValueError, "only one speech"):
+            parse_models("qwen3-asr-0.6b,qwen3-asr-1.7b")
+        old_flux = bundled_manifest("0.17.2").select(["flux2-klein-4b"])
+        new_flux = latest.select(["flux2-klein-4b"])
+        self.assertNotEqual({a.name: a.digest for a in old_flux}, {a.name: a.digest for a in new_flux})
+
+    def test_bundled_catalogs_cover_upgrade_and_rollback_versions(self):
+        for version, count in (("0.16.2", 5), ("0.17.2", 6), ("0.17.3", 6),
+                               ("0.17.4", 9), ("0.17.5", 9), ("0.18.0", 11)):
+            self.assertEqual(len(bundled_manifest(version).models), count)
+
     def test_real_image_manifest_lists_all_six_and_shares_dense_program(self):
-        manifest = bundled_manifest()
-        self.assertEqual(set(manifest.models), set(NPU_MODELS))
+        manifest = bundled_manifest("0.17.2")
+        self.assertEqual(set(manifest.models), {m for m in NPU_MODELS if m not in {"decider-4b", "qwen3-embedding-4b", "qwen3-reranker-4b", "qwen3-asr-0.6b", "qwen3-asr-1.7b"}})
         assets = manifest.select(["qwen3-reranker-0.6b", "qwen3guard-gen-0.6b"])
         paths = {(a.model, a.name) for a in assets}
         self.assertNotIn(("qwen3-embedding-0.6b", "qwen3-embedding-0.6b.hnpw"), paths)
@@ -59,10 +84,10 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual({a.model for a in flux}, {"flux2-klein-4b"})
         self.assertIn("devices/taef2.safetensors", {a.name for a in flux})
         self.assertEqual(sum(a.size for a in flux), 8_072_427_547)
-        self.assertEqual(set(bundled_manifest("0.16.2").models), set(NPU_MODELS) - {"flux2-klein-4b"})
+        self.assertEqual(set(bundled_manifest("0.16.2").models), set(manifest.models) - {"flux2-klein-4b"})
 
     def test_custom_programs_exclude_image_and_generation_models(self):
-        manifest = bundled_manifest()
+        manifest = bundled_manifest("0.17.2")
         with self.assertRaises(AssetError):
             manifest.select(["/models/custom"], ["flux2-klein-4b"])
         without_decoder = "\n".join(line for line in manifest.text.splitlines() if "taef2.safetensors" not in line)
@@ -163,6 +188,28 @@ class AssetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({model for model, _ in self.downloads}, {"qwen3guard-gen-0.6b"})
         self.assertFalse((second.root / "qwen3-embedding-0.6b/qwen3-embedding-0.6b.hnpw").exists())
 
+    async def test_missing_audio_encoder_prevents_start_without_a_download(self):
+        model = "qwen3-asr-0.6b"
+        selection = self.assets.selection(self.new, [model], [])
+        await selection.prepare(None, self.download, lambda _: None)
+        profile = official_template("0.18.0", self.root / "models", self.root / "cache")
+        profile.env["HALOGEN_NPU_MODELS"] = model
+        profile.volumes.append((str(selection.root), "/models/npu", "ro,z"))
+        downloads = list(self.downloads)
+        with patch("npu.host_status", return_value=READY):
+            await self.assets.validate_profile_start(profile)
+            (selection.root / model / "enc/weights.hnpw").unlink()
+            with self.assertRaisesRegex(AssetError, "enc/weights.hnpw"):
+                await self.assets.validate_profile_start(profile)
+        self.assertEqual(self.downloads, downloads)
+
+    async def test_runtime_probe_accepts_4b_sequence_classifier(self):
+        from npu import check_runtime
+        async def run(*args, **kwargs):
+            return "task=classifier base=qwen3-embedding-4b" if "probe" in args else "usage: halogen-npu"
+        self.assertEqual(await check_runtime(run, IMAGE, [], [("/host/fine-tune", "/models/classifier", "ro")]),
+                         ["qwen3-embedding-4b"])
+
     async def test_checksum_failure_does_not_promote_a_file(self):
         selection = self.assets.selection(self.new, ["qwen3.5-2b"], [])
         async def corrupt(asset, stage):
@@ -238,11 +285,18 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.received = []
         self.hold, self.entered = asyncio.Event(), asyncio.Event()
-        self.backend_entries = [{"id": "halogen-swift15"}] + [{"id": name, "task": task} for name, task in NPU_MODELS.items()] + [{"id": "unexpected"}]
+        self.backend_entries = [{"id": "halogen-swift15"}] + [{"id": name, "task": "moderation" if task == "classify" else task} for name, task in NPU_MODELS.items()] + [{"id": "unexpected"}]
         self.headers = []
         async def backend(request):
             if request.path == "/v1/models":
                 return web.json_response({"data": self.backend_entries})
+            if request.content_type == "multipart/form-data":
+                self.audio_body = await request.read()
+                self.audio_headers = dict(request.headers)
+                return web.json_response({"text": "A private transcript."})
+            if request.path.startswith("/halogen/handles"):
+                self.received.append((request.path, request.method))
+                return web.json_response({"handles": ["session-a"]}, headers={"X-Halogen-From": "used"})
             payload = await request.json()
             self.received.append((request.path, payload))
             self.headers.append(dict(request.headers))
@@ -255,7 +309,9 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
                 return web.Response(text='event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":9,"output_tokens":0,"cache_read_input_tokens":0}}}\n\nevent: message_delta\ndata: {"type":"message_delta","usage":{"input_tokens":2,"output_tokens":4,"cache_read_input_tokens":7}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
                                     content_type="text/event-stream")
             if payload.get("stream"):
-                return web.Response(text='data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2}}\n\ndata: [DONE]\n\n',
+                progress = ('data: {"prompt_progress":{"total":99,"cache":0,"processed":30,"time_ms":100}}\n\n'
+                            if payload.get("return_progress") else '')
+                return web.Response(text=progress + 'data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2}}\n\ndata: [DONE]\n\n',
                                     content_type="text/event-stream")
             return web.json_response({"usage": {"prompt_tokens": 9, "completion_tokens": 2}})
         app = web.Application()
@@ -283,6 +339,91 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         await self.session.close()
         await self.dashboard.close()
 
+    async def test_audio_alias_preserves_multipart_bytes_and_records_no_transcript(self):
+        model = "qwen3-asr-0.6b"
+        self.backend_entries = [{"id": "halogen-swift15"}, {"id": model, "task": "transcribe"}]
+        audio = b"RIFF\x00\xff\x80\nWAVE binary audio"
+        form = FormData()
+        form.add_field("file", audio, filename="sample.wav", content_type="audio/wav")
+        form.add_field("model", "whisper-1")  # Exercise a model field after the binary file.
+        form.add_field("language", "en")
+        response = await self.client.post("/v1/audio/transcriptions", data=form)
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual((await response.json())["text"], "A private transcript.")
+        self.assertIn(audio, self.audio_body)
+        self.assertIn(b"whisper-1", self.audio_body)
+        self.assertIn('boundary=', self.audio_headers["Content-Type"])
+        self.assertEqual(int(self.audio_headers["Content-Length"]), len(self.audio_body))
+        self.manager.perform_switch.assert_not_awaited()
+        row = self.dashboard.db.execute("SELECT model,endpoint,input_tokens,output_tokens FROM requests").fetchone()
+        self.assertEqual(tuple(row), (model, "/v1/audio/transcriptions", None, None))
+        self.assertEqual(self.dashboard._summary(0, 99999999999)["requests"], 0)
+        self.assertEqual(self.dashboard._history(0, 99999999999)["total"], 1)
+        self.assertEqual(self.manager.active_requests, 0)
+
+    async def test_audio_rejects_bad_metadata_and_handles_missing_speech_model(self):
+        for fields, status in ((("whisper-1", "other"), 400), (("x" * 513,), 400)):
+            form = FormData()
+            form.add_field("file", b"WAVE", filename="a.wav", content_type="audio/wav")
+            for value in fields:
+                form.add_field("model", value)
+            response = await self.client.post("/v1/audio/transcriptions", data=form)
+            self.assertEqual(response.status, status)
+        self.backend_entries = [{"id": "halogen-swift15"}]
+        form = FormData()
+        form.add_field("file", b"WAVE", filename="a.wav", content_type="audio/wav")
+        response = await self.client.post("/v1/audio/transcriptions", data=form)
+        self.assertEqual(response.status, 503)
+        self.assertEqual(self.manager.active_requests, 0)
+        self.manager.perform_switch.assert_not_awaited()
+
+    async def test_sessions_management_preserves_headers_and_active_gpu(self):
+        for method, path in (("GET", "/halogen/handles"), ("DELETE", "/halogen/handles/session-a")):
+            response = await self.client.request(method, path, headers={"X-Halogen-From": "session-a"})
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers["X-Halogen-From"], "used")
+            await response.read()
+            self.assertEqual(self.received[-1], (path, method))
+        self.manager.perform_switch.assert_not_awaited()
+        self.assertEqual(self.manager.current_model, "halogen-swift15")
+        self.assertEqual(self.manager.active_requests, 0)
+
+    async def test_classifier_history_keeps_gpu_model_loaded(self):
+        self.manager.npu_names = lambda _: {"my-classifier"}
+        self.backend_entries = [{"id": "halogen-swift15"}, {"id": "my-classifier", "task": "classifier"}]
+        response = await self.client.post("/classify", json={"model": "my-classifier", "input": ["hello"]})
+        self.assertEqual(response.status, 200)
+        await response.read()
+        self.manager.perform_switch.assert_not_awaited()
+        row = self.dashboard.db.execute("SELECT model,input_tokens FROM requests").fetchone()
+        self.assertEqual(tuple(row), ("my-classifier", 9))
+        self.assertEqual(self.dashboard._history(0, 99999999999)["total"], 1)
+        self.assertEqual(self.dashboard._summary(0, 99999999999)["requests"], 0)
+
+    async def test_backend_auth_does_not_grant_unauthenticated_clients_its_credential(self):
+        self.manager.backend_auth = SimpleNamespace(headers=lambda _: {"Authorization": "Bearer private-backend"})
+        payload = {"model": "halogen-swift15", "messages": []}
+        response = await self.client.post("/v1/chat/completions", json=payload,
+                                          headers={"Authorization": "Bearer own-client-key"})
+        self.assertEqual(response.status, 200)
+        await response.read()
+        self.assertEqual(self.headers[-1]["Authorization"], "Bearer own-client-key")
+
+    async def test_prompt_progress_and_session_headers_pass_without_corrupting_usage(self):
+        payload = {"model": "halogen-swift15", "messages": [], "stream": True, "return_progress": True}
+        response = await self.client.post("/v1/chat/completions", json=payload,
+            headers={"X-Halogen-Keep": "kept-a", "X-Halogen-From": "from-a"})
+        self.assertEqual(response.status, 200)
+        stream = await response.text()
+        self.assertIn('"processed":30', stream)
+        self.assertIn('data: [DONE]', stream)
+        self.assertTrue(self.received[-1][1]["return_progress"])
+        self.assertEqual(self.headers[-1]["X-Halogen-Keep"], "kept-a")
+        self.assertEqual(self.headers[-1]["X-Halogen-From"], "from-a")
+        row = self.dashboard.db.execute("SELECT input_tokens,output_tokens FROM requests").fetchone()
+        self.assertEqual(tuple(row), (9, 2))
+
+
     async def test_all_npu_routes_keep_gpu_loaded_and_preserve_payload(self):
         from npu import TASK_ROUTES
         for model, task in NPU_MODELS.items():
@@ -301,6 +442,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(history["total"], len(NPU_MODELS))
 
     async def test_systemone_alias_and_missing_model_use_decider_without_gpu_switch(self):
+        self.backend_entries = [entry for entry in self.backend_entries if entry["id"] != "decider-4b"]
         self.manager.models["other-gpu"] = "halogen-other.service"
         for model in (None, "typesafe-model", "other-gpu", "decider-0.8b"):
             payload = {"state": {"text": "Charged twice"}, "questions": {
@@ -488,6 +630,21 @@ class EngineUpdateTests(unittest.IsolatedAsyncioTestCase):
             profile = parse_quadlet(path.read_text())
             self.assertTrue(profile.image.endswith(":0.16.2"))
             self.assertIn(self.new.key, next(host for host, target, _ in profile.volumes if target == "/models/npu"))
+        self.assertEqual({p: p.read_bytes() for p in self.old_files}, self.old_files)
+
+    async def test_0180_update_accepts_speech_catalog_and_preserves_gpu_configuration(self):
+        self.updater.latest_version = "0.18.0"
+        self.updater._fetch_latest = AsyncMock(return_value="0.18.0")
+        with patch("test_updates.NEW", "0.18.0"):
+            await self.updater.start("0.18.0")
+            await self.updater.task
+        self.assertEqual(self.updater.job["phase"], "succeeded", self.updater.job)
+        for path, original in self.originals.items():
+            before, after = parse_quadlet(original.decode()), parse_quadlet(path.read_text())
+            self.assertTrue(after.image.endswith(":0.18.0"))
+            self.assertEqual(before.env, after.env)
+            self.assertEqual(before.host_port, after.host_port)
+        self.assertEqual(self.downloads, ["devices/u0.elf"])
         self.assertEqual({p: p.read_bytes() for p in self.old_files}, self.old_files)
 
     async def test_failed_engine_activation_restores_old_npu_bindings_and_bytes(self):

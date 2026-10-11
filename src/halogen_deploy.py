@@ -57,6 +57,11 @@ from npu import NpuAssets, system_mount_allowed
 
 logger = logging.getLogger("halobridge.deploy")
 
+
+def redact_quadlet(text):
+    return re.sub(r"(?m)^(\s*Environment=[\"']?HALOGEN_API_KEY=).*$", r"\1[redacted]", text)
+
+
 PROFILE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 QUADLET_FILENAME_RE = re.compile(r"^halogen-[a-z0-9][a-z0-9-]{0,31}\.container$")
 ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
@@ -221,8 +226,8 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
         current = target.read_text(encoding="utf-8") if target.exists() else ""
         diff = "\n".join(
             difflib.unified_diff(
-                current.splitlines(),
-                rendered.splitlines(),
+                redact_quadlet(current).splitlines(),
+                redact_quadlet(rendered).splitlines(),
                 fromfile="current",
                 tofile="new",
                 lineterm="",
@@ -238,7 +243,7 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             "ok": not errors,
             "errors": errors,
             "warnings": warnings,
-            "quadlet": rendered,
+            "quadlet": redact_quadlet(rendered),
             "diff": diff or "(no changes)",
             "exists": target.exists(),
         }
@@ -284,6 +289,10 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             if system_mount_allowed(host_path, _container, _mode):
                 continue
             root = self._validate_host_path(host_path)
+            if _container == profile.env.get("HALOGEN_API_KEY_FILE"):
+                if not root.is_file():
+                    raise DeployError("Create the backend API key file before installing directories")
+                continue
             root.mkdir(parents=True, exist_ok=True)
             created.append(str(root))
         return {"ok": True, "created": created}
@@ -1111,6 +1120,16 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
                 self._validate_host_path(host_path)
             except DeployError as exc:
                 errors.append(str(exc))
+        if profile.env.get("HALOGEN_API_KEY_FILE"):
+            from shared_assets import host_path
+            from backend_auth import file_key, BackendAuthError
+            path = host_path(profile, profile.env["HALOGEN_API_KEY_FILE"])
+            try:
+                if path is None:
+                    raise BackendAuthError("Backend API key file has no host mount")
+                file_key(path)
+            except BackendAuthError as exc:
+                errors.append(str(exc))
         return errors
 
     def _validate_conflicts(self, profile: Profile) -> list[str]:
@@ -1169,7 +1188,7 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             latest = getattr(self.updater, "latest_version", None)
             if latest:
                 return str(latest)
-        return "0.17.2"
+        return "0.18.0"
 
     async def _any_other_service_active(self, profile_id: str) -> bool:
         if not self.quadlet_dir.is_dir():

@@ -852,6 +852,7 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_NPU_PORT', 'number', 'deploy_f_npu_port'],
   ['HALOGEN_NPU_EMB_BATCH', 'select:0,1', 'deploy_f_npu_batch'],
   ['HALOGEN_NPU_VERIFY', 'select:0,1', 'deploy_f_npu_verify'],
+  ['HALOGEN_NPU_STALL_S', 'number', 'deploy_f_npu_stall'],
 ];
 const ENGINE_ENV_FIELDS = [
   ['HALOGEN_CACHE_EVICT', 'select:0,1', 'deploy_f_cache_evict'],
@@ -866,9 +867,30 @@ const ENGINE_ENV_FIELDS = [
   ['HALOGEN_PREFILL_KEEP_TRUNK', 'select:0,1', 'deploy_f_keep_trunk'],
   ['HALOGEN_REPETITION_PENALTY', 'number', 'deploy_f_repetition_penalty'],
   ['HALOGEN_TEMPLATE_UNCHECKED', 'select:0,1', 'deploy_f_template_unchecked'],
+  ['HALOGEN_NEXT_TOKEN_S', 'number', 'deploy_f_next_token'],
+  ['HALOGEN_ENGINE_WATCHDOG_S', 'number', 'deploy_f_watchdog'],
+  ['HALOGEN_ENGINE_WATCHDOG_DEFER_S', 'number', 'deploy_f_watchdog_defer'],
 ];
+const SESSION_ENV_FIELDS = [
+  ['HALOGEN_FORK', 'select:0,1', 'deploy_f_fork'],
+  ['HALOGEN_FORK_HANDLES', 'number', 'deploy_f_fork_handles'],
+  ['HALOGEN_FORK_TTL_S', 'number', 'deploy_f_fork_ttl'],
+  ['HALOGEN_FORK_GIB', 'number', 'deploy_f_fork_gib'],
+];
+const RECORD_ENV_FIELDS = [
+  ['HALOGEN_RECORD_DIR', 'text', 'deploy_f_record_dir'],
+  ['HALOGEN_RECORD_TEXT', 'text', 'deploy_f_record_text'],
+  ['HALOGEN_RECORD_GIB', 'number', 'deploy_f_record_gib'],
+  ['HALOGEN_RECORD_DAYS', 'number', 'deploy_f_record_days'],
+];
+const AUTH_ENV_FIELDS = [
+  ['HALOGEN_API_KEY_FILE', 'text', 'deploy_f_api_key_file'],
+  ['HALOGEN_API_KEY', 'password', 'deploy_f_api_key'],
+];
+const ALL_ENV_FIELDS = [...DEPLOY_ENV_FIELDS, ...NPU_ENV_FIELDS, ...ENGINE_ENV_FIELDS,
+  ...SESSION_ENV_FIELDS, ...RECORD_ENV_FIELDS, ...AUTH_ENV_FIELDS];
 let npuData = null, npuPlanData = null, npuDirty = false, npuRevision = 0, npuJobRunning = false;
-for (const [key] of [...NPU_ENV_FIELDS, ...ENGINE_ENV_FIELDS]) DEPLOY_ENV_NAMES.add(key);
+for (const [key] of ALL_ENV_FIELDS) DEPLOY_ENV_NAMES.add(key);
 DEPLOY_ENV_NAMES.add('HALOGEN_MODEL_ID');
 function setDeployBusy(busy) {
   deployBusy = busy;
@@ -912,7 +934,7 @@ function renderDeployForm(profile) {
       const opts = type.split(':')[1].split(',');
       return `<label><span data-i18n="${key}">${esc(t(key))}</span><select id="df_${name}"><option value=""></option>${opts.map(c => `<option value="${c}" ${value === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>`;
     }
-    return `<label><span data-i18n="${key}">${esc(t(key))}</span><input id="df_${name}" type="${type}" value="${esc(String(value ?? ''))}"></label>`;
+    return `<label><span data-i18n="${key}">${esc(t(key))}</span><input id="df_${name}" type="${type}" ${type === 'number' ? 'step="any"' : ''} ${type === 'password' ? 'autocomplete="new-password"' : ''} value="${esc(String(value ?? ''))}"></label>`;
   };
   const group = (key, html) => `<fieldset><legend data-i18n="${key}">${esc(t(key))}</legend><div class="deploy-fields">${html}</div></fieldset>`;
   const fields = items => items.map(([name, type, key]) => fieldHtml(name, type, key, (profile.env || {})[name] ?? '')).join('');
@@ -921,7 +943,15 @@ function renderDeployForm(profile) {
     + group('profile_capacity', fields(DEPLOY_ENV_FIELDS.slice(4, 11)))
     + group('profile_generation', fields(DEPLOY_ENV_FIELDS.slice(11)))
     + group('profile_npu', fields(NPU_ENV_FIELDS))
-    + group('profile_engine', fields(ENGINE_ENV_FIELDS));
+    + group('profile_engine', fields(ENGINE_ENV_FIELDS))
+    + group('profile_sessions', fields(SESSION_ENV_FIELDS))
+    + group('profile_records', fields(RECORD_ENV_FIELDS))
+    + group('profile_backend_auth', fields(AUTH_ENV_FIELDS));
+  const hint = document.createElement('p');
+  hint.className = 'muted';
+  hint.textContent = t('profile_018_hint');
+  hint.dataset.i18n = 'profile_018_hint';
+  $('deployFields').appendChild(hint);
   if ((profile.env || {}).HALOGEN_MODEL_ID === 'halogen-cyber-frost') {
     const note = document.createElement('p');
     note.className = 'warning';
@@ -956,7 +986,7 @@ function collectDeploy() {
   const env = {};
   const set = (k, v) => { if (v !== '') env[k] = v; };
   set('HALOGEN_MODEL_ID', $('df_model_id').value.trim());
-  for (const [name, type] of [...DEPLOY_ENV_FIELDS, ...NPU_ENV_FIELDS, ...ENGINE_ENV_FIELDS]) {
+  for (const [name, type] of ALL_ENV_FIELDS) {
     const el = $('df_' + name);
     set(name, type === 'check' ? (el.checked ? '1' : '') : el.value.trim());
   }
@@ -1024,7 +1054,14 @@ async function refreshNpu() {
     $('npuHost').className = npuData.ready ? 'success' : 'warning';
     $('npuHostCommands').textContent = (npuData.setup?.commands || []).join('\n');
     $('npuModelChoices').innerHTML = (npuData.models || []).map(model => `<label class="chk"><input type="checkbox" value="${esc(model.id)}" ${checked.has(model.id) ? 'checked' : ''}><span><strong>${esc(model.id)}</strong> <small>${esc(t('npu_task_' + model.task))} · ${esc(model.endpoint)}</small></span></label>`).join('');
-    for (const input of $('npuModelChoices').querySelectorAll('input')) input.addEventListener('change', invalidateNpuPlan);
+    for (const input of $('npuModelChoices').querySelectorAll('input')) input.addEventListener('change', () => {
+      if (input.checked && input.value.startsWith('qwen3-asr-')) {
+        for (const other of $('npuModelChoices').querySelectorAll('input')) {
+          if (other !== input && other.value.startsWith('qwen3-asr-')) other.checked = false;
+        }
+      }
+      invalidateNpuPlan();
+    });
     $('npuProfiles').innerHTML = `<option value="">${esc(t('npu_all_profiles'))}</option>`
       + (npuData.profiles || []).map(profile => `<option value="${esc(profile.id)}" ${profile.id === selectedProfile ? 'selected' : ''}>${esc(profile.id)} · ${esc(profile.image.split(':').pop())}</option>`).join('');
     renderNpuPlan();

@@ -261,6 +261,30 @@ class TemplateTests(unittest.TestCase):
         models = next(v for v in profile.volumes if v[1] == "/models")
         self.assertIn("ro", models[2])
 
+    def test_0180_features_validate_versions_paths_and_record_policy(self):
+        profile = official_template("0.18.0", Path("/host/models"), Path("/host/cache"))
+        profile.env.update(HALOGEN_FORK="1", HALOGEN_FORK_HANDLES="8", HALOGEN_FORK_TTL_S="600.5",
+                           HALOGEN_FORK_GIB="2.5", HALOGEN_NEXT_TOKEN_S="990.5",
+                           HALOGEN_RECORD_DIR="/cache/records", HALOGEN_RECORD_TEXT="prompt,reply",
+                           HALOGEN_RECORD_GIB="2", HALOGEN_RECORD_DAYS="0",
+                           HALOGEN_API_KEY="key-one,key-two", HALOGEN_NPU_MODELS="qwen3-asr-0.6b")
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(parse_quadlet(render_quadlet(profile)).env, profile.env)
+        for key, value in (("HALOGEN_RECORD_TEXT", "none,prompt"), ("HALOGEN_RECORD_TEXT", "prompt,prompt"),
+                           ("HALOGEN_RECORD_DIR", "/models/records"), ("HALOGEN_RECORD_DIR", "/unmounted/records"),
+                           ("HALOGEN_API_KEY", "key,broken key"), ("HALOGEN_FORK_GIB", "NaN")):
+            original = profile.env.get(key)
+            profile.env[key] = value
+            self.assertTrue(validate_profile(profile), (key, value))
+            profile.env[key] = original
+        profile.env["HALOGEN_API_KEY_FILE"] = "/cache/key"
+        self.assertTrue(any("not both" in error for error in validate_profile(profile)))
+        profile.env.pop("HALOGEN_API_KEY_FILE")
+        profile.image = profile.image.replace("0.18.0", "0.17.5")
+        errors = validate_profile(profile)
+        self.assertTrue(any("HALOGEN_FORK" in error for error in errors))
+        self.assertTrue(any("qwen3-asr" in error for error in errors))
+
     def test_env_fields_cover_documented_variables(self):
         for key in (
             "HALOGEN_CTX",

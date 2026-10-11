@@ -11,9 +11,10 @@ import sys
 import logging
 from pathlib import Path
 
-from profiles import bind_shared_assets, parse_quadlet, profile_to_dict, render_quadlet, swift_quick_template
+from profiles import DEFAULT_ENGINE_VERSION, bind_shared_assets, parse_quadlet, profile_to_dict, render_quadlet, swift_quick_template
 from shared_assets import AssetError, atomic_json
 from swift_catalog import variant_info, variant_engine
+from semver import version_tuple
 
 
 def shared_quadlet_content(content: str, locations: dict) -> str:
@@ -52,8 +53,17 @@ class SwiftInstallMixin:
         self._require_enabled()
         info = variant_info(variant)
         result = self.assets.plan(variant)
+        existing = next((p for p in self.assets.profiles() if p.profile_id == variant), None)
+        engine = variant_engine(variant)
+        if existing:
+            installed = existing.image.rsplit(":", 1)[-1]
+            if (version_tuple(installed) or (0, 0, 0)) >= version_tuple(engine):
+                engine = installed
+        else:
+            engine = DEFAULT_ENGINE_VERSION
         result.update(label=info["label"], model_card=f"https://huggingface.co/{info['checkpoint'].repo}",
-                      engine_version=variant_engine(variant),
+                      engine_version=engine,
+                      minimum_engine_version=variant_engine(variant),
                       template_unchecked=bool(info.get("template_unchecked")))
         return result
 

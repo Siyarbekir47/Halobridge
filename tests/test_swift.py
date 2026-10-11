@@ -89,7 +89,8 @@ class SwiftFilesTests(unittest.IsolatedAsyncioTestCase):
         async def health():
             model = self.manager.switch_target or self.manager.current_model
             variant = (model or "").removeprefix("halogen-")
-            version = swift_catalog.variant_engine(variant) if variant in self.variants else "0.15.1"
+            target = self.config.models.quadlet_dir / f"halogen-{variant}.container"
+            version = parse_quadlet(target.read_text()).image.rsplit(":", 1)[-1] if target.exists() else "0.15.1"
             return {"status": "ok", "model": model, "version": {"api": version, "engine": version}}
 
         self.manager.backend_health = health
@@ -134,7 +135,8 @@ class SwiftFilesTests(unittest.IsolatedAsyncioTestCase):
         originals = {p: p.read_bytes() for p in (official, swift)}
         self.downloads.clear()
         plan = self.deploy.swift_plan("cyber-frost")
-        self.assertEqual(plan["engine_version"], "0.17.5")
+        self.assertEqual(plan["engine_version"], "0.18.0")
+        self.assertEqual(plan["minimum_engine_version"], "0.17.5")
         self.assertTrue(plan["template_unchecked"])
         self.assertTrue(all(f["source_path"] is None for f in plan["files"]))
         job = await self.install("cyber-frost")
@@ -176,7 +178,7 @@ class SwiftFilesTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(AssetError, "forces thinking"):
             await self.deploy.assets.validate_start(profile.model_id)
         profile.env["HALOGEN_TEMPLATE_UNCHECKED"] = "1"
-        profile.image = profile.image.replace("0.17.5", "0.17.2")
+        profile.image = profile.image.rsplit(":", 1)[0] + ":0.17.2"
         target.write_text(render_quadlet(profile))
         with self.assertRaisesRegex(AssetError, "0.17.5"):
             await self.deploy.assets.validate_start(profile.model_id)
@@ -624,7 +626,7 @@ class SwiftCatalogTests(unittest.TestCase):
         for variant in swift_catalog.SWIFT_VARIANTS:
             profile = swift_quick_template(variant, Path("/models-root"), Path("/cache-root"), assets.locations(variant))
             self.assertEqual(validate_profile(profile), [])
-            self.assertTrue(profile.image.endswith(":" + swift_catalog.variant_engine(variant)))
+            self.assertTrue(profile.image.endswith(":0.18.0"))
             self.assertEqual(profile.env["HALOGEN_KV_POOL_POSITIONS"], "262144")
             self.assertEqual(profile.env["HALOGEN_WEIGHTS_LOCK"], "1")
             self.assertNotIn("HALOGEN_DOWNLOAD", profile.env)

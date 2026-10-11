@@ -19,25 +19,36 @@ from shared_assets import AssetError, SharedAssets, atomic_json, host_path
 
 NPU_MODELS = {
     "decider-0.8b": "decision",
+    "decider-4b": "decision",
     "qwen3-embedding-0.6b": "embedding",
+    "qwen3-embedding-4b": "embedding",
     "qwen3-reranker-0.6b": "score",
+    "qwen3-reranker-4b": "score",
     "qwen3guard-gen-0.6b": "classify",
     "qwen3.5-2b": "generate",
     "flux2-klein-4b": "image",
+    "qwen3-asr-0.6b": "transcribe",
+    "qwen3-asr-1.7b": "transcribe",
 }
-CUSTOM_TASKS = {"decision", "embedding", "score", "classify"}
-MODEL_MIN_VERSION = {"flux2-klein-4b": (0, 17, 0)}
+CUSTOM_TASKS = {"decision", "embedding", "score", "classify", "classifier"}
+MODEL_MIN_VERSION = {"flux2-klein-4b": (0, 17, 0),
+                     "decider-4b": (0, 17, 4), "qwen3-embedding-4b": (0, 17, 4),
+                     "qwen3-reranker-4b": (0, 17, 4),
+                     "qwen3-asr-0.6b": (0, 18, 0), "qwen3-asr-1.7b": (0, 18, 0)}
+BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0"}
 TASK_ROUTES = {
     "decision": "/v1/chat/completions", "generate": "/v1/chat/completions",
     "embedding": "/v1/embeddings", "score": "/v1/rerank",
     "classify": "/v1/moderations",
     "image": "/v1/images/generations",
+    "transcribe": "/v1/audio/transcriptions",
+    "classifier": "/classify",
 }
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 PATH_RE = re.compile(r"^/models/[A-Za-z0-9_./-]+$")
 REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 XRT_LIBS = ("libxrt_coreutil.so.2", "libxrt_core.so.2", "libxrt_driver_xdna.so.2")
-DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.17.2/docs/NPU.md"
+DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.0/docs/NPU.md"
 
 
 def parse_models(value: str) -> list[str]:
@@ -60,6 +71,8 @@ def parse_models(value: str) -> list[str]:
             raise ValueError(f"NPU models: duplicate model ID: {name}")
         names.add(name)
         result.append(item)
+    if sum(NPU_MODELS.get(item) == "transcribe" for item in result) > 1:
+        raise ValueError("NPU models: select only one speech-to-text model")
     return result
 
 
@@ -133,6 +146,9 @@ class NpuManifest:
                     or "tokenizer/tokenizer.json" not in paths
                     or "devices/devices.hnpm" not in programs
                     or (info["task"] == "image" and "devices/taef2.safetensors" not in programs)
+                    or (info["task"] == "transcribe" and (
+                        not {"enc/weights.hnpw", "enc/devices.hnpm"}.issubset(paths)
+                        or not any(p.startswith("enc/") and p.endswith(".elf") for p in paths)))
                     or not any(p.startswith("devices/") and p.endswith(".elf") for p in programs)):
                 raise AssetError(f"Incomplete NPU manifest for {model}")
 
@@ -154,8 +170,8 @@ class NpuManifest:
                 or (asset.model in devices and asset.name.startswith("devices/"))]
 
 
-def bundled_manifest(version="0.17.2") -> NpuManifest:
-    if version not in {"0.16.2", "0.17.2"}:
+def bundled_manifest(version="0.18.0") -> NpuManifest:
+    if version not in BUNDLED_VERSIONS:
         raise AssetError("No bundled NPU catalog for this engine version")
     return NpuManifest(files("halobridge_data").joinpath(f"npu/models-{version}.txt").read_text(encoding="utf-8"))
 
@@ -374,10 +390,10 @@ class NpuAssets:
                 return NpuManifest(json.loads(cache.read_text(encoding="utf-8"))["text"])
             except (OSError, ValueError, KeyError):
                 pass
-            if version in {"0.16.2", "0.17.2"}:
+            if version in BUNDLED_VERSIONS:
                 return bundled_manifest(version)
         if run is None:
-            raise AssetError("NPU catalog unavailable; pull this image or update the engine to 0.17.2 first")
+            raise AssetError("NPU catalog unavailable; pull this image or update the engine to 0.18.0 first")
         text = await run("podman", "run", "--rm", "--network=none", "--entrypoint", "/bin/cat",
                          image, "/opt/halogen/npu/models.txt", timeout=120)
         manifest = NpuManifest(text)

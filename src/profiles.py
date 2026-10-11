@@ -16,10 +16,11 @@ same profile. Safety rules enforced here:
 from __future__ import annotations
 
 import re
+import math
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from semver import normalize_version
+from semver import normalize_version, version_tuple
 
 PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 SAFE_VALUE_RE = re.compile(r"^[A-Za-z0-9 ._:/=@+-]+$")
@@ -53,6 +54,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_NPU_EMB_BATCH": FieldSpec("flag"),
     "HALOGEN_NPU_VERIFY": FieldSpec("flag"),
     "HALOGEN_NPU_PORT": FieldSpec("int", 1024, 65535),
+    "HALOGEN_NPU_STALL_S": FieldSpec("float", 0, 86400),
     "HALOGEN_CACHE_EVICT": FieldSpec("flag"),
     "HALOGEN_MTP": FieldSpec("flag"),
     "HALOGEN_PREFILL_CANCEL": FieldSpec("flag"),
@@ -67,6 +69,19 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_CK_OVERLAY": FieldSpec("text"),
     "HALOGEN_TEMPLATE_UNCHECKED": FieldSpec("flag"),
     "HALOGEN_API_PORT": FieldSpec("int", 1, 65535),
+    "HALOGEN_API_KEY": FieldSpec("keys"),
+    "HALOGEN_API_KEY_FILE": FieldSpec("path"),
+    "HALOGEN_NEXT_TOKEN_S": FieldSpec("float", 0.01, 86400),
+    "HALOGEN_ENGINE_WATCHDOG_S": FieldSpec("float", 0, 86400),
+    "HALOGEN_ENGINE_WATCHDOG_DEFER_S": FieldSpec("float", 0, 86400),
+    "HALOGEN_FORK": FieldSpec("flag"),
+    "HALOGEN_FORK_HANDLES": FieldSpec("int", 1, 65536),
+    "HALOGEN_FORK_TTL_S": FieldSpec("float", 0.01, 86400),
+    "HALOGEN_FORK_GIB": FieldSpec("float", 0.01, 4096),
+    "HALOGEN_RECORD_DIR": FieldSpec("path"),
+    "HALOGEN_RECORD_TEXT": FieldSpec("record_text"),
+    "HALOGEN_RECORD_GIB": FieldSpec("float", 0.01, 100_000),
+    "HALOGEN_RECORD_DAYS": FieldSpec("int", 0, 36500),
     "HALOGEN_KEEPALIVE_TIMEOUT": FieldSpec("int", 1, 86400),
     "HALOGEN_SSE_KEEPALIVE_S": FieldSpec("int", 0, 3600),
     "HALOGEN_QUEUE_TIMEOUT": FieldSpec("int", 1, 86400),
@@ -105,6 +120,13 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_CACHE_PRUNE_OLD": FieldSpec("flag"),
     "HALOGEN_GGUF_CACHE": FieldSpec("text"),
     "HALOGEN_GGUF_THREADS": FieldSpec("int", 1, 64),
+}
+
+FEATURE_MIN_VERSION = {
+    **{key: (0, 17, 3) for key in ENV_FIELDS if key.startswith("HALOGEN_RECORD_")},
+    "HALOGEN_API_KEY": (0, 17, 4), "HALOGEN_API_KEY_FILE": (0, 17, 4),
+    "HALOGEN_NEXT_TOKEN_S": (0, 17, 5),
+    **{key: (0, 18, 0) for key in ENV_FIELDS if key.startswith("HALOGEN_FORK")},
 }
 
 
@@ -169,22 +191,44 @@ def validate_profile(profile: Profile) -> list[str]:
         spec = ENV_FIELDS.get(key)
         if spec is None:
             errors.append(f"env: variable is not on the allowlist: {key}")
-        elif spec.kind != "models" and not SAFE_VALUE_RE.match(value):
+        elif spec.kind not in {"models", "keys", "record_text"} and not SAFE_VALUE_RE.fullmatch(value):
             errors.append(f"env {key}: invalid characters")
         else:
             error = _validate_value(value, spec)
             if error:
                 errors.append(f"env {key}: {error}")
+        minimum = FEATURE_MIN_VERSION.get(key)
+        version = version_tuple(profile.image.rsplit(":", 1)[-1])
+        if minimum and version and version < minimum:
+            errors.append(f"env {key}: requires Halogen {'.'.join(map(str, minimum))} or newer")
+    if profile.env.get("HALOGEN_API_KEY") and profile.env.get("HALOGEN_API_KEY_FILE"):
+        errors.append("env: set API_KEY or API_KEY_FILE, not both")
+    for key in ("HALOGEN_RECORD_DIR", "HALOGEN_API_KEY_FILE"):
+        value = profile.env.get(key)
+        if not value:
+            continue
+        target = PurePosixPath(value)
+        mounts = [v for v in profile.volumes if target == PurePosixPath(v[1]) or PurePosixPath(v[1]) in target.parents]
+        mount = max(mounts, key=lambda v: len(PurePosixPath(v[1]).parts), default=None)
+        if mount is None:
+            errors.append(f"env {key}: path must be inside a mounted volume")
+        elif key == "HALOGEN_RECORD_DIR" and "ro" in mount[2].split(","):
+            errors.append("env HALOGEN_RECORD_DIR: requires a writable volume")
     default = profile.env.get("HALOGEN_MAX_TOKENS_DEFAULT")
     cap = profile.env.get("HALOGEN_MAX_TOKENS_CAP")
     if default and cap and int(default) > int(cap):
         errors.append("env: MAX_TOKENS_DEFAULT must not exceed MAX_TOKENS_CAP")
     if profile.env.get("HALOGEN_NPU_MODELS"):
-        from npu import parse_models
+        from npu import parse_models, MODEL_MIN_VERSION
         try:
             models = parse_models(profile.env["HALOGEN_NPU_MODELS"])
             if profile.model_id in [name.rsplit("/", 1)[-1] for name in models]:
                 errors.append("env: NPU model IDs must differ from the backend model ID")
+            version = version_tuple(profile.image.rsplit(":", 1)[-1])
+            for model in models:
+                minimum = MODEL_MIN_VERSION.get(model)
+                if minimum and version and version < minimum:
+                    errors.append(f"env: NPU model {model} requires Halogen {'.'.join(map(str, minimum))} or newer")
         except ValueError:
             pass  # The field validation above reports the detailed error.
         if profile.env.get("HALOGEN_NPU_PORT") == profile.env.get("HALOGEN_API_PORT", "8731"):
@@ -209,6 +253,8 @@ def _validate_value(value: str, spec: FieldSpec) -> str | None:
     else:
         number = 0.0
     if spec.kind in ("int", "float"):
+        if not math.isfinite(number):
+            return "finite number expected"
         if spec.minimum is not None and number < spec.minimum:
             return f"Minimum is {spec.minimum:g}"
         if spec.maximum is not None and number > spec.maximum:
@@ -220,7 +266,7 @@ def _validate_value(value: str, spec: FieldSpec) -> str | None:
         if spec.choices and value not in spec.choices:
             return "allowed: " + ", ".join(spec.choices)
     elif spec.kind == "path":
-        if not IN_CONTAINER_PATH_RE.match(value) or value == "/":
+        if not IN_CONTAINER_PATH_RE.fullmatch(value) or value == "/" or ".." in PurePosixPath(value).parts:
             return "Container path expected (safe characters only)"
     elif spec.kind == "repo":
         if not REPO_ID_RE.match(value):
@@ -231,6 +277,14 @@ def _validate_value(value: str, spec: FieldSpec) -> str | None:
             parse_models(value)
         except ValueError as exc:
             return str(exc)
+    elif spec.kind == "keys":
+        if len(value) > 4096 or not all(re.fullmatch(r"[A-Za-z0-9._~+/=@:-]{1,512}", key) for key in value.split(",")):
+            return "use comma-separated API keys without whitespace or shell characters"
+    elif spec.kind == "record_text":
+        parts = value.split(",")
+        if value not in {"all", "none"} and (len(parts) != len(set(parts)) or
+                not set(parts).issubset({"prompt", "reply", "reasoning", "args", "results"})):
+            return "use all, none, or a comma list of prompt, reply, reasoning, args, results"
     return None
 
 
@@ -346,6 +400,7 @@ def profile_to_dict(profile: Profile) -> dict:
 
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
+DEFAULT_ENGINE_VERSION = "0.18.0"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"
@@ -518,7 +573,7 @@ def swift_quick_template(variant: str, models_root: Path, cache_root: Path,
     env.pop("HALOGEN_MTP_HEAD", None)
     if info.get("template_unchecked"):
         env["HALOGEN_TEMPLATE_UNCHECKED"] = "1"
-    image = f"{OFFICIAL_IMAGE_REPO}:{engine}"
+    image = f"{OFFICIAL_IMAGE_REPO}:{engine if existing else DEFAULT_ENGINE_VERSION}"
     if existing and (version_tuple(existing.image.rsplit(":", 1)[-1]) or (0, 0, 0)) >= version_tuple(engine):
         image = existing.image
     volumes = [(str(models_root / variant), "/models", "ro,Z"),

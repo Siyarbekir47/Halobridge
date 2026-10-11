@@ -79,6 +79,8 @@ class RouterConfig:
     bind: list[str] = field(default_factory=lambda: ["127.0.0.1"])
     port: int = 8731
     backend_url: str = "http://127.0.0.1:8831"
+    backend_api_key: str = field(default="", repr=False)
+    backend_api_key_file: str = ""
     drain_timeout_s: int = 7200
     start_timeout_s: int = 600
     stop_timeout_s: int = 180
@@ -87,10 +89,24 @@ class RouterConfig:
 
     @classmethod
     def from_section(cls, s: dict[str, Any]) -> "RouterConfig":
+        key = _as_optional_str(s, "backend_api_key")
+        key_file = _as_optional_str(s, "backend_api_key_file")
+        if key and key_file:
+            raise ConfigError("router: set backend_api_key or backend_api_key_file, not both")
+        if key:
+            from backend_auth import first_key, BackendAuthError
+            try:
+                first_key(key)
+            except BackendAuthError as exc:
+                raise ConfigError("router.backend_api_key is invalid") from exc
+        if key_file and not Path(key_file).expanduser().is_absolute():
+            raise ConfigError("router.backend_api_key_file must be an absolute host path")
         return cls(
             bind=_as_str_list(s, "bind", ["127.0.0.1"]),
             port=_as_int(s, "port", 8731, minimum=1),
             backend_url=_as_str(s, "backend_url", "http://127.0.0.1:8831").rstrip("/"),
+            backend_api_key=key,
+            backend_api_key_file=key_file,
             drain_timeout_s=_as_int(s, "drain_timeout_s", 7200),
             start_timeout_s=_as_int(s, "start_timeout_s", 600),
             stop_timeout_s=_as_int(s, "stop_timeout_s", 180),
