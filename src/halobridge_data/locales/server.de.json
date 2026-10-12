@@ -345,6 +345,7 @@
   "NPU catalog unavailable; pull this image or update the engine to 0.17.2 first": "NPU-Katalog nicht verfügbar; lade das Image oder aktualisiere zuerst die Engine auf 0.17.2",
   "NPU models: select only one speech-to-text model": "NPU-Modelle: nur ein Sprache-zu-Text-Modell auswählen",
   "NPU catalog unavailable; pull this image or update the engine to 0.18.0 first": "NPU-Katalog nicht verfügbar; lade das Image oder aktualisiere zuerst die Engine auf 0.18.0",
+  "NPU catalog for Halogen {p0} is unavailable; use NPU Setup to read the installed container image": "NPU-Katalog für Halogen {p0} nicht verfügbar; lies das installierte Container-Image über die NPU-Einrichtung ein",
   "Backend API key file cannot be read": "Backend-API-Schlüsseldatei kann nicht gelesen werden",
   "Backend API key file has no host mount": "Backend-API-Schlüsseldatei hat keinen Host-Mount",
   "Backend API key is empty or invalid": "Backend-API-Schlüssel ist leer oder ungültig",

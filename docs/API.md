@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.28 supports Halogen 0.18.0. Install the Halobridge update, then
+Halobridge 0.1.29 supports Halogen 0.18.0 and 0.18.1. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.

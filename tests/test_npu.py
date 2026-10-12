@@ -72,6 +72,11 @@ class ManifestTests(unittest.TestCase):
                                ("0.17.4", 9), ("0.17.5", 9), ("0.18.0", 11)):
             self.assertEqual(len(bundled_manifest(version).models), count)
 
+    def test_0181_catalog_matches_verified_0180_image_catalog(self):
+        manifest = bundled_manifest("0.18.1")
+        self.assertEqual(manifest.key, "56ebf96860d8c66da42b5895d64afd4acd855aa2b54be1e599b7546afd603028")
+        self.assertEqual(manifest.text, bundled_manifest("0.18.0").text)
+
     def test_real_image_manifest_lists_all_six_and_shares_dense_program(self):
         manifest = bundled_manifest("0.17.2")
         self.assertEqual(set(manifest.models), {m for m in NPU_MODELS if m not in {"decider-4b", "qwen3-embedding-4b", "qwen3-reranker-4b", "qwen3-asr-0.6b", "qwen3-asr-1.7b"}})
@@ -729,6 +734,62 @@ class InstallTests(unittest.IsolatedAsyncioTestCase):
     async def install(self, models="qwen3.5-2b"):
         await self.deploy.quick_npu({"models": models})
         await self.deploy._job_task
+
+    def use_real_catalog(self, version):
+        self.profile.image = IMAGE.rsplit(":", 1)[0] + ":" + version
+        self.original = render_quadlet(self.profile).encode()
+        self.path.write_bytes(self.original)
+        self.deploy.npu_assets.manifest = NpuAssets.manifest.__get__(self.deploy.npu_assets)
+
+    async def test_first_0181_npu_preview_without_existing_cache_or_npu_selection(self):
+        self.use_real_catalog("0.18.1")
+        self.assertNotIn("HALOGEN_NPU_MODELS", self.profile.env)
+        self.assertFalse((self.deploy.npu_assets.state_dir / "npu-manifests/0.18.1.json").exists())
+        app = web.Application()
+        DeployRoutes(self.deploy).register_routes(app)
+        async with TestClient(TestServer(app)) as client:
+            response = await client.get("/dashboard/api/deploy/npu/plan", params={"models": "decider-4b"})
+            self.assertEqual(response.status, 200, await response.text())
+            plan = await response.json()
+            self.assertEqual(plan["models"], ["decider-4b"])
+            self.assertEqual(plan["plans"][0]["image"], self.profile.image)
+            self.assertGreater(plan["download_bytes"], 0)
+        self.deploy._run.assert_not_awaited()
+        self.manager.start_service.assert_not_awaited()
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.assertEqual(self.downloads, [])
+
+    async def test_unbundled_image_preview_reads_local_catalog_and_caches_it(self):
+        self.use_real_catalog("0.99.0")  # Synthetic future version, not a published release.
+        self.deploy._run.return_value = self.manifest.text
+        first = await self.deploy.npu_plan("decider-4b")
+        self.deploy._run.assert_awaited_once_with(
+            "podman", "run", "--rm", "--pull=never", "--network=none", "--entrypoint", "/bin/cat",
+            self.profile.image, "/opt/halogen/npu/models.txt", timeout=120)
+        cache = self.deploy.npu_assets.state_dir / "npu-manifests/0.99.0.json"
+        self.assertEqual(json.loads(cache.read_text())["sha256"], self.manifest.key)
+        self.deploy._run.reset_mock()
+        second = await self.deploy.npu_plan("decider-4b")
+        self.assertEqual(first["download_bytes"], second["download_bytes"])
+        self.deploy._run.assert_not_awaited()
+        cache.write_text("invalid cached record")
+        await self.deploy.npu_plan("decider-4b")
+        self.deploy._run.assert_awaited_once()
+        self.manager.start_service.assert_not_awaited()
+        self.assertFalse(self.manager.maintenance)
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.assertEqual(self.downloads, [])
+
+    async def test_unavailable_local_image_preview_does_not_change_profiles_or_download(self):
+        self.use_real_catalog("0.99.0")
+        self.deploy._run.side_effect = DeployError("No local image; pull the selected container image first")
+        with self.assertRaisesRegex(DeployError, "No local image"):
+            await self.deploy.npu_plan("decider-4b")
+        self.assertFalse((self.deploy.npu_assets.state_dir / "npu-manifests/0.99.0.json").exists())
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.assertEqual(self.downloads, [])
+        self.manager.start_service.assert_not_awaited()
+        self.assertFalse(self.manager.maintenance)
 
     async def test_setup_repeat_and_disable_preserve_gpu_and_reuse_files(self):
         await self.install()

@@ -56,7 +56,7 @@ class NpuInstallMixin:
                 minimum = MODEL_MIN_VERSION.get(model, (0, 16, 2))
                 if version < minimum:
                     raise AssetError(f"NPU model {model} requires Halogen {'.'.join(map(str, minimum))} or newer")
-            manifest = await self.npu_assets.manifest(image)
+            manifest = await self.npu_assets.manifest(image, self._run)
             if manifest.key in manifests:
                 manifests[manifest.key]["images"].append(image)
                 continue

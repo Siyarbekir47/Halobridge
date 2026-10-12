@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.29
+
+- Fix first-time NPU setup on Halogen 0.18.1.
+- Read and cache unbundled catalogs from local container images.
+- Reuse verified 0.18.1 catalog metadata and clarify missing-catalog errors.
+
 ## 0.1.28
 
 - Support Halogen 0.18.0 and verified NPU asset upgrades.

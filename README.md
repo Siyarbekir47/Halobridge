@@ -687,6 +687,9 @@ NPU weights, tokenizers and device programs are checked against the selected
 container image's pinned file record. They live under
 `models_root/shared/halogen-npu/<manifest-sha256>` and are shared by Official,
 Orca, Swift and custom GPU profiles. Containers mount this directory read-only.
+Download previews use a verified bundled catalog or read and cache it from the
+selected local container image, so first-time setup also works after an engine
+upgrade without any NPU models previously enabled. A preview downloads no models.
 Flux needs about **7.5 GiB of downloads and 8 GB of host memory** in addition to
 the GPU and other loaded models. Its decoder and device programs are included
 in the plan. Images require Halogen 0.17.0 or newer; System One requires 0.16.3

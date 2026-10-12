@@ -35,7 +35,10 @@ MODEL_MIN_VERSION = {"flux2-klein-4b": (0, 17, 0),
                      "decider-4b": (0, 17, 4), "qwen3-embedding-4b": (0, 17, 4),
                      "qwen3-reranker-4b": (0, 17, 4),
                      "qwen3-asr-0.6b": (0, 18, 0), "qwen3-asr-1.7b": (0, 18, 0)}
-BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0"}
+# The 0.18.1 image's catalog was verified byte-for-byte against 0.18.0.
+# Only explicitly verified versions share a bundle; later images are read locally.
+BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0"}
+BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0"} | set(BUNDLED_CATALOG_ALIASES)
 TASK_ROUTES = {
     "decision": "/v1/chat/completions", "generate": "/v1/chat/completions",
     "embedding": "/v1/embeddings", "score": "/v1/rerank",
@@ -173,7 +176,8 @@ class NpuManifest:
 def bundled_manifest(version="0.18.0") -> NpuManifest:
     if version not in BUNDLED_VERSIONS:
         raise AssetError("No bundled NPU catalog for this engine version")
-    return NpuManifest(files("halobridge_data").joinpath(f"npu/models-{version}.txt").read_text(encoding="utf-8"))
+    catalog_version = BUNDLED_CATALOG_ALIASES.get(version, version)
+    return NpuManifest(files("halobridge_data").joinpath(f"npu/models-{catalog_version}.txt").read_text(encoding="utf-8"))
 
 
 async def check_runtime(run, image, mounts, custom_mounts=()):
@@ -393,8 +397,8 @@ class NpuAssets:
             if version in BUNDLED_VERSIONS:
                 return bundled_manifest(version)
         if run is None:
-            raise AssetError("NPU catalog unavailable; pull this image or update the engine to 0.18.0 first")
-        text = await run("podman", "run", "--rm", "--network=none", "--entrypoint", "/bin/cat",
+            raise AssetError(f"NPU catalog for Halogen {version} is unavailable; use NPU Setup to read the installed container image")
+        text = await run("podman", "run", "--rm", "--pull=never", "--network=none", "--entrypoint", "/bin/cat",
                          image, "/opt/halogen/npu/models.txt", timeout=120)
         manifest = NpuManifest(text)
         atomic_json(cache, {"image": image, "text": text, "sha256": manifest.key})
