@@ -14,6 +14,10 @@ port = 8731
 
 # Local Halogen backend.
 backend_url = "http://127.0.0.1:8831"
+# Optional fallback for a backend managed without a matching Quadlet.
+# Profile HALOGEN_API_KEY_FILE mounts are resolved automatically instead.
+# backend_api_key_file = "/home/you/.config/halobridge/secrets/backend.key"
+# backend_api_key = ""  # Use a file or an inline key, not both.
 
 # Timeouts for model switching and update coordination.
 drain_timeout_s = 7200

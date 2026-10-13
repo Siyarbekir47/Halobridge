@@ -886,7 +886,7 @@ class ContainerUpdater:
         await self._run("systemctl", "--user", "start", self.models[model], timeout=start_timeout)
 
     async def _prepare_npu_update(self, configurations, image):
-        from npu import check_runtime, host_status, parse_models, patch_quadlet
+        from npu import CUSTOM_TASKS, check_runtime, host_status, parse_models, patch_quadlet
         from shared_assets import host_path
         enabled = [parse_quadlet(value["content"].decode("utf-8"), self._paths()[name])
                    for name, value in configurations.items() if b"HALOGEN_NPU_MODELS=" in value["content"]]
@@ -903,7 +903,7 @@ class ContainerUpdater:
         manifest = await self.npu_assets.manifest(image, self._run, refresh=True)
         wanted = list(dict.fromkeys(model for profile in enabled
                      for model in parse_models(profile.env["HALOGEN_NPU_MODELS"])))
-        bases = [m for m, info in manifest.models.items() if info["task"] != "generate"] if any(m.startswith("/") for m in wanted) else []
+        bases = [m for m, info in manifest.models.items() if info["task"] in CUSTOM_TASKS] if any(m.startswith("/") for m in wanted) else []
         selection = self.npu_assets.selection(manifest, wanted, profiles, bases)
         self._save_job(phase="preparing_npu", message="Preparing versioned NPU files; the current backend keeps serving.")
         await selection.prepare(None, self._download_checkpoint_asset,

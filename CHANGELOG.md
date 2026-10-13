@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.1.30
+
+- Allow verified NPU downloads before host setup.
+- Clarify download and automatic activation actions.
+- Support Halogen 0.18.2 decider assets and controls.
+- Add Claude Code session mapping and retry settings.
+- Default new templates to Halogen 0.18.2.
+- Update endpoint examples and NPU limits.
+
+## 0.1.29
+
+- Fix first-time NPU setup on Halogen 0.18.1.
+- Read and cache unbundled catalogs from local container images.
+- Reuse verified 0.18.1 catalog metadata and clarify missing-catalog errors.
+
+## 0.1.28
+
+- Support Halogen 0.18.0 and verified NPU asset upgrades.
+- Add ASR transcription, 4B NPU models and custom classification.
+- Support larger Flux images, sessions and prompt progress.
+- Expose request records, stream limits and backend API keys.
+- Authenticate internal probes and redact key previews.
+- Default new templates to Halogen 0.18.0.
+- Document endpoints and extend hardware smoke checks.
+
+## 0.1.27
+
+- Add CYBER-FROST 3.8 quick template with vision.
+- Keep verified model-specific sidecars in separate shared directories.
+- Require explicit consent for the forced-thinking template override.
+
+## 0.1.26
+
+- Add shared, verified Flux NPU image generation setup.
+- Route System One questions without switching GPU models.
+- Track image, decision and Anthropic Messages requests correctly.
+- Expose priority slots, cache, schema and decode settings.
+- Use Halogen 0.17.2 for new Official and Orca profiles.
+- Document endpoints, examples and hardware requirements.
+
 ## 0.1.25
 
 - Add NPU setup for decisions, embeddings, reranking, moderation and text generation.

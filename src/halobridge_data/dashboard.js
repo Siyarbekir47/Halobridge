@@ -83,7 +83,12 @@ function modelTab(assets) {
 $('profilesTab').addEventListener('click', () => modelTab(false));
 $('assetsTab').addEventListener('click', () => modelTab(true));
 $('quickModel').addEventListener('change', () => {
-  const swift = $('quickModel').value.startsWith('swift15');
+  const swift = isPinnedQuickModel($('quickModel').value);
+  const cyber = $('quickModel').value === 'cyber-frost';
+  $('cyberTemplateNotice').hidden = !cyber;
+  $('acceptForcedThinking').checked = false;
+  $('quickSwiftBtn').dataset.i18n = cyber ? 'quick_cyber' : 'quick_swift';
+  $('quickSwiftBtn').textContent = t($('quickSwiftBtn').dataset.i18n);
   const uncensored = $('quickModel').value === 'uncensored';
   $('quickTokenField').hidden = !uncensored;
   $('quickHfAccessHint').hidden = !uncensored;
@@ -131,6 +136,12 @@ function renderLive(data) {
   $('context').textContent = `${integer(backend.context)} / ${integer(backend.slots)}`;
   $('maxTokens').textContent = `${integer(backend.max_tokens_default)} / ${integer(backend.max_tokens_cap)}`;
   $('reasoning').textContent = backend.reasoning_effort_default || '–';
+  const admission = backend.admission;
+  $('admissionStatus').hidden = !admission;
+  $('admissionStatus').textContent = admission ? t('admission_status', {
+    reserve: integer(admission.reserve), running: integer(admission.priority_in_flight),
+    waiting: integer(admission.waiting_for_reserve),
+  }) : '';
   $('version').textContent = typeof backend.version === 'string' ? backend.version : backend.version?.api || '–';
   $('storage').textContent = Object.entries(data.cache?.model_bytes || {}).map(([name, size]) => `${name}: ${bytes(size)} Cache`).join(' · ');
   $('updated').textContent = t('live_updated', {time: new Date(data.generated_at * 1000).toLocaleTimeString(NUM)});
@@ -789,15 +800,16 @@ $('resetConfirm').addEventListener('click', async () => {
 // ---------- Deployment ----------
 let deployData = null, deployBusy = false, deployPreviewOk = false, deployArm = null, deployRevision = 0, editorReturnFocus;
 let swiftPlanData = null, swiftPlanSequence = 0;
+function isPinnedQuickModel(variant) { return variant.startsWith('swift15') || variant === 'cyber-frost'; }
 async function refreshSwiftPlan() {
   const variant = $('quickModel').value, sequence = ++swiftPlanSequence;
   swiftPlanData = null;
   $('quickSwiftBtn').disabled = true;
-  $('swiftPlan').hidden = !variant.startsWith('swift15');
+  $('swiftPlan').hidden = !isPinnedQuickModel(variant);
   if ($('swiftPlan').hidden) return;
   $('swiftPlan').textContent = t('swift_plan_loading');
   try {
-    const data = await deployRequest(`/dashboard/api/deploy/quick/swift/plan?variant=${encodeURIComponent(variant)}`);
+    const data = await deployRequest(`/dashboard/api/deploy/quick/model/plan?variant=${encodeURIComponent(variant)}`);
     if (sequence !== swiftPlanSequence) return;
     swiftPlanData = data;
     renderSwiftPlan();
@@ -809,7 +821,8 @@ function renderSwiftPlan() {
   if (!swiftPlanData) return;
   const data = swiftPlanData;
   const sufficient = (data.filesystems || []).every(fs => fs.sufficient);
-  $('quickSwiftBtn').disabled = !sufficient || deployBusy || deployData?.recovery_required;
+  $('quickSwiftBtn').disabled = !sufficient || deployBusy || deployData?.recovery_required
+    || (data.template_unchecked && !$('acceptForcedThinking').checked);
   const files = (data.files || []).map(file => `<tr><td><a href="${esc(file.url)}" target="_blank" rel="noopener noreferrer">${esc(file.name)}</a><small>${esc(file.path)}</small>${file.source_path && file.source_path !== file.path ? `<small>${esc(t('swift_source'))}: ${esc(file.source_path)}</small>` : ''}</td><td>${esc(t('swift_asset_' + file.status))}</td><td class="num">${esc(bytes(file.size))}</td></tr>`).join('');
   const space = (data.filesystems || []).map(fs => `<p class="${fs.sufficient ? 'muted' : 'failure'}">${esc(fs.path)} · ${esc(t('swift_space', {free: bytes(fs.free_bytes), need: bytes(fs.required_bytes + fs.reserve_bytes)}))}</p>`).join('');
   const presentBytes = (data.files || []).filter(f => f.status !== 'download').reduce((sum, f) => sum + f.size, 0);
@@ -827,7 +840,7 @@ const DEPLOY_ENV_FIELDS = [
   ['HALOGEN_HOST_RESERVE_GIB', 'number', 'deploy_f_host_reserve'],
   ['HALOGEN_CACHE_DISK_GIB', 'number', 'deploy_f_cache_gib'],
   ['HALOGEN_CACHE_PRUNE_OLD', 'check', 'deploy_f_cache_prune'],
-  ['HALOGEN_REASONING_EFFORT', 'select:minimal,low,medium,high,xhigh', 'deploy_f_reasoning'],
+  ['HALOGEN_REASONING_EFFORT', 'select:minimal,low,medium,high,xhigh,max', 'deploy_f_reasoning'],
   ['HALOGEN_MAX_TOKENS_DEFAULT', 'number', 'deploy_f_out_default'],
   ['HALOGEN_MAX_TOKENS_CAP', 'number', 'deploy_f_out_cap'],
   ['HALOGEN_DOWNLOAD', 'text', 'deploy_f_download'],
@@ -839,12 +852,52 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_NPU_PORT', 'number', 'deploy_f_npu_port'],
   ['HALOGEN_NPU_EMB_BATCH', 'select:0,1', 'deploy_f_npu_batch'],
   ['HALOGEN_NPU_VERIFY', 'select:0,1', 'deploy_f_npu_verify'],
+  ['HALOGEN_NPU_STALL_S', 'number', 'deploy_f_npu_stall'],
+  ['HALOGEN_NPU_DEC_RESUME', 'select:0,1,2', 'deploy_f_npu_dec_resume'],
+  ['HALOGEN_NPU_DEC_ENTRIES', 'number', 'deploy_f_npu_dec_entries'],
+];
+const ENGINE_ENV_FIELDS = [
   ['HALOGEN_CACHE_EVICT', 'select:0,1', 'deploy_f_cache_evict'],
   ['HALOGEN_MTP', 'select:0,1', 'deploy_f_mtp'],
   ['HALOGEN_PREFILL_CANCEL', 'select:0,1', 'deploy_f_prefill_cancel'],
+  ['HALOGEN_ADMISSION_RESERVE', 'number', 'deploy_f_admission_reserve'],
+  ['HALOGEN_SCHEMA_ESCAPE', 'select:on,off', 'deploy_f_schema_escape'],
+  ['HALOGEN_CACHE_DISK_DEEPEN', 'select:0,1', 'deploy_f_cache_disk_deepen'],
+  ['HALOGEN_PLE_PAR', 'select:0,1', 'deploy_f_ple_par'],
+  ['HALOGEN_MTP_DEPTH', 'number', 'deploy_f_mtp_depth'],
+  ['HALOGEN_ADMIT_TICKS', 'number', 'deploy_f_admit_ticks'],
+  ['HALOGEN_PREFILL_KEEP_TRUNK', 'select:0,1', 'deploy_f_keep_trunk'],
+  ['HALOGEN_REPETITION_PENALTY', 'number', 'deploy_f_repetition_penalty'],
+  ['HALOGEN_TEMPLATE_UNCHECKED', 'select:0,1', 'deploy_f_template_unchecked'],
+  ['HALOGEN_NEXT_TOKEN_S', 'number', 'deploy_f_next_token'],
+  ['HALOGEN_ENGINE_WATCHDOG_S', 'number', 'deploy_f_watchdog'],
+  ['HALOGEN_ENGINE_WATCHDOG_DEFER_S', 'number', 'deploy_f_watchdog_defer'],
+  ['HALOGEN_RETRY_GRACE_S', 'number', 'deploy_f_retry_grace'],
+  ['HALOGEN_STRICT_TOOLS', 'select:0,1', 'deploy_f_strict_tools'],
+  ['HALOGEN_CLIENT_MARKERS', 'select:text,special', 'deploy_f_client_markers'],
+  ['HALOGEN_QSA_FORCE_SEL', 'select:0,1', 'deploy_f_qsa_sel'],
 ];
+const SESSION_ENV_FIELDS = [
+  ['HALOGEN_FORK', 'select:0,1', 'deploy_f_fork'],
+  ['HALOGEN_FORK_HANDLES', 'number', 'deploy_f_fork_handles'],
+  ['HALOGEN_FORK_TTL_S', 'number', 'deploy_f_fork_ttl'],
+  ['HALOGEN_FORK_GIB', 'number', 'deploy_f_fork_gib'],
+  ['HALOGEN_FORK_MAP', 'select:0,claude-code', 'deploy_f_fork_map'],
+];
+const RECORD_ENV_FIELDS = [
+  ['HALOGEN_RECORD_DIR', 'text', 'deploy_f_record_dir'],
+  ['HALOGEN_RECORD_TEXT', 'text', 'deploy_f_record_text'],
+  ['HALOGEN_RECORD_GIB', 'number', 'deploy_f_record_gib'],
+  ['HALOGEN_RECORD_DAYS', 'number', 'deploy_f_record_days'],
+];
+const AUTH_ENV_FIELDS = [
+  ['HALOGEN_API_KEY_FILE', 'text', 'deploy_f_api_key_file'],
+  ['HALOGEN_API_KEY', 'password', 'deploy_f_api_key'],
+];
+const ALL_ENV_FIELDS = [...DEPLOY_ENV_FIELDS, ...NPU_ENV_FIELDS, ...ENGINE_ENV_FIELDS,
+  ...SESSION_ENV_FIELDS, ...RECORD_ENV_FIELDS, ...AUTH_ENV_FIELDS];
 let npuData = null, npuPlanData = null, npuDirty = false, npuRevision = 0, npuJobRunning = false;
-for (const [key] of NPU_ENV_FIELDS) DEPLOY_ENV_NAMES.add(key);
+for (const [key] of ALL_ENV_FIELDS) DEPLOY_ENV_NAMES.add(key);
 DEPLOY_ENV_NAMES.add('HALOGEN_MODEL_ID');
 function setDeployBusy(busy) {
   deployBusy = busy;
@@ -888,7 +941,7 @@ function renderDeployForm(profile) {
       const opts = type.split(':')[1].split(',');
       return `<label><span data-i18n="${key}">${esc(t(key))}</span><select id="df_${name}"><option value=""></option>${opts.map(c => `<option value="${c}" ${value === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>`;
     }
-    return `<label><span data-i18n="${key}">${esc(t(key))}</span><input id="df_${name}" type="${type}" value="${esc(String(value ?? ''))}"></label>`;
+    return `<label><span data-i18n="${key}">${esc(t(key))}</span><input id="df_${name}" type="${type}" ${type === 'number' ? 'step="any"' : ''} ${type === 'password' ? 'autocomplete="new-password"' : ''} value="${esc(String(value ?? ''))}"></label>`;
   };
   const group = (key, html) => `<fieldset><legend data-i18n="${key}">${esc(t(key))}</legend><div class="deploy-fields">${html}</div></fieldset>`;
   const fields = items => items.map(([name, type, key]) => fieldHtml(name, type, key, (profile.env || {})[name] ?? '')).join('');
@@ -896,7 +949,23 @@ function renderDeployForm(profile) {
     + group('profile_storage', core.slice(4).map(f => fieldHtml(...f)).join('') + fields(DEPLOY_ENV_FIELDS.slice(0, 4)))
     + group('profile_capacity', fields(DEPLOY_ENV_FIELDS.slice(4, 11)))
     + group('profile_generation', fields(DEPLOY_ENV_FIELDS.slice(11)))
-    + group('profile_npu', fields(NPU_ENV_FIELDS));
+    + group('profile_npu', fields(NPU_ENV_FIELDS))
+    + group('profile_engine', fields(ENGINE_ENV_FIELDS))
+    + group('profile_sessions', fields(SESSION_ENV_FIELDS))
+    + group('profile_records', fields(RECORD_ENV_FIELDS))
+    + group('profile_backend_auth', fields(AUTH_ENV_FIELDS));
+  const hint = document.createElement('p');
+  hint.className = 'muted';
+  hint.textContent = t('profile_018_hint');
+  hint.dataset.i18n = 'profile_018_hint';
+  $('deployFields').appendChild(hint);
+  if ((profile.env || {}).HALOGEN_MODEL_ID === 'halogen-cyber-frost') {
+    const note = document.createElement('p');
+    note.className = 'warning';
+    note.textContent = t('cyber_template_editor');
+    note.dataset.i18n = 'cyber_template_editor';
+    $('deployFields').appendChild(note);
+  }
   for (const el of $('deployFields').querySelectorAll('input,select')) el.addEventListener('input', invalidateDeployPreview);
   $('deployEnvRows').innerHTML = '';
   for (const [k, v] of Object.entries(profile.env || {})) if (!DEPLOY_ENV_NAMES.has(k)) addEnvRow(k, v);
@@ -924,7 +993,7 @@ function collectDeploy() {
   const env = {};
   const set = (k, v) => { if (v !== '') env[k] = v; };
   set('HALOGEN_MODEL_ID', $('df_model_id').value.trim());
-  for (const [name, type] of [...DEPLOY_ENV_FIELDS, ...NPU_ENV_FIELDS]) {
+  for (const [name, type] of ALL_ENV_FIELDS) {
     const el = $('df_' + name);
     set(name, type === 'check' ? (el.checked ? '1' : '') : el.value.trim());
   }
@@ -962,7 +1031,8 @@ function npuSelection() {
 }
 function invalidateNpuPlan() {
   npuDirty = true; npuRevision++; npuPlanData = null;
-  $('npuPlan').hidden = true; $('npuInstallBtn').disabled = true;
+  $('npuPlan').hidden = true;
+  renderNpuPlan();
   resetDeployArm();
 }
 async function refreshNpu() {
@@ -992,20 +1062,42 @@ async function refreshNpu() {
     $('npuHost').className = npuData.ready ? 'success' : 'warning';
     $('npuHostCommands').textContent = (npuData.setup?.commands || []).join('\n');
     $('npuModelChoices').innerHTML = (npuData.models || []).map(model => `<label class="chk"><input type="checkbox" value="${esc(model.id)}" ${checked.has(model.id) ? 'checked' : ''}><span><strong>${esc(model.id)}</strong> <small>${esc(t('npu_task_' + model.task))} · ${esc(model.endpoint)}</small></span></label>`).join('');
-    for (const input of $('npuModelChoices').querySelectorAll('input')) input.addEventListener('change', invalidateNpuPlan);
+    for (const input of $('npuModelChoices').querySelectorAll('input')) input.addEventListener('change', () => {
+      if (input.checked && input.value.startsWith('qwen3-asr-')) {
+        for (const other of $('npuModelChoices').querySelectorAll('input')) {
+          if (other !== input && other.value.startsWith('qwen3-asr-')) other.checked = false;
+        }
+      }
+      invalidateNpuPlan();
+    });
     $('npuProfiles').innerHTML = `<option value="">${esc(t('npu_all_profiles'))}</option>`
       + (npuData.profiles || []).map(profile => `<option value="${esc(profile.id)}" ${profile.id === selectedProfile ? 'selected' : ''}>${esc(profile.id)} · ${esc(profile.image.split(':').pop())}</option>`).join('');
     renderNpuPlan();
   } catch (error) { $('npuHost').textContent = error.message; }
 }
 function renderNpuPlan() {
-  $('npuInstallBtn').disabled = !npuPlanData || deployBusy || npuJobRunning || deployData?.recovery_required
-    || (npuPlanData.models.length > 0 && !npuData?.ready)
-    || !(npuPlanData.plans || []).every(plan => (plan.filesystems || []).every(fs => fs.sufficient));
+  const busy = deployBusy || npuJobRunning || deployData?.recovery_required;
+  const hasModels = !!npuPlanData?.models.length;
+  const planFiles = (npuPlanData?.plans || []).flatMap(plan => plan.files || []);
+  const verified = hasModels && planFiles.length > 0 && planFiles.every(file => file.status === 'verified');
+  const enoughSpace = !!npuPlanData && (npuPlanData.plans || []).every(plan => (plan.filesystems || []).every(fs => fs.sufficient));
+  const ready = npuPlanData?.host?.ready ?? npuData?.ready;
+  $('npuDownloadBtn').disabled = !hasModels || busy || !enoughSpace;
+  $('npuInstallBtn').disabled = !npuPlanData || busy || !enoughSpace || (hasModels && !ready);
+  $('npuDownloadBtn').classList.toggle('primary', hasModels && !ready);
+  $('npuInstallBtn').classList.toggle('primary', !hasModels || !!ready);
+  $('npuDownloadBtn').dataset.i18n = verified ? 'npu_verify' : 'npu_download';
+  $('npuDownloadBtn').textContent = t($('npuDownloadBtn').dataset.i18n);
+  $('npuInstallBtn').dataset.i18n = verified ? 'npu_activate' : 'npu_apply';
+  if (deployArm?.btn !== $('npuInstallBtn')) $('npuInstallBtn').textContent = t($('npuInstallBtn').dataset.i18n);
+  $('npuActionHint').textContent = t(!npuPlanData ? 'npu_action_preview'
+    : !enoughSpace ? 'npu_action_space'
+    : hasModels && !ready ? (verified ? 'npu_action_prepared_blocked' : 'npu_action_host_blocked')
+    : hasModels ? 'npu_action_ready' : 'npu_disable_note');
   if (!npuPlanData) return;
   const data = npuPlanData;
-  const files = (data.plans || []).flatMap(plan => plan.files || []);
-  const space = (data.plans || []).flatMap(plan => plan.filesystems || []).map(fs => `<p class="${fs.sufficient ? 'muted' : 'failure'}">${esc(fs.path)} · ${esc(t('swift_space', {free: bytes(fs.free_bytes), need: bytes(fs.required_bytes + fs.reserve_bytes)}))}</p>`).join('');
+  const files = planFiles;
+  const space = (data.plans || []).flatMap(plan => plan.filesystems || []).map(fs => `<p class="shared-path ${fs.sufficient ? 'muted' : 'failure'}">${esc(fs.path)} · ${esc(t('swift_space', {free: bytes(fs.free_bytes), need: bytes(fs.required_bytes + fs.reserve_bytes)}))}</p>`).join('');
   const rows = files.map(file => `<tr><td><a href="${esc(file.url)}" target="_blank" rel="noopener noreferrer">${esc(file.name)}</a><small>${esc(file.path)}</small>${file.source_path ? `<small>${esc(t('swift_source'))}: ${esc(file.source_path)}</small>` : ''}</td><td>${esc(t('swift_asset_' + file.status))}</td><td class="num">${esc(bytes(file.size))}</td></tr>`).join('');
   $('npuPlan').hidden = false;
   $('npuPlan').innerHTML = `<p><strong>${esc(data.models.length ? t('swift_download', {size: bytes(data.download_bytes)}) : t('npu_disable_note'))}</strong> · ${esc(data.profiles.join(', '))}</p>${space}`
@@ -1014,7 +1106,7 @@ function renderNpuPlan() {
 }
 $('npuProfiles').addEventListener('change', () => { invalidateNpuPlan(); npuDirty = false; refreshNpu(); });
 $('npuCustom').addEventListener('input', invalidateNpuPlan);
-$('npuPlanBtn').addEventListener('click', async () => {
+async function previewNpuSelection() {
   if (deployBusy || npuJobRunning) return;
   const revision = npuRevision;
   $('npuError').hidden = true;
@@ -1027,6 +1119,19 @@ $('npuPlanBtn').addEventListener('click', async () => {
     if (revision === npuRevision) { npuPlanData = data; renderNpuPlan(); }
   } catch (error) { $('npuError').hidden = false; $('npuError').textContent = error.message; }
   finally { $('npuPlanBtn').disabled = false; }
+}
+$('npuPlanBtn').addEventListener('click', previewNpuSelection);
+$('npuDownloadBtn').addEventListener('click', async () => {
+  if (!npuPlanData || $('npuDownloadBtn').disabled) return;
+  $('npuError').hidden = true;
+  setDeployBusy(true);
+  try {
+    await deployRequest('/dashboard/api/deploy/npu/download', {method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify(npuSelection())});
+    npuJobRunning = true;
+    startJobPoll();
+  } catch (error) { $('npuError').hidden = false; $('npuError').textContent = error.message; }
+  finally { setDeployBusy(false); }
 });
 $('npuInstallBtn').addEventListener('click', () => {
   if (!npuPlanData || deployBusy || npuJobRunning) return;
@@ -1226,7 +1331,7 @@ async function pollJob() {
   jobBusy = true;
   try {
     const job = await deployRequest('/dashboard/api/deploy/job');
-    npuJobRunning = job.kind === 'quick-npu' && job.state === 'running';
+    npuJobRunning = job.kind?.startsWith('quick-npu') && job.state === 'running';
     renderNpuPlan();
     if (!job.active) { $('jobBox').hidden = true; return; }
     $('jobBox').hidden = false;
@@ -1248,6 +1353,7 @@ async function pollJob() {
     } else if (job.kind.startsWith('quick-')) {
       if (job.kind === 'quick-npu') { npuDirty = false; npuPlanData = null; $('npuPlan').hidden = true; }
       await refreshDeploy();
+      if (job.kind === 'quick-npu-download') await previewNpuSelection();
       await refreshSwiftPlan();
       refreshLive();
     }
@@ -1320,8 +1426,10 @@ $('quickUncensoredBtn').addEventListener('click', () => {
 });
 $('quickSwiftBtn').addEventListener('click', async () => {
   if (!swiftPlanData || $('quickSwiftBtn').disabled) return;
-  await startModelJob('/dashboard/api/deploy/quick/swift', {variant: $('quickModel').value});
+  await startModelJob('/dashboard/api/deploy/quick/model', {variant: $('quickModel').value,
+    accept_forced_thinking: $('acceptForcedThinking').checked});
 });
+$('acceptForcedThinking').addEventListener('change', renderSwiftPlan);
 $('convBtn').addEventListener('click', async () => {
   await startModelJob('/dashboard/api/deploy/convert', {image: $('convImage').value.trim(), gguf: $('convGguf').value.trim(), output: $('convOut').value.trim(), download_head: $('convHead').checked});
 });

@@ -16,11 +16,11 @@ import threading
 from pathlib import Path, PurePosixPath
 
 from profiles import parse_quadlet, ProfileError
-from swift_catalog import SHARED_ASSETS, SWIFT_VARIANTS, SWIFT_ENGINE_VERSION, variant_info
+from swift_catalog import SHARED_ASSETS, SWIFT_VARIANTS, variant_info, variant_engine
 
 SPACE_RESERVE = 5 * 1024 ** 3
 KNOWN_MODELS = {"qwen3.8-flash", "qwen3.8-flash-uncensored",
-                "halogen-swift15", "halogen-swift15-abliterated"}
+                *{"halogen-" + key for key in SWIFT_VARIANTS}}
 
 
 class AssetError(ValueError):
@@ -70,13 +70,15 @@ class SharedAssets:
         self.lock = asyncio.Lock()
 
     def shared_path(self, asset) -> Path:
-        return self.models_root / "shared" / "halogen-v2" / asset.revision / asset.name
+        return self.models_root / "shared" / asset.family / asset.revision / asset.name
 
     def staging_root(self, asset, variant=None, checkpoint_root=None) -> Path:
         if checkpoint_root is not None and asset not in SHARED_ASSETS:
             return checkpoint_root / ".downloads"
-        root = (self.models_root / variant if variant and asset == variant_info(variant)["checkpoint"]
-                else self.models_root / "shared" / "halogen-v2" / asset.revision)
+        info = variant_info(variant) if variant else {}
+        root = (self.models_root / variant if variant and asset in
+                (info["checkpoint"], *info.get("model_assets", ()))
+                else self.models_root / "shared" / asset.family / asset.revision)
         return root / ".downloads"
 
     def remaining_bytes(self, asset, variant=None, checkpoint_root=None) -> int:
@@ -91,15 +93,24 @@ class SharedAssets:
                 sizes.append(min(stat.st_size, stat.st_blocks * 512) if hasattr(stat, "st_blocks") else stat.st_size)
         return max(0, asset.size - min(max(sizes, default=0), asset.size))
 
-    def locations(self) -> dict[str, str]:
-        return {asset.name: str(self.shared_path(asset)) for asset in SHARED_ASSETS}
+    def locations(self, variant=None) -> dict[str, str]:
+        return {asset.name: str(self.shared_path(asset)) for asset in self.shared_assets(variant)}
+
+    @staticmethod
+    def shared_assets(variant=None):
+        return variant_info(variant).get("shared_assets", SHARED_ASSETS) if variant else SHARED_ASSETS
+
+    @staticmethod
+    def profile_assets(profile):
+        variant = profile.model_id.removeprefix("halogen-")
+        return SharedAssets.shared_assets(variant if variant in SWIFT_VARIANTS else None)
 
     def profile_ready(self, model_id: str) -> bool:
         """An active Quick Setup is complete only with verified canonical bindings."""
         profile = next((p for p in self.profiles() if p.model_id == model_id), None)
         if not profile:
             return False
-        for asset in SHARED_ASSETS:
+        for asset in self.profile_assets(profile):
             if asset.name.startswith("tokenizer/"):
                 container = profile.env.get("HALOGEN_TOKENIZER", "") + "/" + asset.name.split("/", 1)[1]
             elif "ngram" in asset.name:
@@ -125,6 +136,12 @@ class SharedAssets:
     def candidates(self, asset) -> list[Path]:
         paths = [self.shared_path(asset), self.staging_root(asset) / asset.name]
         for profile in self.profiles():
+            # Identical tokenizer bytes may be imported; different sidecar
+            # weights are never candidates, even when filenames/sizes match.
+            if not any((a.name, a.size, a.digest, a.algorithm) ==
+                       (asset.name, asset.size, asset.digest, asset.algorithm)
+                       for a in self.profile_assets(profile)):
+                continue
             if asset.name.startswith("tokenizer/"):
                 container = profile.env.get("HALOGEN_TOKENIZER", "/models/tokenizer") + "/" + asset.name.split("/", 1)[1]
             elif "ngram" in asset.name:
@@ -192,10 +209,11 @@ class SharedAssets:
             dest = checkpoint_root / checkpoint.name
             yield checkpoint, dest, [dest, self.staging_root(checkpoint, checkpoint_root=checkpoint_root) / checkpoint.name]
         if variant:
-            asset = variant_info(variant)["checkpoint"]
-            yield asset, self.models_root / variant / asset.name, [self.models_root / variant / asset.name,
-                                                                 self.staging_root(asset, variant) / asset.name]
-        for asset in SHARED_ASSETS:
+            info = variant_info(variant)
+            for asset in (info["checkpoint"], *info.get("model_assets", ())):
+                yield asset, self.models_root / variant / asset.name, [self.models_root / variant / asset.name,
+                                                                     self.staging_root(asset, variant) / asset.name]
+        for asset in self.shared_assets(variant):
             yield asset, self.shared_path(asset), self.candidates(asset)
 
     def plan(self, variant=None, *, checkpoint=None, checkpoint_root=None) -> dict:
@@ -214,7 +232,8 @@ class SharedAssets:
                           "url": f"https://huggingface.co/{asset.repo}/blob/{asset.revision}/{asset.name}"})
         return {"variant": variant, "files": files, "download_bytes": sum(f["download_bytes"] for f in files),
                 "unverified_bytes": sum(f["size"] for f in files if f["status"] == "unverified"),
-                "filesystems": self.space_plan(files), "shared_root": str(self.models_root / "shared" / "halogen-v2")}
+                "filesystems": self.space_plan(files),
+                "shared_root": str(self.models_root / "shared" / self.shared_assets(variant)[0].family)}
 
     @staticmethod
     def space_plan(files):
@@ -314,7 +333,7 @@ class SharedAssets:
                 self.cache[str(dest.resolve())] = {"fingerprint": self.fingerprint(dest),
                                                     "digest": asset.digest, "algorithm": asset.algorithm}
                 atomic_json(self.cache_path, self.cache)
-            return self.locations()
+            return self.locations(variant) if variant else self.locations()
 
     async def promote_verified(self, source, dest):
         task = asyncio.create_task(asyncio.to_thread(self.promote, source, dest))
@@ -345,7 +364,7 @@ class SharedAssets:
         if not swift and (not profile or not profile.env.get("HALOGEN_NGRAM_TABLE", "").startswith("/shared/")):
             return
         if not profile:
-            raise AssetError("Swift profile missing; repair it with Quick Setup")
+            raise AssetError("Quick model profile missing; repair it with Quick Setup")
         if model_id == "qwen3.8-flash" and profile.env.get("HALOGEN_CHECKPOINT") == "/models/qwen38-flash-next-ht43.hgn":
             from official_checkpoints import OFFICIAL_CHECKPOINTS
             from semver import version_tuple
@@ -356,15 +375,20 @@ class SharedAssets:
             if path is None or not await self.verify(path, checkpoint):
                 raise AssetError("Missing or invalid HT43 checkpoint. Repair through the checkpoint selector (no startup download).")
         from semver import version_tuple
-        if swift and (version_tuple(profile.image.rsplit(":", 1)[-1]) or (0, 0, 0)) < version_tuple(SWIFT_ENGINE_VERSION):
-            raise AssetError("Swift requires Halogen 0.15.1 or newer; repair with Quick Setup")
+        if swift and (version_tuple(profile.image.rsplit(":", 1)[-1]) or (0, 0, 0)) < version_tuple(variant_engine(variant)):
+            raise AssetError(f"{variant_info(variant)['label']} requires Halogen {variant_engine(variant)} or newer; repair with Quick Setup")
         if swift and profile.env.get("HALOGEN_DOWNLOAD"):
-            raise AssetError("Swift must not set HALOGEN_DOWNLOAD; repair with Quick Setup")
+            raise AssetError("Quick models must not set HALOGEN_DOWNLOAD; repair with Quick Setup")
+        if swift and variant_info(variant).get("template_unchecked") and profile.env.get("HALOGEN_TEMPLATE_UNCHECKED") != "1":
+            raise AssetError("CYBER-FROST forces thinking. Explicitly enable HALOGEN_TEMPLATE_UNCHECKED=1 or repair with Quick Setup.")
         checkpoint = variant_info(variant)["checkpoint"] if swift else None
-        assets = ([checkpoint] if swift else []) + list(SHARED_ASSETS)
+        model_assets = list(variant_info(variant).get("model_assets", ())) if swift else []
+        assets = ([checkpoint] if swift else []) + model_assets + list(self.shared_assets(variant if swift else None))
         for asset in assets:
             if asset == checkpoint:
                 container = profile.env.get("HALOGEN_CHECKPOINT", "")
+            elif asset in model_assets:
+                container = "/models/" + asset.name
             elif asset.name.startswith("tokenizer/"):
                 container = profile.env.get("HALOGEN_TOKENIZER", "") + "/" + asset.name.split("/", 1)[1]
             elif "ngram" in asset.name:

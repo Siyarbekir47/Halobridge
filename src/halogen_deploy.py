@@ -51,10 +51,16 @@ from profiles import (
 )
 from shared_assets import SharedAssets
 from swift_install import SwiftInstallMixin
+from swift_catalog import SWIFT_VARIANTS
 from npu_install import NpuInstallMixin
 from npu import NpuAssets, system_mount_allowed
 
 logger = logging.getLogger("halobridge.deploy")
+
+
+def redact_quadlet(text):
+    return re.sub(r"(?m)^(\s*Environment=[\"']?HALOGEN_API_KEY=).*$", r"\1[redacted]", text)
+
 
 PROFILE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 QUADLET_FILENAME_RE = re.compile(r"^halogen-[a-z0-9][a-z0-9-]{0,31}\.container$")
@@ -191,9 +197,13 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             profile = uncensored_quick_template(tag, models_root, cache_root)
         elif kind == "custom":
             profile = custom_template(tag, models_root, cache_root)
-        elif kind in {"swift15-quick", "swift15-abliterated-quick"}:
-            profile = swift_quick_template(kind.removesuffix("-quick"), models_root,
-                                           cache_root, self.assets.locations())
+        elif kind.endswith("-quick") and kind.removesuffix("-quick") in SWIFT_VARIANTS:
+            variant = kind.removesuffix("-quick")
+            profile = swift_quick_template(variant, models_root,
+                                           cache_root, self.assets.locations(variant))
+            if variant == "cyber-frost":
+                # Manual setup must also explicitly enable the template override.
+                profile.env["HALOGEN_TEMPLATE_UNCHECKED"] = "0"
         else:
             raise DeployError(f"Unknown template: {kind}")
         if kind in {"official", "uncensored", "official-quick", "uncensored-quick"}:
@@ -216,8 +226,8 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
         current = target.read_text(encoding="utf-8") if target.exists() else ""
         diff = "\n".join(
             difflib.unified_diff(
-                current.splitlines(),
-                rendered.splitlines(),
+                redact_quadlet(current).splitlines(),
+                redact_quadlet(rendered).splitlines(),
                 fromfile="current",
                 tofile="new",
                 lineterm="",
@@ -233,7 +243,7 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             "ok": not errors,
             "errors": errors,
             "warnings": warnings,
-            "quadlet": rendered,
+            "quadlet": redact_quadlet(rendered),
             "diff": diff or "(no changes)",
             "exists": target.exists(),
         }
@@ -279,6 +289,10 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             if system_mount_allowed(host_path, _container, _mode):
                 continue
             root = self._validate_host_path(host_path)
+            if _container == profile.env.get("HALOGEN_API_KEY_FILE"):
+                if not root.is_file():
+                    raise DeployError("Create the backend API key file before installing directories")
+                continue
             root.mkdir(parents=True, exist_ok=True)
             created.append(str(root))
         return {"ok": True, "created": created}
@@ -1106,6 +1120,16 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
                 self._validate_host_path(host_path)
             except DeployError as exc:
                 errors.append(str(exc))
+        if profile.env.get("HALOGEN_API_KEY_FILE"):
+            from shared_assets import host_path
+            from backend_auth import file_key, BackendAuthError
+            path = host_path(profile, profile.env["HALOGEN_API_KEY_FILE"])
+            try:
+                if path is None:
+                    raise BackendAuthError("Backend API key file has no host mount")
+                file_key(path)
+            except BackendAuthError as exc:
+                errors.append(str(exc))
         return errors
 
     def _validate_conflicts(self, profile: Profile) -> list[str]:
@@ -1164,7 +1188,7 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             latest = getattr(self.updater, "latest_version", None)
             if latest:
                 return str(latest)
-        return "0.16.2"
+        return "0.18.2"
 
     async def _any_other_service_active(self, profile_id: str) -> bool:
         if not self.quadlet_dir.is_dir():
@@ -1519,9 +1543,17 @@ class DeployRoutes:
         except Exception as exc:
             return self._error(DeployError(str(exc)))
 
+    async def api_npu_download(self, request: web.Request) -> web.Response:
+        try:
+            self._guard(request)
+            return web.json_response(await self.manager.quick_npu(await self._payload(request), download_only=True), status=202)
+        except Exception as exc:
+            return self._error(DeployError(str(exc)))
+
     def register_routes(self, app: web.Application) -> None:
         app.router.add_get("/dashboard/api/deploy/npu", self.api_npu_status)
         app.router.add_get("/dashboard/api/deploy/npu/plan", self.api_npu_plan)
+        app.router.add_post("/dashboard/api/deploy/npu/download", self.api_npu_download)
         app.router.add_post("/dashboard/api/deploy/quick/npu", self.api_quick_npu)
         app.router.add_get("/dashboard/api/deploy", self.api_status)
         app.router.add_get("/dashboard/api/deploy/template/{kind}", self.api_template)
@@ -1544,6 +1576,8 @@ class DeployRoutes:
         app.router.add_post("/dashboard/api/deploy/quick/official", self.api_quick_official)
         app.router.add_get("/dashboard/api/deploy/quick/swift/plan", self.api_swift_plan)
         app.router.add_post("/dashboard/api/deploy/quick/swift", self.api_quick_swift)
+        app.router.add_get("/dashboard/api/deploy/quick/model/plan", self.api_swift_plan)
+        app.router.add_post("/dashboard/api/deploy/quick/model", self.api_quick_swift)
         app.router.add_post(
             "/dashboard/api/deploy/quick/uncensored", self.api_quick_uncensored
         )

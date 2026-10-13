@@ -37,15 +37,21 @@ class SwiftFilesTests(unittest.IsolatedAsyncioTestCase):
         self.content = {}
 
         def tiny(asset):
-            content = (asset.name + " verified bytes\n").encode()
-            self.content[asset.name] = content
+            content = ((asset.family + " " if asset.family != "halogen-v2" else "") + asset.name + " verified bytes\n").encode()
+            self.content[asset.family, asset.name] = content
+            if asset.family == "halogen-v2":
+                self.content[asset.name] = content
             digest = (hashlib.sha1(f"blob {len(content)}\0".encode() + content).hexdigest()
                       if asset.algorithm == "git-sha1" else hashlib.sha256(content).hexdigest())
             return replace(asset, size=len(content), digest=digest)
 
         self.shared = tuple(tiny(a) for a in swift_catalog.SHARED_ASSETS)
-        self.variants = {key: {**value, "checkpoint": tiny(value["checkpoint"])}
-                         for key, value in swift_catalog.SWIFT_VARIANTS.items()}
+        self.variants = {}
+        for key, value in swift_catalog.SWIFT_VARIANTS.items():
+            self.variants[key] = {**value, "checkpoint": tiny(value["checkpoint"])}
+            for field in ("shared_assets", "model_assets"):
+                if field in value:
+                    self.variants[key][field] = tuple(tiny(a) for a in value[field])
         for target, value in (("shared_assets.SHARED_ASSETS", self.shared),
                               ("swift_catalog.SHARED_ASSETS", self.shared),
                               ("swift_catalog.SWIFT_VARIANTS", self.variants),
@@ -75,14 +81,17 @@ class SwiftFilesTests(unittest.IsolatedAsyncioTestCase):
             self.downloads.append(asset.name)
             path = stage / asset.name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(self.content[asset.name])
+            path.write_bytes(self.content[asset.family, asset.name])
 
         self.download = download
         self.deploy._download_asset = download
 
         async def health():
             model = self.manager.switch_target or self.manager.current_model
-            return {"status": "ok", "model": model, "version": {"api": "0.15.1", "engine": "0.15.1"}}
+            variant = (model or "").removeprefix("halogen-")
+            target = self.config.models.quadlet_dir / f"halogen-{variant}.container"
+            version = parse_quadlet(target.read_text()).image.rsplit(":", 1)[-1] if target.exists() else "0.15.1"
+            return {"status": "ok", "model": model, "version": {"api": version, "engine": version}}
 
         self.manager.backend_health = health
 
@@ -93,7 +102,7 @@ class SwiftFilesTests(unittest.IsolatedAsyncioTestCase):
         return target
 
     async def install(self, variant="swift15"):
-        await self.deploy.quick_swift({"variant": variant})
+        await self.deploy.quick_swift({"variant": variant, "accept_forced_thinking": variant == "cyber-frost"})
         await self.deploy._job_task
         return self.deploy.job
 
@@ -108,6 +117,113 @@ class SwiftFilesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job["state"], "done", job)
         self.assertEqual(self.downloads, [self.variants["swift15-abliterated"]["checkpoint"].name])
         await self.deploy.assets.validate_start("halogen-swift15-abliterated")
+
+    async def test_cyber_requires_explicit_boolean_consent_before_job(self):
+        for accept in (None, False, "true", 1):
+            with self.assertRaisesRegex(DeployError, "Explicitly accept"):
+                await self.deploy.quick_swift({"variant": "cyber-frost", "accept_forced_thinking": accept})
+            self.assertIsNone(self.deploy.job)
+        template = self.deploy.template("cyber-frost-quick")["profile"]
+        self.assertEqual(template["env"]["HALOGEN_TEMPLATE_UNCHECKED"], "0")
+        self.assertEqual(template["env"]["HALOGEN_CTX"], "262144")
+        self.assertEqual(template["env"]["HALOGEN_KV_SLOTS"], "2")
+
+    async def test_cyber_uses_own_assets_and_never_rebinds_other_families(self):
+        await self.install("swift15-abliterated")
+        official = self.write_profile(official_template("0.17.5", self.tmp / "models", self.tmp / "cache"))
+        swift = self.config.models.quadlet_dir / "halogen-swift15-abliterated.container"
+        originals = {p: p.read_bytes() for p in (official, swift)}
+        self.downloads.clear()
+        plan = self.deploy.swift_plan("cyber-frost")
+        self.assertEqual(plan["engine_version"], "0.18.2")
+        self.assertEqual(plan["minimum_engine_version"], "0.17.5")
+        self.assertTrue(plan["template_unchecked"])
+        self.assertTrue(all(f["source_path"] is None for f in plan["files"]))
+        job = await self.install("cyber-frost")
+        self.assertEqual(job["state"], "done", job)
+        self.assertEqual(len(self.downloads), 15)
+        self.assertEqual(self.manager.current_model, "halogen-cyber-frost")
+        target = self.config.models.quadlet_dir / "halogen-cyber-frost.container"
+        profile = parse_quadlet(target.read_text(), target)
+        self.assertEqual(profile.env["HALOGEN_KV_POOL_POSITIONS"], "262144")
+        self.assertEqual(profile.env["HALOGEN_TEMPLATE_UNCHECKED"], "1")
+        self.assertNotIn("HALOGEN_NPU_MODELS", profile.env)
+        self.assertNotIn("HALOGEN_DOWNLOAD", profile.env)
+        for host, container, mode in profile.volumes:
+            if container.startswith("/shared/"):
+                self.assertIn("cyber-frost", host)
+                self.assertEqual(mode, "ro,z")
+        for path, before in originals.items():
+            self.assertEqual(path.read_bytes(), before)
+        await self.deploy.assets.validate_start(profile.model_id)
+        profile.env["HALOGEN_TEMPERATURE"] = "0.4"
+        profile.env["HALOGEN_KV_SLOTS"] = "3"
+        target.write_text(render_quadlet(profile))
+        self.downloads.clear()
+        self.assertEqual((await self.install("cyber-frost"))["state"], "done")
+        self.assertEqual(self.downloads, [])
+        self.assertEqual(parse_quadlet(target.read_text()).env["HALOGEN_KV_SLOTS"], "3")
+        cyber_before = target.read_bytes()
+        self.assertEqual((await self.install("swift15"))["state"], "done")
+        self.assertEqual(target.read_bytes(), cyber_before)
+        await self.deploy.assets.validate_start("halogen-cyber-frost")
+
+    async def test_cyber_offline_validation_rejects_stock_sidecars_and_missing_files(self):
+        self.assertEqual((await self.install("cyber-frost"))["state"], "done")
+        target = self.config.models.quadlet_dir / "halogen-cyber-frost.container"
+        original = target.read_text()
+        profile = parse_quadlet(original)
+        profile.env["HALOGEN_TEMPLATE_UNCHECKED"] = "0"
+        target.write_text(render_quadlet(profile))
+        with self.assertRaisesRegex(AssetError, "forces thinking"):
+            await self.deploy.assets.validate_start(profile.model_id)
+        profile.env["HALOGEN_TEMPLATE_UNCHECKED"] = "1"
+        profile.image = profile.image.rsplit(":", 1)[0] + ":0.17.2"
+        target.write_text(render_quadlet(profile))
+        with self.assertRaisesRegex(AssetError, "0.17.5"):
+            await self.deploy.assets.validate_start(profile.model_id)
+        target.write_text(original)
+        vision = self.variants["cyber-frost"]["shared_assets"][1]
+        path = self.deploy.assets.shared_path(vision)
+        path.write_bytes(self.content[self.shared[1].name])
+        with self.assertRaisesRegex(AssetError, "vision"):
+            await self.deploy.assets.validate_start(profile.model_id)
+        self.downloads.clear()
+        self.assertEqual((await self.install("cyber-frost"))["state"], "done")
+        self.assertEqual(self.downloads, [vision.name])
+        (self.config.deploy.models_root / "cyber-frost" / "preprocessor_config.json").unlink()
+        with self.assertRaisesRegex(AssetError, "preprocessor"):
+            await self.deploy.assets.validate_start(profile.model_id)
+
+    async def test_cyber_activation_failure_recovers_previous_model_and_profiles(self):
+        await self.install("swift15-abliterated")
+        previous = self.config.models.quadlet_dir / "halogen-swift15-abliterated.container"
+        before = previous.read_bytes()
+        self.deploy._swift_ready = AsyncMock(side_effect=AssetError("Wrong engine version"))
+        job = await self.install("cyber-frost")
+        self.assertEqual(job["state"], "error", job)
+        self.assertEqual(previous.read_bytes(), before)
+        self.assertFalse((self.config.models.quadlet_dir / "halogen-cyber-frost.container").exists())
+        self.assertEqual(self.manager.current_model, "halogen-swift15-abliterated")
+        self.assertFalse(self.manager.maintenance)
+        self.assertTrue((self.config.deploy.models_root / "cyber-frost" / "model.hgn").is_file())
+
+    async def test_generic_quick_model_api_validates_consent_and_discovers_cyber(self):
+        app = web.Application()
+        app["manager"] = self.manager
+        DeployRoutes(self.deploy).register_routes(app)
+        app.router.add_get("/v1/models", list_models)
+        async with TestClient(TestServer(app)) as client:
+            response = await client.get("/dashboard/api/deploy/quick/model/plan?variant=cyber-frost")
+            self.assertEqual(response.status, 200)
+            headers = {"X-Halogen-Action": "deploy"}
+            response = await client.post("/dashboard/api/deploy/quick/model", json={"variant": "cyber-frost"}, headers=headers)
+            self.assertEqual(response.status, 400)
+            response = await client.post("/dashboard/api/deploy/quick/model", json={"variant": "cyber-frost", "accept_forced_thinking": True}, headers=headers)
+            self.assertEqual(response.status, 202)
+            await self.deploy._job_task
+            response = await client.get("/v1/models")
+            self.assertIn("halogen-cyber-frost", [entry["id"] for entry in (await response.json())["data"]])
 
     async def test_reuses_actual_official_mount_and_connects_all_profiles(self):
         official = official_template("0.15.1", self.tmp / "custom-disk", self.tmp / "cache")
@@ -508,9 +624,9 @@ class SwiftCatalogTests(unittest.TestCase):
     def test_pinned_versions_and_valid_runtime(self):
         assets = SharedAssets(Path("/models-root"), Path("/quadlets"), Path("/state"))
         for variant in swift_catalog.SWIFT_VARIANTS:
-            profile = swift_quick_template(variant, Path("/models-root"), Path("/cache-root"), assets.locations())
+            profile = swift_quick_template(variant, Path("/models-root"), Path("/cache-root"), assets.locations(variant))
             self.assertEqual(validate_profile(profile), [])
-            self.assertTrue(profile.image.endswith(":0.15.1"))
+            self.assertTrue(profile.image.endswith(":0.18.2"))
             self.assertEqual(profile.env["HALOGEN_KV_POOL_POSITIONS"], "262144")
             self.assertEqual(profile.env["HALOGEN_WEIGHTS_LOCK"], "1")
             self.assertNotIn("HALOGEN_DOWNLOAD", profile.env)
