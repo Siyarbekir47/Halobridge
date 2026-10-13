@@ -55,6 +55,8 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_NPU_VERIFY": FieldSpec("flag"),
     "HALOGEN_NPU_PORT": FieldSpec("int", 1024, 65535),
     "HALOGEN_NPU_STALL_S": FieldSpec("float", 0, 86400),
+    "HALOGEN_NPU_DEC_RESUME": FieldSpec("enum", choices=("0", "1", "2")),
+    "HALOGEN_NPU_DEC_ENTRIES": FieldSpec("int", 1, 1024),
     "HALOGEN_CACHE_EVICT": FieldSpec("flag"),
     "HALOGEN_MTP": FieldSpec("flag"),
     "HALOGEN_PREFILL_CANCEL": FieldSpec("flag"),
@@ -72,12 +74,17 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_API_KEY": FieldSpec("keys"),
     "HALOGEN_API_KEY_FILE": FieldSpec("path"),
     "HALOGEN_NEXT_TOKEN_S": FieldSpec("float", 0.01, 86400),
+    "HALOGEN_RETRY_GRACE_S": FieldSpec("float", 0, 120),
+    "HALOGEN_STRICT_TOOLS": FieldSpec("flag"),
+    "HALOGEN_CLIENT_MARKERS": FieldSpec("enum", choices=("text", "special")),
+    "HALOGEN_QSA_FORCE_SEL": FieldSpec("flag"),
     "HALOGEN_ENGINE_WATCHDOG_S": FieldSpec("float", 0, 86400),
     "HALOGEN_ENGINE_WATCHDOG_DEFER_S": FieldSpec("float", 0, 86400),
     "HALOGEN_FORK": FieldSpec("flag"),
     "HALOGEN_FORK_HANDLES": FieldSpec("int", 1, 65536),
     "HALOGEN_FORK_TTL_S": FieldSpec("float", 0.01, 86400),
     "HALOGEN_FORK_GIB": FieldSpec("float", 0.01, 4096),
+    "HALOGEN_FORK_MAP": FieldSpec("enum", choices=("0", "claude-code")),
     "HALOGEN_RECORD_DIR": FieldSpec("path"),
     "HALOGEN_RECORD_TEXT": FieldSpec("record_text"),
     "HALOGEN_RECORD_GIB": FieldSpec("float", 0.01, 100_000),
@@ -127,6 +134,9 @@ FEATURE_MIN_VERSION = {
     "HALOGEN_API_KEY": (0, 17, 4), "HALOGEN_API_KEY_FILE": (0, 17, 4),
     "HALOGEN_NEXT_TOKEN_S": (0, 17, 5),
     **{key: (0, 18, 0) for key in ENV_FIELDS if key.startswith("HALOGEN_FORK")},
+    "HALOGEN_FORK_MAP": (0, 18, 1), "HALOGEN_RETRY_GRACE_S": (0, 18, 1),
+    **{key: (0, 18, 2) for key in ("HALOGEN_NPU_DEC_RESUME", "HALOGEN_NPU_DEC_ENTRIES",
+                                  "HALOGEN_STRICT_TOOLS", "HALOGEN_CLIENT_MARKERS")},
 }
 
 
@@ -203,6 +213,8 @@ def validate_profile(profile: Profile) -> list[str]:
             errors.append(f"env {key}: requires Halogen {'.'.join(map(str, minimum))} or newer")
     if profile.env.get("HALOGEN_API_KEY") and profile.env.get("HALOGEN_API_KEY_FILE"):
         errors.append("env: set API_KEY or API_KEY_FILE, not both")
+    if profile.env.get("HALOGEN_FORK_MAP") == "claude-code" and profile.env.get("HALOGEN_FORK") != "1":
+        errors.append("env HALOGEN_FORK_MAP: requires HALOGEN_FORK=1")
     for key in ("HALOGEN_RECORD_DIR", "HALOGEN_API_KEY_FILE"):
         value = profile.env.get(key)
         if not value:
@@ -400,7 +412,7 @@ def profile_to_dict(profile: Profile) -> dict:
 
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
-DEFAULT_ENGINE_VERSION = "0.18.0"
+DEFAULT_ENGINE_VERSION = "0.18.2"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"

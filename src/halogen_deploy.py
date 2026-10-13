@@ -1188,7 +1188,7 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             latest = getattr(self.updater, "latest_version", None)
             if latest:
                 return str(latest)
-        return "0.18.0"
+        return "0.18.2"
 
     async def _any_other_service_active(self, profile_id: str) -> bool:
         if not self.quadlet_dir.is_dir():
@@ -1543,9 +1543,17 @@ class DeployRoutes:
         except Exception as exc:
             return self._error(DeployError(str(exc)))
 
+    async def api_npu_download(self, request: web.Request) -> web.Response:
+        try:
+            self._guard(request)
+            return web.json_response(await self.manager.quick_npu(await self._payload(request), download_only=True), status=202)
+        except Exception as exc:
+            return self._error(DeployError(str(exc)))
+
     def register_routes(self, app: web.Application) -> None:
         app.router.add_get("/dashboard/api/deploy/npu", self.api_npu_status)
         app.router.add_get("/dashboard/api/deploy/npu/plan", self.api_npu_plan)
+        app.router.add_post("/dashboard/api/deploy/npu/download", self.api_npu_download)
         app.router.add_post("/dashboard/api/deploy/quick/npu", self.api_quick_npu)
         app.router.add_get("/dashboard/api/deploy", self.api_status)
         app.router.add_get("/dashboard/api/deploy/template/{kind}", self.api_template)

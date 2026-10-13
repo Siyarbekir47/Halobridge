@@ -301,6 +301,31 @@ class TemplateTests(unittest.TestCase):
         ):
             self.assertIn(key, ENV_FIELDS)
 
+    def test_0182_controls_validate_values_versions_and_session_dependency(self):
+        profile = official_template("0.18.2", Path("/host/models"), Path("/host/cache"))
+        additions = {"HALOGEN_NPU_DEC_RESUME": "2", "HALOGEN_NPU_DEC_ENTRIES": "6",
+                     "HALOGEN_STRICT_TOOLS": "1", "HALOGEN_CLIENT_MARKERS": "text",
+                     "HALOGEN_QSA_FORCE_SEL": "1", "HALOGEN_RETRY_GRACE_S": "20.5",
+                     "HALOGEN_FORK": "1", "HALOGEN_FORK_MAP": "claude-code"}
+        profile.env.update(additions)
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(parse_quadlet(render_quadlet(profile)).env, profile.env)
+        for key, invalid in (("HALOGEN_NPU_DEC_RESUME", "3"), ("HALOGEN_NPU_DEC_ENTRIES", "0"),
+                             ("HALOGEN_RETRY_GRACE_S", "121"), ("HALOGEN_CLIENT_MARKERS", "unknown"),
+                             ("HALOGEN_FORK_MAP", "unknown"), ("HALOGEN_FORK", "0")):
+            profile.env[key] = invalid
+            self.assertTrue(validate_profile(profile), key)
+            profile.env[key] = additions[key]
+        profile.image = profile.image.replace("0.18.2", "0.18.1")
+        errors = validate_profile(profile)
+        for key in ("HALOGEN_NPU_DEC_RESUME", "HALOGEN_NPU_DEC_ENTRIES", "HALOGEN_STRICT_TOOLS", "HALOGEN_CLIENT_MARKERS"):
+            self.assertTrue(any(key in error and "0.18.2" in error for error in errors), key)
+        self.assertFalse(any("HALOGEN_FORK_MAP" in error for error in errors))
+        profile.image = profile.image.replace("0.18.1", "0.18.0")
+        errors = validate_profile(profile)
+        self.assertTrue(any("HALOGEN_FORK_MAP" in error and "0.18.1" in error for error in errors))
+        self.assertTrue(any("HALOGEN_RETRY_GRACE_S" in error and "0.18.1" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

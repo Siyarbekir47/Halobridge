@@ -386,7 +386,7 @@ config, processor files, conversion manifest and license live in
 plus the installer's 5 GiB free-space reserve. Repeated setup reuses verified
 files and preserves runtime changes.
 
-New CYBER-FROST templates use **Halogen 0.18.0** (minimum 0.17.5), **262144 context/KV pool**,
+New CYBER-FROST templates use **Halogen 0.18.2** (minimum 0.17.5), **262144 context/KV pool**,
 **two slots**, and the same generation defaults as Swift Abliterated. Its model
 card only exercised 32768 context and one slot; the larger configuration still
 needs a smoke test on the target host. No NPU models are enabled by default.
@@ -611,7 +611,13 @@ You can keep the dashboard but disable installation:
 allow_install = false
 ```
 
-## Halogen 0.18.0 support
+## Halogen 0.18.2 support
+
+0.18.2 adds strict tool schemas and 8192-token NPU decisions with optional text
+reuse. It improves image/audio memory sharing and handles old GPU firmware
+automatically. The two deciders have new weights and device programs: the engine
+updater prepares and verifies them before stopping the old backend, retaining
+the previous files for rollback. GPU checkpoints remain unchanged.
 
 0.18.0 adds WAV transcription, 20 Flux image sizes up to 1024x1024 and reusable conversation sessions. GPU checkpoints are unchanged: no new Official, Orca, Swift or CYBER-FROST checkpoint is required. Context and slot settings stay unchanged. NPU engine updates verify and prepare the new Flux programs in a versioned shared directory before stopping the old backend.
 
@@ -619,8 +625,8 @@ The profile editor also exposes session limits, request records, backend API key
 
 Halobridge supports the new NPU image and System One routes, priority admission,
 and the engine's new cache, schema and decode settings. Update Halobridge, then
-use **System → Engine updates** to update the backend profiles to **0.18.0**.
-New Official, Orca, Swift and CYBER-FROST templates use 0.18.0; existing settings and engine versions are preserved during model repair.
+use **System → Engine updates** to update the backend profiles to **0.18.2**.
+New Official, Orca, Swift and CYBER-FROST templates use 0.18.2; existing settings and engine versions are preserved during model repair.
 Swift's initial template keeps its model-card version until you update the engine.
 
 The GPU checkpoints are unchanged from 0.16.2. The engine update brings faster
@@ -632,11 +638,11 @@ Leave `HALOGEN_MTP_DEPTH` empty for the engine's adaptive depth; an explicit
 value continues to fix the depth.
 
 See the [endpoint guide](docs/API.md) for use cases, prerequisites and runnable
-examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.0/CHANGELOG.md)
+examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/CHANGELOG.md)
 for the engine changes. The upstream Compose recipe is an alternative deployment;
 Halobridge's managed setup continues to use Podman Quadlets.
 
-## NPU models with Halogen 0.18.0
+## NPU models with Halogen 0.18.2
 
 The GPU model and the selected NPU models run together behind Halobridge's
 existing port. Requests select an NPU model by its `model` ID; they do not
@@ -659,9 +665,9 @@ loaded by the currently active backend.
 
 ### Host preparation
 
-1. Update the selected backend profiles to **Halogen 0.18.0** using
+1. Update the selected backend profiles to **Halogen 0.18.2** using
    the dashboard's engine updater. Your GPU checkpoint remains selected.
-2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.0/docs/NPU.md#host)
+2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/docs/NPU.md#host)
    for the Linux `amdxdna` driver, firmware, XRT and its NPU plugin. The service
    user needs access to `/dev/accel/accel0`. Enable IOMMU; `amd_iommu=off` and
    `iommu=off` are incompatible, while `iommu=pt` is supported.
@@ -673,7 +679,29 @@ loaded by the currently active backend.
    enabling any NPU models. Rootless Podman needs the host fabric-clock service
    running: concurrent GPU/NPU work requires the GPU fabric clock to be held.
 5. In **Models → NPU models alongside your GPU model**, select the tasks and
-   target backend profiles, preview downloads, then apply the selection.
+   target backend profiles, then **Preview downloads**. **Download files only**
+   downloads and verifies the files even before the host prerequisites are ready.
+   Once the host checks pass, **Download & activate** reuses those files, writes
+   the selected profiles and restarts the affected active backend automatically.
+
+Model downloads can be completed before steps 2–4. Progress and cancellation use
+the dashboard's existing job panel. Download-only jobs keep the running backend
+serving and leave its profiles unchanged. Host drivers, firmware, XRT and boot
+settings require administrator setup; IOMMU boot-option changes require a reboot.
+**Host setup & diagnostics** provides checks, instructions and the fabric-clock
+setup commands. Resolve these checks before activation.
+
+On Fedora 44 with GRUB, remove disabled-IOMMU boot arguments using
+[Fedora's recommended `grubby` workflow](https://fedoraproject.org/wiki/GRUB_2):
+
+```bash
+sudo grubby --update-kernel=ALL --remove-args="amd_iommu=off iommu=off"
+sudo reboot
+```
+
+After reboot, run `halobridge npu-check` again. Removing these arguments does
+not install missing driver, firmware or XRT libraries; complete the remaining
+host checks before activation. `iommu=pt` can remain.
 
 Ubuntu and Fedora 44 remain the supported distributions. NPU support also
 depends on the host driver, firmware and XRT; actual device operation must be
@@ -763,12 +791,13 @@ curl --fail-with-body -sSN localhost:8731/v1/chat/completions \
   "messages":[{"role":"user","content":"Explain what a local inference router does in three sentences."}]}'
 ```
 
-The first four models accept up to 4096 input tokens. `qwen3.5-2b` accepts
+On 0.18.2, decisions accept up to 8192 input tokens; embeddings, reranking and
+moderation accept up to 4096. The decision limit is 4096 on earlier engines. `qwen3.5-2b` accepts
 16384 prompt tokens, with 18432 total positions. Decisions choose a schema
 option without sampling. Moderation reports labels and probabilities rather
 than meaningful OpenAI category scores. NPU and GPU work share the chip's
 memory bandwidth and power budget. See the
-[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.0/docs/NPU.md)
+[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/docs/NPU.md)
 for supported request options.
 
 ### Own NPU fine-tunes and advanced flags

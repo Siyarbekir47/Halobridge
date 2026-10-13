@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.30
+
+- Allow verified NPU downloads before host setup.
+- Clarify download and automatic activation actions.
+- Support Halogen 0.18.2 decider assets and controls.
+- Add Claude Code session mapping and retry settings.
+- Default new templates to Halogen 0.18.2.
+- Update endpoint examples and NPU limits.
+
 ## 0.1.29
 
 - Fix first-time NPU setup on Halogen 0.18.1.

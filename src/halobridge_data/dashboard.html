@@ -120,10 +120,11 @@
       <details id="npuSetup" class="quick-deploy"><summary data-i18n="npu_title">NPU models alongside your GPU model</summary>
         <p class="explanation" data-i18n="npu_hint">Choose the tasks to run on the NPU. Requires Halogen 0.16.2 or newer and host NPU setup.</p>
         <p id="npuHost" role="status"></p>
-        <details><summary data-i18n="npu_host_setup">Host setup &amp; diagnostics</summary><div class="detail-body">
+        <details id="npuHostSetup"><summary data-i18n="npu_host_setup">Host setup &amp; diagnostics</summary><div class="detail-body">
           <p data-i18n="npu_host_hint">Install the NPU driver, firmware and matching XRT plugin. Enable IOMMU and hold the GPU fabric clock with the host service.</p>
           <pre id="npuHostCommands" class="deploy-diff"></pre>
-          <p><code>halobridge npu-check</code> · <a href="https://github.com/peonist-ai/halogen-flash-server/blob/v0.17.2/docs/NPU.md" target="_blank" rel="noopener noreferrer" data-i18n="npu_docs">Upstream setup instructions</a></p>
+          <p data-i18n="npu_host_admin">Host drivers, firmware and XRT require administrator setup. Remove disabled IOMMU boot options and reboot before activation.</p>
+          <p><code>halobridge npu-check</code> · <a href="https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/docs/NPU.md" target="_blank" rel="noopener noreferrer" data-i18n="npu_docs">Upstream setup instructions</a></p>
         </div></details>
         <fieldset><legend data-i18n="npu_select_models">NPU tasks</legend><div id="npuModelChoices" class="deploy-fields"></div></fieldset>
         <div class="deploy-fields">
@@ -131,7 +132,8 @@
           <label><span data-i18n="npu_custom">Custom fine-tunes (comma-separated /models directories)</span><input id="npuCustom" type="text" placeholder="/models/my-guard"></label>
         </div>
         <p class="muted" data-i18n="npu_shared_hint">Files are shared across profiles and prepared before restarting. The previous version stays available for rollback.</p>
-        <div class="deploy-actions"><button id="npuPlanBtn" data-i18n="npu_preview">Preview downloads</button><button id="npuInstallBtn" class="primary" disabled data-i18n="npu_apply">Apply NPU selection</button></div>
+        <div class="deploy-actions"><button id="npuPlanBtn" data-i18n="npu_preview">Preview downloads</button><button id="npuDownloadBtn" disabled data-i18n="npu_download">Download files only</button><button id="npuInstallBtn" class="primary" disabled data-i18n="npu_apply">Download &amp; activate</button></div>
+        <p id="npuActionHint" class="muted" role="status"></p>
         <div id="npuPlan" class="shared-plan" role="status" hidden></div>
         <p id="npuError" class="failure" role="alert" hidden></p>
       </details>

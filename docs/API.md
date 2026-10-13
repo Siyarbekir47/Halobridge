@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.29 supports Halogen 0.18.0 and 0.18.1. Install the Halobridge update, then
+Halobridge 0.1.30 supports Halogen 0.18.2. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -34,7 +34,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, and ASR needs 0.18.0+. Use 0.18.0 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, and ASR needs 0.18.0+. Use 0.18.2 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## System One: classify a ticket and estimate urgency
@@ -92,12 +92,16 @@ request repeatable; image `i` uses `seed + i`. The prompt is truncated to 512
 tokens. `quality=low` is currently refused; the other quality values produce
 the same image. Only one image request runs on the NPU at a time.
 
-Images are generated locally. With ASR loaded, sizes above 512x512 may exceed shared NPU memory and return an error; the server keeps running. After `qwen3-asr-1.7b` has transcribed, larger sizes no longer fit. Use 256x256 or 512x512 with ASR, or disable ASR through NPU Setup for larger images. Image bodies pass through Halobridge;
+Images are generated locally. On 0.18.2, large images and ASR take turns at NPU
+memory: idle model parts are released and reloaded as needed. Alternating them
+costs time; a request that still cannot fit returns 503 while the server stays
+running. On 0.18.0/0.18.1, sizes above 512x512 may fail with ASR loaded; use
+256x256 or 512x512 on those engines. Image bodies pass through Halobridge;
 request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.18.0 and select **one** speech model in
+Update the target GPU profiles to 0.18.2 and select **one** speech model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -117,6 +121,67 @@ Other formats and streaming are rejected by Halogen. Audio uploads and response
 text pass through unchanged. History records the loaded model, duration, status
 and response size; it stores neither audio nor transcript, and invents no token
 counts. Transcription queues with the other NPU work and keeps the GPU loaded.
+
+## NPU downloads before host setup
+
+In Models, select the tasks and backend profiles, then **Preview downloads**.
+**Download files only** downloads and verifies the pinned model files without
+requiring the NPU driver, XRT or IOMMU to be ready. It uses the existing progress
+and cancellation controls and retains completed files for another attempt.
+
+After the host checks pass, **Download & activate** prepares any missing files,
+reuses verified downloads, configures the selected Quadlets, drains requests and
+restarts the affected active backend. The host prerequisites are shown next to
+these actions; administrator setup and a reboot may be needed for drivers and
+boot/IOMMU settings.
+
+The guarded dashboard API also supports this preparation step:
+
+```bash
+curl --fail-with-body -sS localhost:8731/dashboard/api/deploy/npu/download \
+  -H 'Content-Type: application/json' -H 'X-Halogen-Action: deploy' \
+  -d '{"models":"decider-4b","profiles":["official"]}'
+```
+
+Add the Halobridge login token when authentication is enabled. The response is
+202 with job kind `quick-npu-download`; `/dashboard/api/deploy/job` reports its
+progress. This step leaves profiles and the running backend unchanged.
+
+## Strict tools and cached NPU decisions on 0.18.2
+
+A tool with `strict:true` constrains its generated arguments to a supported
+parameter schema. The flag is inside `function` for Chat Completions and on the
+tool itself for Responses and Messages. Your client still executes the tool:
+
+```bash
+curl --fail-with-body -sS localhost:8731/v1/chat/completions \
+  -H 'Content-Type: application/json' -d '{
+  "model":"qwen3.8-flash","enable_thinking":false,"max_tokens":256,
+  "messages":[{"role":"user","content":"Look up the weather in Berlin in Celsius."}],
+  "parallel_tool_calls":false,
+  "tools":[{"type":"function","function":{
+    "name":"lookup_weather","description":"Look up a city weather report","strict":true,
+    "parameters":{"type":"object","properties":{
+      "city":{"type":"string"},"units":{"type":"string","enum":["celsius","fahrenheit"]}},
+      "required":["city","units"],"additionalProperties":false}}}]}'
+```
+
+`HALOGEN_STRICT_TOOLS` defaults to 1; 0 restores unenforced strict declarations.
+Unsupported schema features and strict calls with images or logprobs may fall
+back to ordinary tool calls and are logged by Halogen. `/health` reports the
+supported strict-tool rules.
+
+Both deciders now accept up to 8192 tokens including their questions and
+template. For repeated System One questions about long text, enable
+`HALOGEN_NPU_DEC_RESUME=1` in the profile's NPU section to reuse text within a
+multi-question request. Mode 2 also reuses matching prefixes across requests
+whose text grows. It is off by default. `HALOGEN_NPU_DEC_ENTRIES` defaults to 6;
+kept texts consume host RAM. Request shapes remain unchanged.
+
+The engine detects old GPU firmware and enables its workaround automatically.
+Leave `HALOGEN_QSA_FORCE_SEL` empty for that policy. Client-written chat-template
+markers are read as text; `HALOGEN_CLIENT_MARKERS=special` restores the previous
+interpretation. Both controls are available in the profile editor.
 
 ## Larger NPU models and custom classification
 
@@ -183,6 +248,14 @@ conversation in the request. Handles belong to the active GPU profile's cache;
 GET/DELETE manage that backend, so select the intended GPU profile first.
 Clients of that backend share names. Changing `HALOGEN_FORK`, `FORK_GIB` or
 `FORK_TTL_S` invalidates its disk cache configuration.
+
+On 0.18.1+, `HALOGEN_FORK_MAP=claude-code` with `HALOGEN_FORK=1` maps Claude
+Code's thread identifiers to these handles automatically. The profile editor
+validates this dependency. For disconnect retries, `HALOGEN_RETRY_GRACE_S`
+defaults to 20 seconds (0 disables, maximum 120); the client must resend the
+same request within the grace period. Halobridge forwards the thread headers
+and request fields. `/v1/responses` still requires the full input history;
+`previous_response_id` alone returns 400.
 
 ## Prompt progress and stream silence
 
@@ -277,9 +350,9 @@ speculate together automatically. Faster decode and prompt processing, improved
 disk-prefix cache reuse, streamed tool-call cleanup and schema/tool fixes work
 without a new endpoint. Late system/developer turns in Chat Completions are
 treated as user text at their position; images in those late turns are refused.
-GPU checkpoints remain unchanged from 0.16.2 through 0.18.0. The 0.18.0 prompt-cache fixes, Flux tokenizer correction, NPU health listing and clean container stops take effect automatically after the engine update.
+GPU checkpoints remain unchanged from 0.16.2 through 0.18.2. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.0/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.0/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/CHANGELOG.md).

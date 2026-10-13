@@ -69,13 +69,23 @@ class ManifestTests(unittest.TestCase):
 
     def test_bundled_catalogs_cover_upgrade_and_rollback_versions(self):
         for version, count in (("0.16.2", 5), ("0.17.2", 6), ("0.17.3", 6),
-                               ("0.17.4", 9), ("0.17.5", 9), ("0.18.0", 11)):
+                               ("0.17.4", 9), ("0.17.5", 9), ("0.18.0", 11), ("0.18.1", 11), ("0.18.2", 11)):
             self.assertEqual(len(bundled_manifest(version).models), count)
 
     def test_0181_catalog_matches_verified_0180_image_catalog(self):
         manifest = bundled_manifest("0.18.1")
         self.assertEqual(manifest.key, "56ebf96860d8c66da42b5895d64afd4acd855aa2b54be1e599b7546afd603028")
         self.assertEqual(manifest.text, bundled_manifest("0.18.0").text)
+
+    def test_0182_catalog_has_new_decider_weights_and_programs(self):
+        old, new = bundled_manifest("0.18.1"), bundled_manifest("0.18.2")
+        self.assertEqual(new.key, "733dc38454a57af4e2bdc315d6da6fc8215c9a4c9e768f71d7d35fc7ae03af80")
+        self.assertEqual(set(new.models), set(NPU_MODELS))
+        before = {(a.model, a.name): a.digest for a in old.assets}
+        for model in ("decider-0.8b", "decider-4b"):
+            selected = new.select([model])
+            self.assertTrue(any(a.name == f"{model}.hnpw" and a.digest != before[(model, a.name)] for a in selected))
+            self.assertTrue(any(a.name == "devices/consts.hnpb" for a in selected))
 
     def test_real_image_manifest_lists_all_six_and_shares_dense_program(self):
         manifest = bundled_manifest("0.17.2")
@@ -790,6 +800,101 @@ class InstallTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.downloads, [])
         self.manager.start_service.assert_not_awaited()
         self.assertFalse(self.manager.maintenance)
+
+    async def test_download_without_host_setup_keeps_backend_and_profiles_unchanged_then_reuses_files(self):
+        self.profile.image = IMAGE.rsplit(":", 1)[0] + ":0.18.2"
+        self.original = render_quadlet(self.profile).encode()
+        self.path.write_bytes(self.original)
+        self.manager.backend_health.return_value["version"] = {"api": "0.18.2", "engine": "0.18.2"}
+        blocked = {"ready": False, "errors": ["NPU device missing", "IOMMU disabled", "XRT missing"], "xrt_mounts": []}
+        self.manager.active_requests = 1
+        with patch("npu_install.host_status", return_value=blocked):
+            result = await self.deploy.quick_npu({"models": "decider-4b"}, download_only=True)
+            await self.deploy._job_task
+            self.assertEqual(result["kind"], "quick-npu-download")
+            self.assertEqual(self.deploy.job["state"], "done", self.deploy.job)
+            self.assertTrue(self.downloads)
+            self.assertEqual(self.path.read_bytes(), self.original)
+            self.assertFalse(self.deploy.npu_journal.exists())
+            self.assertFalse(self.manager.maintenance)
+            self.assertEqual(self.manager.active_requests, 1)
+            self.manager.start_service.assert_not_awaited()
+            self.deploy._daemon_reload.assert_not_awaited()
+            self.deploy._run.assert_not_awaited()
+            self.deploy._run_stream.assert_not_awaited()
+            with self.assertRaisesRegex(DeployError, "NPU device missing"):
+                await self.deploy.quick_npu({"models": "decider-4b"})
+            self.downloads.clear()
+            await self.deploy.quick_npu({"models": "decider-4b"}, download_only=True)
+            await self.deploy._job_task
+            self.assertEqual(self.downloads, [])
+        self.manager.active_requests = 0
+        await self.deploy.quick_npu({"models": "decider-4b"})
+        await self.deploy._job_task
+        self.assertEqual(self.deploy.job["state"], "done", self.deploy.job)
+        self.assertEqual(self.downloads, [])
+        self.assertEqual(parse_quadlet(self.path.read_text()).env["HALOGEN_NPU_MODELS"], "decider-4b")
+        self.manager.start_service.assert_awaited_once()
+
+    async def test_download_cancel_retains_verified_files_without_restart_or_recovery(self):
+        entered = asyncio.Event()
+        download = self.deploy._download_asset
+        async def interruptible(asset, stage):
+            if self.downloads:
+                entered.set()
+                await asyncio.Future()
+            await download(asset, stage)
+        self.deploy._download_asset = interruptible
+        with patch("npu_install.host_status", return_value={"ready": False, "errors": ["driver missing"], "xrt_mounts": []}):
+            await self.deploy.quick_npu({"models": "qwen3.5-2b"}, download_only=True)
+            await asyncio.wait_for(entered.wait(), 2)
+            self.deploy.cancel_job()
+            with self.assertRaises(asyncio.CancelledError):
+                await self.deploy._job_task
+        self.assertEqual(self.deploy.job["state"], "cancelled")
+        self.assertTrue(list((self.root / "models/shared/halogen-npu").rglob("*.hnpw")))
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.assertFalse(self.manager.maintenance)
+        self.assertFalse(self.deploy.recovery_required)
+        self.assertFalse(self.deploy.npu_journal.exists())
+        self.manager.start_service.assert_not_awaited()
+
+    async def test_download_rejects_bad_checksum_or_insufficient_disk_without_profile_changes(self):
+        async def corrupt(asset, stage):
+            path = stage / asset.name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"bad bytes")
+        self.deploy._download_asset = corrupt
+        await self.deploy.quick_npu({"models": "qwen3.5-2b"}, download_only=True)
+        await self.deploy._job_task
+        self.assertEqual(self.deploy.job["state"], "error")
+        self.assertIn("Checksum mismatch", self.deploy.job["error"])
+        with patch("shared_assets.shutil.disk_usage", return_value=SimpleNamespace(free=0)):
+            await self.deploy.quick_npu({"models": "qwen3.5-2b"}, download_only=True)
+            await self.deploy._job_task
+        self.assertIn("Insufficient disk space", self.deploy.job["error"])
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.manager.start_service.assert_not_awaited()
+
+    async def test_download_route_guards_mutations_and_runs_with_missing_host_prerequisites(self):
+        app = web.Application()
+        DeployRoutes(self.deploy).register_routes(app)
+        async with TestClient(TestServer(app)) as client:
+            path = "/dashboard/api/deploy/npu/download"
+            for headers in ({}, {"Origin": "http://foreign", "X-Halogen-Action": "deploy"}):
+                response = await client.post(path, json={"models": "qwen3.5-2b"}, headers=headers)
+                self.assertEqual(response.status, 400)
+            with patch("npu_install.host_status", return_value={"ready": False, "errors": ["driver missing"], "xrt_mounts": []}):
+                response = await client.post(path, json={"models": "qwen3.5-2b"}, headers={"X-Halogen-Action": "deploy"})
+                self.assertEqual(response.status, 202, await response.text())
+                await self.deploy._job_task
+            self.assertEqual(self.deploy.job["state"], "done")
+            response = await client.post(path, json={"models": ""}, headers={"X-Halogen-Action": "deploy"})
+            self.assertEqual(response.status, 400)
+            self.deploy.job = {"state": "running", "kind": "quick-npu-download"}
+            response = await client.post("/dashboard/api/deploy/quick/npu", json={"models": "qwen3.5-2b"}, headers={"X-Halogen-Action": "deploy"})
+            self.assertEqual(response.status, 400)
+        self.assertEqual(self.path.read_bytes(), self.original)
 
     async def test_setup_repeat_and_disable_preserve_gpu_and_reuse_files(self):
         await self.install()

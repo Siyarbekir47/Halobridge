@@ -853,6 +853,8 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_NPU_EMB_BATCH', 'select:0,1', 'deploy_f_npu_batch'],
   ['HALOGEN_NPU_VERIFY', 'select:0,1', 'deploy_f_npu_verify'],
   ['HALOGEN_NPU_STALL_S', 'number', 'deploy_f_npu_stall'],
+  ['HALOGEN_NPU_DEC_RESUME', 'select:0,1,2', 'deploy_f_npu_dec_resume'],
+  ['HALOGEN_NPU_DEC_ENTRIES', 'number', 'deploy_f_npu_dec_entries'],
 ];
 const ENGINE_ENV_FIELDS = [
   ['HALOGEN_CACHE_EVICT', 'select:0,1', 'deploy_f_cache_evict'],
@@ -870,12 +872,17 @@ const ENGINE_ENV_FIELDS = [
   ['HALOGEN_NEXT_TOKEN_S', 'number', 'deploy_f_next_token'],
   ['HALOGEN_ENGINE_WATCHDOG_S', 'number', 'deploy_f_watchdog'],
   ['HALOGEN_ENGINE_WATCHDOG_DEFER_S', 'number', 'deploy_f_watchdog_defer'],
+  ['HALOGEN_RETRY_GRACE_S', 'number', 'deploy_f_retry_grace'],
+  ['HALOGEN_STRICT_TOOLS', 'select:0,1', 'deploy_f_strict_tools'],
+  ['HALOGEN_CLIENT_MARKERS', 'select:text,special', 'deploy_f_client_markers'],
+  ['HALOGEN_QSA_FORCE_SEL', 'select:0,1', 'deploy_f_qsa_sel'],
 ];
 const SESSION_ENV_FIELDS = [
   ['HALOGEN_FORK', 'select:0,1', 'deploy_f_fork'],
   ['HALOGEN_FORK_HANDLES', 'number', 'deploy_f_fork_handles'],
   ['HALOGEN_FORK_TTL_S', 'number', 'deploy_f_fork_ttl'],
   ['HALOGEN_FORK_GIB', 'number', 'deploy_f_fork_gib'],
+  ['HALOGEN_FORK_MAP', 'select:0,claude-code', 'deploy_f_fork_map'],
 ];
 const RECORD_ENV_FIELDS = [
   ['HALOGEN_RECORD_DIR', 'text', 'deploy_f_record_dir'],
@@ -1024,7 +1031,8 @@ function npuSelection() {
 }
 function invalidateNpuPlan() {
   npuDirty = true; npuRevision++; npuPlanData = null;
-  $('npuPlan').hidden = true; $('npuInstallBtn').disabled = true;
+  $('npuPlan').hidden = true;
+  renderNpuPlan();
   resetDeployArm();
 }
 async function refreshNpu() {
@@ -1068,13 +1076,28 @@ async function refreshNpu() {
   } catch (error) { $('npuHost').textContent = error.message; }
 }
 function renderNpuPlan() {
-  $('npuInstallBtn').disabled = !npuPlanData || deployBusy || npuJobRunning || deployData?.recovery_required
-    || (npuPlanData.models.length > 0 && !npuData?.ready)
-    || !(npuPlanData.plans || []).every(plan => (plan.filesystems || []).every(fs => fs.sufficient));
+  const busy = deployBusy || npuJobRunning || deployData?.recovery_required;
+  const hasModels = !!npuPlanData?.models.length;
+  const planFiles = (npuPlanData?.plans || []).flatMap(plan => plan.files || []);
+  const verified = hasModels && planFiles.length > 0 && planFiles.every(file => file.status === 'verified');
+  const enoughSpace = !!npuPlanData && (npuPlanData.plans || []).every(plan => (plan.filesystems || []).every(fs => fs.sufficient));
+  const ready = npuPlanData?.host?.ready ?? npuData?.ready;
+  $('npuDownloadBtn').disabled = !hasModels || busy || !enoughSpace;
+  $('npuInstallBtn').disabled = !npuPlanData || busy || !enoughSpace || (hasModels && !ready);
+  $('npuDownloadBtn').classList.toggle('primary', hasModels && !ready);
+  $('npuInstallBtn').classList.toggle('primary', !hasModels || !!ready);
+  $('npuDownloadBtn').dataset.i18n = verified ? 'npu_verify' : 'npu_download';
+  $('npuDownloadBtn').textContent = t($('npuDownloadBtn').dataset.i18n);
+  $('npuInstallBtn').dataset.i18n = verified ? 'npu_activate' : 'npu_apply';
+  if (deployArm?.btn !== $('npuInstallBtn')) $('npuInstallBtn').textContent = t($('npuInstallBtn').dataset.i18n);
+  $('npuActionHint').textContent = t(!npuPlanData ? 'npu_action_preview'
+    : !enoughSpace ? 'npu_action_space'
+    : hasModels && !ready ? (verified ? 'npu_action_prepared_blocked' : 'npu_action_host_blocked')
+    : hasModels ? 'npu_action_ready' : 'npu_disable_note');
   if (!npuPlanData) return;
   const data = npuPlanData;
-  const files = (data.plans || []).flatMap(plan => plan.files || []);
-  const space = (data.plans || []).flatMap(plan => plan.filesystems || []).map(fs => `<p class="${fs.sufficient ? 'muted' : 'failure'}">${esc(fs.path)} · ${esc(t('swift_space', {free: bytes(fs.free_bytes), need: bytes(fs.required_bytes + fs.reserve_bytes)}))}</p>`).join('');
+  const files = planFiles;
+  const space = (data.plans || []).flatMap(plan => plan.filesystems || []).map(fs => `<p class="shared-path ${fs.sufficient ? 'muted' : 'failure'}">${esc(fs.path)} · ${esc(t('swift_space', {free: bytes(fs.free_bytes), need: bytes(fs.required_bytes + fs.reserve_bytes)}))}</p>`).join('');
   const rows = files.map(file => `<tr><td><a href="${esc(file.url)}" target="_blank" rel="noopener noreferrer">${esc(file.name)}</a><small>${esc(file.path)}</small>${file.source_path ? `<small>${esc(t('swift_source'))}: ${esc(file.source_path)}</small>` : ''}</td><td>${esc(t('swift_asset_' + file.status))}</td><td class="num">${esc(bytes(file.size))}</td></tr>`).join('');
   $('npuPlan').hidden = false;
   $('npuPlan').innerHTML = `<p><strong>${esc(data.models.length ? t('swift_download', {size: bytes(data.download_bytes)}) : t('npu_disable_note'))}</strong> · ${esc(data.profiles.join(', '))}</p>${space}`
@@ -1083,7 +1106,7 @@ function renderNpuPlan() {
 }
 $('npuProfiles').addEventListener('change', () => { invalidateNpuPlan(); npuDirty = false; refreshNpu(); });
 $('npuCustom').addEventListener('input', invalidateNpuPlan);
-$('npuPlanBtn').addEventListener('click', async () => {
+async function previewNpuSelection() {
   if (deployBusy || npuJobRunning) return;
   const revision = npuRevision;
   $('npuError').hidden = true;
@@ -1096,6 +1119,19 @@ $('npuPlanBtn').addEventListener('click', async () => {
     if (revision === npuRevision) { npuPlanData = data; renderNpuPlan(); }
   } catch (error) { $('npuError').hidden = false; $('npuError').textContent = error.message; }
   finally { $('npuPlanBtn').disabled = false; }
+}
+$('npuPlanBtn').addEventListener('click', previewNpuSelection);
+$('npuDownloadBtn').addEventListener('click', async () => {
+  if (!npuPlanData || $('npuDownloadBtn').disabled) return;
+  $('npuError').hidden = true;
+  setDeployBusy(true);
+  try {
+    await deployRequest('/dashboard/api/deploy/npu/download', {method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'}, body: JSON.stringify(npuSelection())});
+    npuJobRunning = true;
+    startJobPoll();
+  } catch (error) { $('npuError').hidden = false; $('npuError').textContent = error.message; }
+  finally { setDeployBusy(false); }
 });
 $('npuInstallBtn').addEventListener('click', () => {
   if (!npuPlanData || deployBusy || npuJobRunning) return;
@@ -1295,7 +1331,7 @@ async function pollJob() {
   jobBusy = true;
   try {
     const job = await deployRequest('/dashboard/api/deploy/job');
-    npuJobRunning = job.kind === 'quick-npu' && job.state === 'running';
+    npuJobRunning = job.kind?.startsWith('quick-npu') && job.state === 'running';
     renderNpuPlan();
     if (!job.active) { $('jobBox').hidden = true; return; }
     $('jobBox').hidden = false;
@@ -1317,6 +1353,7 @@ async function pollJob() {
     } else if (job.kind.startsWith('quick-')) {
       if (job.kind === 'quick-npu') { npuDirty = false; npuPlanData = null; $('npuPlan').hidden = true; }
       await refreshDeploy();
+      if (job.kind === 'quick-npu-download') await previewNpuSelection();
       await refreshSwiftPlan();
       refreshLive();
     }
