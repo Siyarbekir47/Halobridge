@@ -126,22 +126,32 @@ class ModelManager:
                     return []
                 body = await response.json()
                 data = body.get("data", []) if isinstance(body, dict) else []
+                if not isinstance(data, list):
+                    return []
                 return [item for item in data if isinstance(item, dict) and isinstance(item.get("id"), str)]
         except (ClientError, asyncio.TimeoutError, ValueError):
             return []
 
-    async def auxiliary_models(self) -> list[dict]:
+    async def active_backend_model_entries(self) -> list[dict]:
+        if self.current_model is None or self.switching or self.maintenance:
+            return []
+        model = self.current_model
+        entries = await self.backend_model_entries()
+        # Do not attach a previous backend's limits or NPU set after a switch.
+        if (self.current_model != model or self.switching or self.maintenance
+                or not any(e["id"] == model for e in entries)):
+            return []
+        return entries
+
+    async def auxiliary_models(self, entries: Optional[list[dict]] = None) -> list[dict]:
         provider = getattr(self, "npu_names", None)
         if provider is None or self.switching or self.maintenance:
             return []
-        model = self.current_model
-        expected = provider(model)
+        expected = provider(self.current_model)
         if not expected:
             return []
-        entries = await self.backend_model_entries()
-        # A backend switch while probing must not advertise the previous NPU set.
-        if self.current_model != model or self.switching or not any(e["id"] == model for e in entries):
-            return []
+        if entries is None:
+            entries = await self.active_backend_model_entries()
         return [e for e in entries if e["id"] in expected and e["id"] not in self.models]
 
     async def begin_maintenance(self) -> None:
@@ -715,13 +725,15 @@ class ModelManager:
 async def list_models(request: web.Request) -> web.Response:
     created = int(time.time())
     manager = request.app.get("manager")
+    entries = await manager.active_backend_model_entries() if manager is not None else []
+    auxiliary = await manager.auxiliary_models(entries) if manager is not None else []
     models = manager.models if manager is not None else request.app.get("models", MODELS)
-
-    auxiliary = await manager.auxiliary_models() if manager is not None and hasattr(manager, "auxiliary_models") else []
+    active = next((entry for entry in entries if entry["id"] == manager.current_model), {})
     data = [
         {"id": model, "object": "model", "type": "model", "display_name": model,
          "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created)),
-         "created": created, "owned_by": settings.APP}
+         "created": created, "owned_by": settings.APP,
+         **(active if active.get("id") == model else {})}
         for model in models
     ] + auxiliary
     return web.json_response({"object": "list", "data": data, "has_more": False,

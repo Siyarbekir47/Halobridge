@@ -35,7 +35,7 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
             if request.path != "/health" and request.headers.get("Authorization") != "Bearer " + key:
                 return web.json_response({"error": "key required"}, status=401)
             if request.path == "/v1/models":
-                return web.json_response({"data": [{"id": self.profile.model_id},
+                return web.json_response({"data": [{"id": self.profile.model_id, "meta": {"n_ctx": 262144}},
                                                   {"id": "qwen3-embedding-0.6b", "task": "embedding"}]})
             if request.path == "/cache":
                 return web.json_response({"hits": 12})
@@ -81,7 +81,9 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.dashboard._get_json("/cache"))["hits"], 12)
         response = await self.client.get("/v1/models", headers={"Authorization": "Bearer router-login"})
         self.assertEqual(response.status, 200)
-        self.assertIn("qwen3-embedding-0.6b", {x["id"] for x in (await response.json())["data"]})
+        models = {x["id"]: x for x in (await response.json())["data"]}
+        self.assertIn("qwen3-embedding-0.6b", models)
+        self.assertEqual(models[self.profile.model_id]["meta"]["n_ctx"], 262144)
         self.assertTrue(all(h["Authorization"] == "Bearer private-backend" for h in self.seen))
 
     async def test_router_login_is_replaced_only_after_authentication(self):
