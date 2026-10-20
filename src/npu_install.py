@@ -29,7 +29,7 @@ class NpuInstallMixin:
 
     async def npu_status(self):
         state = host_status()
-        state.update({"models": [{"id": model, "task": task, "endpoint": TASK_ROUTES[task]}
+        state.update({"models": [{"id": model, "task": task, "endpoint": "/v1/systemone" if model in {"d3-lite", "d3-nano"} else TASK_ROUTES[task]}
                                   for model, task in NPU_MODELS.items()],
                       "profiles": [{"id": p.profile_id, "image": p.image,
                                     "models": p.env.get("HALOGEN_NPU_MODELS", "")}

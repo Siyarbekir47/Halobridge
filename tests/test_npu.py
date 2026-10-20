@@ -49,9 +49,17 @@ def fixture_manifest(program=b"new program"):
 
 
 class ManifestTests(unittest.TestCase):
+    def test_01811_catalog_and_multimodal_decision_files(self):
+        manifest = bundled_manifest("0.18.11")
+        self.assertEqual(manifest.key, "aa9e38801e05da999feb46741df7d275b2ab1de3ab8851873d1dc650f6ba713b")
+        self.assertEqual(set(manifest.models), set(NPU_MODELS))
+        for name in ("d3-lite", "d3-nano", "embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b"):
+            self.assertTrue(manifest.select([name]))
+        self.assertTrue(any(a.model == "decider-4b" and a.name.startswith("devices/")
+                            for a in manifest.select(["wemm-embedding-4b"])))
     def test_0180_catalog_accepts_asr_and_verifies_encoder_dependencies(self):
         latest = bundled_manifest("0.18.0")
-        self.assertEqual(set(latest.models), set(NPU_MODELS))
+        self.assertEqual(set(latest.models), {m for m in NPU_MODELS if m not in {"embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b", "d3-lite", "d3-nano"}})
         for model in ("qwen3-asr-0.6b", "qwen3-asr-1.7b"):
             selected = latest.select([model])
             self.assertEqual({a.model for a in selected}, {model})
@@ -80,7 +88,7 @@ class ManifestTests(unittest.TestCase):
     def test_0182_catalog_has_new_decider_weights_and_programs(self):
         old, new = bundled_manifest("0.18.1"), bundled_manifest("0.18.2")
         self.assertEqual(new.key, "733dc38454a57af4e2bdc315d6da6fc8215c9a4c9e768f71d7d35fc7ae03af80")
-        self.assertEqual(set(new.models), set(NPU_MODELS))
+        self.assertEqual(set(new.models), set(bundled_manifest("0.18.0").models))
         before = {(a.model, a.name): a.digest for a in old.assets}
         for model in ("decider-0.8b", "decider-4b"):
             selected = new.select([model])
@@ -89,7 +97,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_real_image_manifest_lists_all_six_and_shares_dense_program(self):
         manifest = bundled_manifest("0.17.2")
-        self.assertEqual(set(manifest.models), {m for m in NPU_MODELS if m not in {"decider-4b", "qwen3-embedding-4b", "qwen3-reranker-4b", "qwen3-asr-0.6b", "qwen3-asr-1.7b"}})
+        self.assertEqual(set(manifest.models), {m for m in NPU_MODELS if m not in {"embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b", "d3-lite", "d3-nano", "decider-4b", "qwen3-embedding-4b", "qwen3-reranker-4b", "qwen3-asr-0.6b", "qwen3-asr-1.7b"}})
         assets = manifest.select(["qwen3-reranker-0.6b", "qwen3guard-gen-0.6b"])
         paths = {(a.model, a.name) for a in assets}
         self.assertNotIn(("qwen3-embedding-0.6b", "qwen3-embedding-0.6b.hnpw"), paths)
@@ -271,6 +279,28 @@ class AssetTests(unittest.IsolatedAsyncioTestCase):
 
 
 class HostTests(unittest.TestCase):
+    def test_fabric_check_selects_strix_halo_from_kfd_render_device(self):
+        from npu import fabric_devices
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            properties = root / "sys/class/kfd/kfd/topology/nodes/1/properties"
+            properties.parent.mkdir(parents=True)
+            properties.write_text("gfx_target_version 110501\ndrm_render_minor 128\n")
+            soc = root / "sys/devices/soc-gpu"
+            external = root / "sys/devices/external-gpu"
+            soc.mkdir(parents=True)
+            external.mkdir(parents=True)
+            drm = root / "sys/class/drm"
+            (drm / "card0").mkdir(parents=True)
+            (drm / "card1").mkdir()
+            (drm / "renderD128").mkdir()
+            try:
+                (drm / "card0/device").symlink_to(soc, target_is_directory=True)
+                (drm / "card1/device").symlink_to(external, target_is_directory=True)
+                (drm / "renderD128/device").symlink_to(soc, target_is_directory=True)
+            except OSError:
+                self.skipTest("Symlinks unavailable")
+            self.assertEqual(fabric_devices(root), [drm / "card0/device"])
     def test_distro_library_mounts_are_resolved_readonly_and_not_relabelled(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -392,6 +422,29 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.active_requests, 0)
         self.manager.perform_switch.assert_not_awaited()
 
+    async def test_image_edits_variations_preserve_multipart_and_gpu(self):
+        for endpoint in ("/v1/images/edits", "/v1/images/variations"):
+            form = FormData()
+            image = b"\x89PNG\r\n\x1a\nprivate image bytes"
+            form.add_field("image", image, filename="source.png", content_type="image/png")
+            form.add_field("model", "flux2-klein-4b")
+            response = await self.client.post(endpoint, data=form)
+            self.assertEqual(response.status, 200, await response.text())
+            await response.read()
+            self.assertIn(image, self.audio_body)
+            row = self.dashboard.db.execute("SELECT model FROM requests ORDER BY id DESC LIMIT 1").fetchone()
+            self.assertEqual(row[0], "flux2-klein-4b")
+        self.manager.perform_switch.assert_not_awaited()
+
+    async def test_d3_alias_and_picture_preserved_on_systemone(self):
+        payload = {"model": "vllm-sr/d3-lite", "state": "image question", "questions": {},
+                   "image": {"url": "data:image/png;base64,aGVsbG8="}}
+        response = await self.client.post("/v1/systemone", json=payload)
+        self.assertEqual(response.status, 200, await response.text())
+        await response.read()
+        self.assertEqual(self.received[-1], ("/v1/systemone", payload))
+        self.manager.perform_switch.assert_not_awaited()
+
     async def test_sessions_management_preserves_headers_and_active_gpu(self):
         for method, path in (("GET", "/halogen/handles"), ("DELETE", "/halogen/handles/session-a")):
             response = await self.client.request(method, path, headers={"X-Halogen-From": "session-a"})
@@ -442,6 +495,8 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
     async def test_all_npu_routes_keep_gpu_loaded_and_preserve_payload(self):
         from npu import TASK_ROUTES
         for model, task in NPU_MODELS.items():
+            if task == "guard":
+                continue  # A streaming guard is named in the guard field, not model.
             payload = {"model": model, "input": "hello", "strict": True,
                        "response_format": {"type": "json_schema", "json_schema": {"schema": {"enum": ["a", "b"]}}}}
             response = await self.client.post(TASK_ROUTES[task], json=payload)
@@ -452,12 +507,13 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.current_model, "halogen-swift15")
         self.assertEqual(self.manager.active_requests, 0)
         rows = self.dashboard.db.execute("SELECT model FROM requests").fetchall()
-        self.assertEqual({row[0] for row in rows}, set(NPU_MODELS))
+        self.assertEqual({row[0] for row in rows}, {m for m, task in NPU_MODELS.items() if task != "guard"})
         history = self.dashboard._history(0, 99999999999)
-        self.assertEqual(history["total"], len(NPU_MODELS))
+        self.assertEqual(history["total"], len(NPU_MODELS) - 1)
 
     async def test_systemone_alias_and_missing_model_use_decider_without_gpu_switch(self):
-        self.backend_entries = [entry for entry in self.backend_entries if entry["id"] != "decider-4b"]
+        self.backend_entries = [entry for entry in self.backend_entries
+                                if entry.get("task") != "decision" or entry["id"] == "decider-0.8b"]
         self.manager.models["other-gpu"] = "halogen-other.service"
         for model in (None, "typesafe-model", "other-gpu", "decider-0.8b"):
             payload = {"state": {"text": "Charged twice"}, "questions": {

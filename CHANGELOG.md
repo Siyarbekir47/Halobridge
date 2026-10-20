@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.31
+
+- Support Halogen 0.18.11 and new NPU models.
+- Add image edits, variations and streaming guard setup.
+- Expose KV8, drafting, template and logging controls.
+- Automatically reclaim old prompt caches below 15% free disk space.
+- Preserve model files and restart idle backends safely after cleanup.
+
 ## 0.1.30
 
 - Allow verified NPU downloads before host setup.

@@ -221,6 +221,14 @@ class DeployConfig:
     allowed_roots: list[Path] = field(default_factory=lambda: [Path.home()])
     models_root: Path = field(default_factory=lambda: Path.home() / "halogen/models")
     cache_root: Path = field(default_factory=lambda: Path.home() / "halogen/cache")
+    cache_cleanup_enabled: bool = True
+    cache_cleanup_free_percent: int = 15
+    cache_cleanup_target_percent: int = 20
+    cache_cleanup_interval_s: int = 60
+
+    def __post_init__(self):
+        if not 1 <= self.cache_cleanup_free_percent < self.cache_cleanup_target_percent <= 95:
+            raise ConfigError("deploy: cache cleanup percentages must satisfy 1 <= free < target <= 95")
 
     @classmethod
     def from_section(cls, s: dict[str, Any]) -> "DeployConfig":
@@ -230,6 +238,10 @@ class DeployConfig:
         return cls(
             enabled=_as_bool(s, "enabled", True),
             allowed_roots=[_expand(str(r)) for r in raw_roots],
+            cache_cleanup_enabled=_as_bool(s, "cache_cleanup_enabled", True),
+            cache_cleanup_free_percent=_as_int(s, "cache_cleanup_free_percent", 15),
+            cache_cleanup_target_percent=_as_int(s, "cache_cleanup_target_percent", 20),
+            cache_cleanup_interval_s=_as_int(s, "cache_cleanup_interval_s", 60, minimum=10),
             models_root=_expand(
                 _as_str(s, "models_root", str(Path.home() / "halogen/models"))
             ),

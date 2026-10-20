@@ -386,7 +386,7 @@ config, processor files, conversion manifest and license live in
 plus the installer's 5 GiB free-space reserve. Repeated setup reuses verified
 files and preserves runtime changes.
 
-New CYBER-FROST templates use **Halogen 0.18.2** (minimum 0.17.5), **262144 context/KV pool**,
+New CYBER-FROST templates use **Halogen 0.18.11** (minimum 0.17.5), **262144 context/KV pool**,
 **two slots**, and the same generation defaults as Swift Abliterated. Its model
 card only exercised 32768 context and one slot; the larger configuration still
 needs a smoke test on the target host. No NPU models are enabled by default.
@@ -611,7 +611,62 @@ You can keep the dashboard but disable installation:
 allow_install = false
 ```
 
-## Halogen 0.18.2 support
+## Halogen 0.18.11 support
+
+New templates use Halogen 0.18.11. Existing profiles keep their settings until
+you update their engine in **System → Engine updates**. Flash checkpoints,
+context limits and slot counts are unchanged. NPU file updates use the selected
+image's verified catalog; shared files are reused.
+
+New NPU choices: `embeddinggemma-2` (text/image/audio embeddings),
+`wemm-embedding-4b` (text/image embeddings), `qwen3guard-stream-0.6b`
+(reports unsafe streamed reply segments without blocking), and `d3-lite` /
+`d3-nano` (System One decisions, including one image). Image edits and variations
+are routed alongside generations. See [API examples](docs/API.md).
+
+The profile editor exposes KV8, shared project-prefix caching, grouped and
+sampled drafting, template selection/checks, automatic session mapping and access
+logging. Empty fields use upstream defaults. KV8 is opt-in and cannot be combined
+with composable context. New defaults retain the large context and two slots.
+
+### Automatic disk-space protection
+
+Halobridge checks free space every **60 seconds**. At **15% free or less**, it
+reclaims the oldest recognized prompt-cache configuration trees until **20%**
+is free, or no eligible caches remain. This includes old engine/configuration
+caches left after upgrades (0.18.4 changed the disk-cache format).
+
+The scan covers `deploy.cache_root` and installed profiles' actual cache mounts.
+Only hexadecimal Halogen cache configuration directories containing cache records
+are eligible. It skips symlinks, other filesystems, model files, mounted secrets
+and request-record directories. Model/NPU downloads and container images are not
+cache-cleanup targets.
+
+Cleanup waits until the router is idle, closes admission, drains backend work,
+stops the active backend, removes eligible cache configurations, and restarts it.
+It defers during installations, updates, recovery or another active backend.
+The first request after eviction may need to process its prompt again.
+If other files occupy the disk, cache cleanup may not reach the target; this is
+reported in the service journal. Inspect it with:
+
+```bash
+journalctl --user -u halobridge.service --no-pager -n 100
+```
+
+Optional settings in `halobridge.toml` (defaults shown):
+
+```toml
+[deploy]
+cache_cleanup_enabled = true
+cache_cleanup_free_percent = 15
+cache_cleanup_target_percent = 20
+cache_cleanup_interval_s = 60
+```
+
+The latest cleanup result is also returned by `GET /dashboard/api/deploy` in
+`cache_cleanup`. Automatic cleanup runs on Linux; it does not run on Windows.
+
+### Earlier 0.18.2 changes
 
 0.18.2 adds strict tool schemas and 8192-token NPU decisions with optional text
 reuse. It improves image/audio memory sharing and handles old GPU firmware
@@ -625,8 +680,8 @@ The profile editor also exposes session limits, request records, backend API key
 
 Halobridge supports the new NPU image and System One routes, priority admission,
 and the engine's new cache, schema and decode settings. Update Halobridge, then
-use **System → Engine updates** to update the backend profiles to **0.18.2**.
-New Official, Orca, Swift and CYBER-FROST templates use 0.18.2; existing settings and engine versions are preserved during model repair.
+use **System → Engine updates** to update the backend profiles to **0.18.11**.
+New Official, Orca, Swift and CYBER-FROST templates use 0.18.11; existing settings and engine versions are preserved during model repair.
 Swift's initial template keeps its model-card version until you update the engine.
 
 The GPU checkpoints are unchanged from 0.16.2. The engine update brings faster
@@ -638,11 +693,11 @@ Leave `HALOGEN_MTP_DEPTH` empty for the engine's adaptive depth; an explicit
 value continues to fix the depth.
 
 See the [endpoint guide](docs/API.md) for use cases, prerequisites and runnable
-examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/CHANGELOG.md)
+examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/CHANGELOG.md)
 for the engine changes. The upstream Compose recipe is an alternative deployment;
 Halobridge's managed setup continues to use Podman Quadlets.
 
-## NPU models with Halogen 0.18.2
+## NPU models with Halogen 0.18.11
 
 The GPU model and the selected NPU models run together behind Halobridge's
 existing port. Requests select an NPU model by its `model` ID; they do not
@@ -665,9 +720,9 @@ loaded by the currently active backend.
 
 ### Host preparation
 
-1. Update the selected backend profiles to **Halogen 0.18.2** using
+1. Update the selected backend profiles to **Halogen 0.18.11** using
    the dashboard's engine updater. Your GPU checkpoint remains selected.
-2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/docs/NPU.md#host)
+2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/docs/NPU.md#host)
    for the Linux `amdxdna` driver, firmware, XRT and its NPU plugin. The service
    user needs access to `/dev/accel/accel0`. Enable IOMMU; `amd_iommu=off` and
    `iommu=off` are incompatible, while `iommu=pt` is supported.
@@ -797,7 +852,7 @@ moderation accept up to 4096. The decision limit is 4096 on earlier engines. `qw
 option without sampling. Moderation reports labels and probabilities rather
 than meaningful OpenAI category scores. NPU and GPU work share the chip's
 memory bandwidth and power budget. See the
-[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/docs/NPU.md)
+[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/docs/NPU.md)
 for supported request options.
 
 ### Own NPU fine-tunes and advanced flags

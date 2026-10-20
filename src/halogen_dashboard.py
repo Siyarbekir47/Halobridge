@@ -26,7 +26,8 @@ TELEMETRY_VERSION = 2
 PERIOD_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "1y": 365 * 86400}
 INFERENCE_ENDPOINTS = {"/v1/chat/completions", "/v1/completions", "/v1/responses",
                        "/v1/messages", "/v1/embeddings", "/v1/rerank", "/v1/moderations",
-                       "/v1/systemone", "/v1/images/generations", "/v1/audio/transcriptions", "/classify"}
+                       "/v1/systemone", "/v1/images/generations", "/v1/images/edits",
+                       "/v1/images/variations", "/v1/audio/transcriptions", "/classify"}
 SERVE_HEAD_RE = re.compile(
     r"serve_api: (?P<mode>\w+) (?P<tokens>\d+) tok in "
     r"(?P<seconds>[\d.]+)s = (?P<tps>[\d.]+|n/a) t/s"

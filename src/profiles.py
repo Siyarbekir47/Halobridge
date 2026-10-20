@@ -84,7 +84,27 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_FORK_HANDLES": FieldSpec("int", 1, 65536),
     "HALOGEN_FORK_TTL_S": FieldSpec("float", 0.01, 86400),
     "HALOGEN_FORK_GIB": FieldSpec("float", 0.01, 4096),
-    "HALOGEN_FORK_MAP": FieldSpec("enum", choices=("0", "claude-code")),
+    "HALOGEN_FORK_MAP": FieldSpec("enum", choices=("0", "claude-code", "auto")),
+    "HALOGEN_CHAT_TEMPLATE": FieldSpec("path"),
+    "HALOGEN_TEMPLATE_CHECK": FieldSpec("enum", choices=("warn", "off")),
+    "HALOGEN_GPU_DEVICE": FieldSpec("int", 0, 63),
+    "HALOGEN_NPU_IMAGE_EDITS": FieldSpec("flag"),
+    "HALOGEN_NPU_FLUX_REUSE": FieldSpec("flag"),
+    "HALOGEN_KV8": FieldSpec("flag"),
+    "HALOGEN_COMPOSABLE_CONTEXT": FieldSpec("flag"),
+    "HALOGEN_GRAMMAR_DRAFT": FieldSpec("flag"),
+    "HALOGEN_GRAMMAR_DRAFT_SAMPLED": FieldSpec("flag"),
+    "HALOGEN_MTP_GATE_P": FieldSpec("float", 0, 1),
+    "HALOGEN_SAMPLED_DEPTH": FieldSpec("int", 1, 63),
+    "HALOGEN_SAMPLED_GATE": FieldSpec("probabilities"),
+    "HALOGEN_CACHE_LEAD": FieldSpec("flag"),
+    "HALOGEN_SPEC_GROUP": FieldSpec("flag"),
+    "HALOGEN_ACCESS_LOG": FieldSpec("enum", choices=("quiet", "all", "off")),
+    "HALOGEN_FORK_AUTO_KEEPS": FieldSpec("int", 0, 65536),
+    "HALOGEN_GUARD_STREAMS": FieldSpec("int", 1, 65536),
+    "HALOGEN_GUARD_FLAG": FieldSpec("float", 0, 1),
+    "HALOGEN_GUARD_LAG": FieldSpec("int", 1, 1048576),
+    "HALOGEN_GUARD_FINAL_S": FieldSpec("float", 0, 120),
     "HALOGEN_RECORD_DIR": FieldSpec("path"),
     "HALOGEN_RECORD_TEXT": FieldSpec("record_text"),
     "HALOGEN_RECORD_GIB": FieldSpec("float", 0.01, 100_000),
@@ -135,6 +155,12 @@ FEATURE_MIN_VERSION = {
     "HALOGEN_NEXT_TOKEN_S": (0, 17, 5),
     **{key: (0, 18, 0) for key in ENV_FIELDS if key.startswith("HALOGEN_FORK")},
     "HALOGEN_FORK_MAP": (0, 18, 1), "HALOGEN_RETRY_GRACE_S": (0, 18, 1),
+    **{key: (0, 18, 3) for key in ("HALOGEN_FORK_AUTO_KEEPS", "HALOGEN_GUARD_STREAMS", "HALOGEN_GUARD_FLAG", "HALOGEN_GUARD_LAG", "HALOGEN_GUARD_FINAL_S")},
+    **{key: (0, 18, 3) for key in ("HALOGEN_TEMPLATE_CHECK", "HALOGEN_GPU_DEVICE", "HALOGEN_NPU_IMAGE_EDITS", "HALOGEN_NPU_FLUX_REUSE")},
+    **{key: (0, 18, 5) for key in ("HALOGEN_GRAMMAR_DRAFT", "HALOGEN_GRAMMAR_DRAFT_SAMPLED", "HALOGEN_MTP_GATE_P")},
+    **{key: (0, 18, 6) for key in ("HALOGEN_CHAT_TEMPLATE", "HALOGEN_SAMPLED_DEPTH", "HALOGEN_SAMPLED_GATE")},
+    "HALOGEN_CACHE_LEAD": (0, 18, 8), "HALOGEN_KV8": (0, 18, 9),
+    "HALOGEN_SPEC_GROUP": (0, 18, 11), "HALOGEN_ACCESS_LOG": (0, 18, 11),
     **{key: (0, 18, 2) for key in ("HALOGEN_NPU_DEC_RESUME", "HALOGEN_NPU_DEC_ENTRIES",
                                   "HALOGEN_STRICT_TOOLS", "HALOGEN_CLIENT_MARKERS")},
 }
@@ -201,7 +227,7 @@ def validate_profile(profile: Profile) -> list[str]:
         spec = ENV_FIELDS.get(key)
         if spec is None:
             errors.append(f"env: variable is not on the allowlist: {key}")
-        elif spec.kind not in {"models", "keys", "record_text"} and not SAFE_VALUE_RE.fullmatch(value):
+        elif spec.kind not in {"models", "keys", "record_text", "probabilities"} and not SAFE_VALUE_RE.fullmatch(value):
             errors.append(f"env {key}: invalid characters")
         else:
             error = _validate_value(value, spec)
@@ -213,9 +239,13 @@ def validate_profile(profile: Profile) -> list[str]:
             errors.append(f"env {key}: requires Halogen {'.'.join(map(str, minimum))} or newer")
     if profile.env.get("HALOGEN_API_KEY") and profile.env.get("HALOGEN_API_KEY_FILE"):
         errors.append("env: set API_KEY or API_KEY_FILE, not both")
-    if profile.env.get("HALOGEN_FORK_MAP") == "claude-code" and profile.env.get("HALOGEN_FORK") != "1":
+    if profile.env.get("HALOGEN_FORK_MAP") in {"claude-code", "auto"} and profile.env.get("HALOGEN_FORK") != "1":
         errors.append("env HALOGEN_FORK_MAP: requires HALOGEN_FORK=1")
-    for key in ("HALOGEN_RECORD_DIR", "HALOGEN_API_KEY_FILE"):
+    if profile.env.get("HALOGEN_FORK_MAP") == "auto" and (version_tuple(profile.image.rsplit(":", 1)[-1]) or ()) < (0, 18, 3):
+        errors.append("env HALOGEN_FORK_MAP=auto: requires Halogen 0.18.3 or newer")
+    if profile.env.get("HALOGEN_KV8") == "1" and profile.env.get("HALOGEN_COMPOSABLE_CONTEXT") == "1":
+        errors.append("env HALOGEN_KV8: cannot combine with HALOGEN_COMPOSABLE_CONTEXT=1")
+    for key in ("HALOGEN_RECORD_DIR", "HALOGEN_API_KEY_FILE", "HALOGEN_CHAT_TEMPLATE"):
         value = profile.env.get(key)
         if not value:
             continue
@@ -252,6 +282,10 @@ def validate_profile(profile: Profile) -> list[str]:
 
 def _validate_value(value: str, spec: FieldSpec) -> str | None:
     number: float
+    if spec.kind == "probabilities":
+        if not re.fullmatch(r"(?:0(?:\.\d+)?|1(?:\.0+)?)(?:,(?:0(?:\.\d+)?|1(?:\.0+)?))?", value):
+            return "one or two comma-separated probabilities between 0 and 1 expected"
+        return None
     if spec.kind == "int":
         try:
             number = int(value)
@@ -412,7 +446,7 @@ def profile_to_dict(profile: Profile) -> dict:
 
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
-DEFAULT_ENGINE_VERSION = "0.18.2"
+DEFAULT_ENGINE_VERSION = "0.18.11"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"

@@ -161,6 +161,7 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             "env_keys": sorted(ENV_FIELDS),
             "backups": self._backup_names(),
             "active_model": self.manager.current_model,
+            "cache_cleanup": getattr(getattr(self, "cache_cleanup", None), "last_result", {}),
             "deploying": self.deploy_lock.locked(),
             "recovery_required": self.recovery_required,
         }
@@ -1188,7 +1189,7 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             latest = getattr(self.updater, "latest_version", None)
             if latest:
                 return str(latest)
-        return "0.18.2"
+        return "0.18.11"
 
     async def _any_other_service_active(self, profile_id: str) -> bool:
         if not self.quadlet_dir.is_dir():

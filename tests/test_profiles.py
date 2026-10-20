@@ -167,6 +167,18 @@ class RenderImportTests(unittest.TestCase):
 
 
 class TemplateTests(unittest.TestCase):
+    def test_01811_controls_and_incompatible_kv_modes(self):
+        profile = official_template("0.18.11", Path("/host/models"), Path("/host/cache"))
+        profile.env.update(HALOGEN_KV8="1", HALOGEN_CACHE_LEAD="1", HALOGEN_SPEC_GROUP="1",
+                           HALOGEN_ACCESS_LOG="quiet", HALOGEN_SAMPLED_GATE="0.95,0.98",
+                           HALOGEN_FORK="1", HALOGEN_FORK_MAP="auto")
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(parse_quadlet(render_quadlet(profile)).env, profile.env)
+        profile.env["HALOGEN_COMPOSABLE_CONTEXT"] = "1"
+        self.assertTrue(any("cannot combine" in e for e in validate_profile(profile)))
+        profile.env.pop("HALOGEN_COMPOSABLE_CONTEXT")
+        profile.env["HALOGEN_SAMPLED_GATE"] = "nan,2"
+        self.assertTrue(any("probabilities" in e for e in validate_profile(profile)))
     def assert_common_runtime_env(self, profile: Profile) -> None:
         expected = {
             "HALOGEN_CTX": "262144",

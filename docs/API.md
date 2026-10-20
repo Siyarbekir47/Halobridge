@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.30 supports Halogen 0.18.2. Install the Halobridge update, then
+Halobridge 0.1.31 supports Halogen 0.18.11. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -34,7 +34,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, and ASR needs 0.18.0+. Use 0.18.2 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, and ASR needs 0.18.0+. Use 0.18.11 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## System One: classify a ticket and estimate urgency
@@ -101,7 +101,7 @@ request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.18.2 and select **one** speech model in
+Update the target GPU profiles to 0.18.11 and select **one** speech model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -122,7 +122,85 @@ text pass through unchanged. History records the loaded model, duration, status
 and response size; it stores neither audio nor transcript, and invents no token
 counts. Transcription queues with the other NPU work and keeps the GPU loaded.
 
-## NPU downloads before host setup
+## Added through Halogen 0.18.11
+
+Enable the required models in NPU Setup first. Existing API authentication still
+applies to every example. Flash checkpoints do not need replacing.
+
+### Decision 3.0
+
+`d3-lite` and `d3-nano` answer System One questions with up to 255 choices,
+yes/no probabilities or scores. They accept up to 8192 text tokens and optionally
+one inline image; the server does not fetch image URLs. Use the actual model ID
+when several deciders are enabled. The `vllm-sr/` aliases also work.
+
+```bash
+curl --fail-with-body -sS localhost:8731/v1/systemone \
+  -H 'Content-Type: application/json' -d '{
+  "model":"d3-lite","state":"The customer was charged twice.",
+  "questions":{"team":{"type":"choice","instructions":"Which team should handle this?",
+    "criteria":{"billing":"Payment problems","technical":"Software problems","other":null}}}}'
+```
+
+### Multimodal embeddings
+
+`embeddinggemma-2` embeds text, images and WAV audio (up to 30 seconds).
+`wemm-embedding-4b` embeds text and images and shares device programs with
+`decider-4b`. Clients must index and query with the same embedding model.
+
+```bash
+curl --fail-with-body -sS localhost:8731/v1/embeddings \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"embeddinggemma-2","input":["How do I enable the NPU?"],"prompt_name":"query"}'
+```
+
+EmbeddingGemma image inputs use `image_url` parts with inline base64, and audio
+inputs use `input_audio` parts with `data` and `format:"wav"`; see the
+[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/docs/NPU.md).
+
+### Image edits and variations
+
+Both multipart routes use `flux2-klein-4b`, preserve the active GPU model and
+return a 512x512 image. Edits also accept generation sizes on 0.18.9+ but still
+return 512x512; check the response's `size`. Disable both routes with
+`HALOGEN_NPU_IMAGE_EDITS=0` if desired.
+
+```bash
+curl --fail-with-body -sS localhost:8731/v1/images/edits \
+  -F model=flux2-klein-4b -F image=@source.png -F 'prompt=Make the sky orange'
+curl --fail-with-body -sS localhost:8731/v1/images/variations \
+  -F model=flux2-klein-4b -F image=@source.png
+```
+
+### Streaming guard
+
+With `qwen3guard-stream-0.6b` loaded, request `guard:true` on the GPU chat call.
+The guard reports `halogen_guard` verdicts and a summary; it does not block or
+rewrite the answer. It is not a standalone chat model. Stream count, probability
+threshold, backlog and final-verdict wait are configurable in the profile editor.
+
+```bash
+curl --fail-with-body -N -sS localhost:8731/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3.8-flash","messages":[{"role":"user","content":"Explain safe password storage."}],"max_tokens":128,"stream":true,"guard":true}'
+```
+
+### Other controls and compatibility routes
+
+`HALOGEN_KV8=1` is an opt-in memory saving mode with small numerical differences;
+it cannot be combined with `HALOGEN_COMPOSABLE_CONTEXT=1`. The profile editor
+also exposes `HALOGEN_FORK_MAP=auto`, `HALOGEN_FORK_AUTO_KEEPS`, template selection,
+GPU selection, cache-prefix reuse, drafting thresholds/grouping and access logs.
+Existing context and slots are preserved. Empty values retain upstream defaults.
+
+`/props`, `/slots`, `/tokenize` and `/detokenize` are proxied for llama.cpp clients.
+`max_tokens:-1` asks for the engine's maximum available output budget.
+`timings.speculation` reports draft acceptance; `timings.max_tokens_clamped_from`
+and `max_tokens_clamped_to` explain budgets shortened to the available context.
+The router preserves these fields. The speed, schema, NPU-memory and multi-GPU
+fixes take effect through the engine update.
+
+## Downloading NPU files before host setup
 
 In Models, select the tasks and backend profiles, then **Preview downloads**.
 **Download files only** downloads and verifies the pinned model files without
@@ -350,9 +428,9 @@ speculate together automatically. Faster decode and prompt processing, improved
 disk-prefix cache reuse, streamed tool-call cleanup and schema/tool fixes work
 without a new endpoint. Late system/developer turns in Chat Completions are
 treated as user text at their position; images in those late turns are refused.
-GPU checkpoints remain unchanged from 0.16.2 through 0.18.2. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
+GPU checkpoints remain unchanged from 0.16.2 through 0.18.11. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/CHANGELOG.md).

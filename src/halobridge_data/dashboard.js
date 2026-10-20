@@ -855,6 +855,12 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_NPU_STALL_S', 'number', 'deploy_f_npu_stall'],
   ['HALOGEN_NPU_DEC_RESUME', 'select:0,1,2', 'deploy_f_npu_dec_resume'],
   ['HALOGEN_NPU_DEC_ENTRIES', 'number', 'deploy_f_npu_dec_entries'],
+  ['HALOGEN_NPU_IMAGE_EDITS', 'select:0,1', 'deploy_f_npu_image_edits'],
+  ['HALOGEN_NPU_FLUX_REUSE', 'select:0,1', 'deploy_f_npu_flux_reuse'],
+  ['HALOGEN_GUARD_STREAMS', 'number', 'deploy_f_guard_streams'],
+  ['HALOGEN_GUARD_FLAG', 'number', 'deploy_f_guard_flag'],
+  ['HALOGEN_GUARD_LAG', 'number', 'deploy_f_guard_lag'],
+  ['HALOGEN_GUARD_FINAL_S', 'number', 'deploy_f_guard_final'],
 ];
 const ENGINE_ENV_FIELDS = [
   ['HALOGEN_CACHE_EVICT', 'select:0,1', 'deploy_f_cache_evict'],
@@ -876,13 +882,27 @@ const ENGINE_ENV_FIELDS = [
   ['HALOGEN_STRICT_TOOLS', 'select:0,1', 'deploy_f_strict_tools'],
   ['HALOGEN_CLIENT_MARKERS', 'select:text,special', 'deploy_f_client_markers'],
   ['HALOGEN_QSA_FORCE_SEL', 'select:0,1', 'deploy_f_qsa_sel'],
+  ['HALOGEN_CHAT_TEMPLATE', 'text', 'deploy_f_chat_template'],
+  ['HALOGEN_TEMPLATE_CHECK', 'select:warn,off', 'deploy_f_template_check'],
+  ['HALOGEN_GPU_DEVICE', 'number', 'deploy_f_gpu_device'],
+  ['HALOGEN_KV8', 'select:0,1', 'deploy_f_kv8'],
+  ['HALOGEN_COMPOSABLE_CONTEXT', 'select:0,1', 'deploy_f_composable_context'],
+  ['HALOGEN_GRAMMAR_DRAFT', 'select:0,1', 'deploy_f_grammar_draft'],
+  ['HALOGEN_GRAMMAR_DRAFT_SAMPLED', 'select:0,1', 'deploy_f_grammar_draft_sampled'],
+  ['HALOGEN_MTP_GATE_P', 'number', 'deploy_f_mtp_gate'],
+  ['HALOGEN_SAMPLED_DEPTH', 'number', 'deploy_f_sampled_depth'],
+  ['HALOGEN_SAMPLED_GATE', 'text', 'deploy_f_sampled_gate'],
+  ['HALOGEN_CACHE_LEAD', 'select:0,1', 'deploy_f_cache_lead'],
+  ['HALOGEN_SPEC_GROUP', 'select:0,1', 'deploy_f_spec_group'],
+  ['HALOGEN_ACCESS_LOG', 'select:quiet,all,off', 'deploy_f_access_log'],
 ];
 const SESSION_ENV_FIELDS = [
   ['HALOGEN_FORK', 'select:0,1', 'deploy_f_fork'],
   ['HALOGEN_FORK_HANDLES', 'number', 'deploy_f_fork_handles'],
   ['HALOGEN_FORK_TTL_S', 'number', 'deploy_f_fork_ttl'],
   ['HALOGEN_FORK_GIB', 'number', 'deploy_f_fork_gib'],
-  ['HALOGEN_FORK_MAP', 'select:0,claude-code', 'deploy_f_fork_map'],
+  ['HALOGEN_FORK_MAP', 'select:0,claude-code,auto', 'deploy_f_fork_map'],
+  ['HALOGEN_FORK_AUTO_KEEPS', 'number', 'deploy_f_auto_keeps'],
 ];
 const RECORD_ENV_FIELDS = [
   ['HALOGEN_RECORD_DIR', 'text', 'deploy_f_record_dir'],
@@ -1061,7 +1081,7 @@ async function refreshNpu() {
       : t('npu_host_blocked') + ' ' + (npuData.errors || []).map(error => errorKeys[error] ? t(errorKeys[error]) : error).join(' · ');
     $('npuHost').className = npuData.ready ? 'success' : 'warning';
     $('npuHostCommands').textContent = (npuData.setup?.commands || []).join('\n');
-    $('npuModelChoices').innerHTML = (npuData.models || []).map(model => `<label class="chk"><input type="checkbox" value="${esc(model.id)}" ${checked.has(model.id) ? 'checked' : ''}><span><strong>${esc(model.id)}</strong> <small>${esc(t('npu_task_' + model.task))} · ${esc(model.endpoint)}</small></span></label>`).join('');
+    $('npuModelChoices').innerHTML = (npuData.models || []).map(model => `<label class="chk"><input type="checkbox" value="${esc(model.id)}" ${checked.has(model.id) ? 'checked' : ''}><span><strong>${esc(model.id)}</strong> <small>${esc(t(L['npu_model_' + model.id] ? 'npu_model_' + model.id : 'npu_task_' + model.task))} · ${esc(model.endpoint)}</small></span></label>`).join('');
     for (const input of $('npuModelChoices').querySelectorAll('input')) input.addEventListener('change', () => {
       if (input.checked && input.value.startsWith('qwen3-asr-')) {
         for (const other of $('npuModelChoices').querySelectorAll('input')) {

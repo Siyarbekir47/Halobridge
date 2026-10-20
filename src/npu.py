@@ -29,16 +29,24 @@ NPU_MODELS = {
     "flux2-klein-4b": "image",
     "qwen3-asr-0.6b": "transcribe",
     "qwen3-asr-1.7b": "transcribe",
+    "embeddinggemma-2": "embedding",
+    "wemm-embedding-4b": "embedding",
+    "qwen3guard-stream-0.6b": "guard",
+    "d3-lite": "decision",
+    "d3-nano": "decision",
 }
 CUSTOM_TASKS = {"decision", "embedding", "score", "classify", "classifier"}
 MODEL_MIN_VERSION = {"flux2-klein-4b": (0, 17, 0),
                      "decider-4b": (0, 17, 4), "qwen3-embedding-4b": (0, 17, 4),
                      "qwen3-reranker-4b": (0, 17, 4),
-                     "qwen3-asr-0.6b": (0, 18, 0), "qwen3-asr-1.7b": (0, 18, 0)}
+                     "qwen3-asr-0.6b": (0, 18, 0), "qwen3-asr-1.7b": (0, 18, 0),
+                     "embeddinggemma-2": (0, 18, 3), "wemm-embedding-4b": (0, 18, 3),
+                     "qwen3guard-stream-0.6b": (0, 18, 3),
+                     "d3-lite": (0, 18, 11), "d3-nano": (0, 18, 11)}
 # The 0.18.1 image's catalog was verified byte-for-byte against 0.18.0.
 # Only explicitly verified versions share a bundle; later images are read locally.
 BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0"}
-BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2"} | set(BUNDLED_CATALOG_ALIASES)
+BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11"} | set(BUNDLED_CATALOG_ALIASES)
 TASK_ROUTES = {
     "decision": "/v1/chat/completions", "generate": "/v1/chat/completions",
     "embedding": "/v1/embeddings", "score": "/v1/rerank",
@@ -46,12 +54,13 @@ TASK_ROUTES = {
     "image": "/v1/images/generations",
     "transcribe": "/v1/audio/transcriptions",
     "classifier": "/classify",
+    "guard": "/v1/chat/completions",
 }
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 PATH_RE = re.compile(r"^/models/[A-Za-z0-9_./-]+$")
 REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 XRT_LIBS = ("libxrt_coreutil.so.2", "libxrt_core.so.2", "libxrt_driver_xdna.so.2")
-DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/docs/NPU.md"
+DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/docs/NPU.md"
 
 
 def parse_models(value: str) -> list[str]:
@@ -224,6 +233,24 @@ def system_mount_allowed(host: str, container: str, mode: str) -> bool:
     return (host, container, mode) in xrt_mounts()
 
 
+def fabric_devices(root: Path):
+    devices = sorted((root / "sys/class/drm").glob("card[0-9]*/device"))
+    for path in (root / "sys/class/kfd/kfd/topology/nodes").glob("*/properties"):
+        try:
+            props = dict(line.split(maxsplit=1) for line in path.read_text().splitlines() if len(line.split()) == 2)
+            if not re.fullmatch(r"1105\d\d", props.get("gfx_target_version", "")):
+                continue
+            render = root / "sys/class/drm" / ("renderD" + props.get("drm_render_minor", "")) / "device"
+            domain, location = int(props.get("domain", "-1")), int(props.get("location_id", "-1"))
+            address = f"{domain:04x}:{location >> 8:02x}:{(location >> 3) & 31:02x}.{location & 7:x}"
+            for device in devices:
+                if (render.exists() and device.resolve() == render.resolve()) or device.resolve().name == address:
+                    return [device]
+        except (OSError, ValueError):
+            continue
+    return devices
+
+
 def host_status(root: Path = Path("/")) -> dict:
     errors = []
     node = root / "dev/accel/accel0"
@@ -243,7 +270,7 @@ def host_status(root: Path = Path("/")) -> dict:
     if not mounts:
         errors.append("XRT and its NPU plugin are missing; install the host's matching XRT libraries")
     clocks = []
-    for device in (root / "sys/class/drm").glob("card*/device"):
+    for device in fabric_devices(root):
         try:
             levels = [line for line in (device / "pp_dpm_fclk").read_text().splitlines() if line.strip()]
             perf = (device / "power_dpm_force_performance_level").read_text().strip()
@@ -263,8 +290,8 @@ def host_setup(state_dir: Path) -> dict:
     directory.mkdir(parents=True, exist_ok=True)
     # Download upstream's unmodified host helpers at setup time; no vendor
     # executable code is redistributed with Halobridge.
-    revision = "3bd33c6f6c203e429282239e69d04147016c59db"
-    helpers = [("halogen-fabric-clock", "908c99539e2753204a143720f2113a7c9c4ca47207ad4aaf290f521a03565861", "755", "/usr/local/sbin/"),
+    revision = "002589b11480cf3422f209b336c19dcc208fc69f"
+    helpers = [("halogen-fabric-clock", "0dbd47c15f1002e0a8997ec7070e96f3e009125068eab8eccbbd49424a594f5a", "755", "/usr/local/sbin/"),
                ("halogen-fabric-clock.service", "5f9f1cc4c85a1c027e907aa355bbabc87d40eba544512b51146b543a49bf8a71", "644", "/etc/systemd/system/")]
     commands = []
     for name, digest, mode, destination in helpers:

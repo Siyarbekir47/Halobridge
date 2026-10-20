@@ -788,7 +788,7 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
     requested_model: Optional[str] = None
     payload = {}
 
-    if request.path == "/v1/audio/transcriptions" and request.content_type == "multipart/form-data":
+    if request.path in {"/v1/audio/transcriptions", "/v1/images/edits", "/v1/images/variations"} and request.content_type == "multipart/form-data":
         requested_model = await multipart_model(request, body)
         payload = {"model": requested_model} if requested_model else {}
 
@@ -807,6 +807,7 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
     auxiliary_task = None
     if hasattr(manager, "auxiliary_models"):
         auxiliary_task = {"/v1/systemone": "decision", "/v1/images/generations": "image",
+                          "/v1/images/edits": "image", "/v1/images/variations": "image",
                           "/v1/audio/transcriptions": "transcribe", "/classify": "classifier"}.get(request.path)
     if requested_model and hasattr(manager, "auxiliary_models") and requested_model not in manager.models:
         provider = getattr(manager, "npu_names", lambda _: set())
@@ -819,7 +820,8 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
     if request.path == "/v1/moderations" and not requested_model and hasattr(manager, "auxiliary_models"):
         auxiliary_task = "classify"
     if auxiliary_task:
-        reserved_model = await manager.reserve_request(requested_model, auxiliary_task=auxiliary_task)
+        admission_model = {"vllm-sr/d3-lite": "d3-lite", "vllm-sr/d3-nano": "d3-nano"}.get(requested_model, requested_model) if auxiliary_task == "decision" else requested_model
+        reserved_model = await manager.reserve_request(admission_model, auxiliary_task=auxiliary_task)
     elif auxiliary:
         reserved_model = await manager.reserve_request(requested_model, auxiliary=True)
     else:
@@ -1242,6 +1244,9 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     deploy_routes = DeployRoutes(deploy_manager)
     app_updater = AppUpdater(manager, session, config=config,
                              container_updater=updater, deploy_manager=deploy_manager)
+    from cache_cleanup import CacheCleanup
+    cache_cleanup = CacheCleanup(deploy_manager, app_updater)
+    deploy_manager.cache_cleanup = cache_cleanup
 
     app = web.Application(
         client_max_size=128 * 1024 * 1024,
@@ -1256,6 +1261,7 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     app["models"] = models
     app["backend_url"] = config.router.backend_url
     app["config"] = config
+    app["cache_cleanup"] = cache_cleanup
 
     if skipped:
         LOG.warning("Model discovery skipped entries: %s", "; ".join(skipped))
@@ -1299,12 +1305,14 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     app_updater.register_routes(app)
     updater.start_checks()
     app_updater.start_checks()
+    cache_cleanup.start()
     app.router.add_get("/v1/models", list_models)
     app.router.add_get("/router/status", router_status)
 
     app.router.add_route("*", "/{tail:.*}", proxy_request)
 
     async def close_session(_: web.Application) -> None:
+        await cache_cleanup.close()
         if deploy_manager._job_task and not deploy_manager._job_task.done():
             deploy_manager._job_task.cancel()
             await asyncio.gather(deploy_manager._job_task, return_exceptions=True)
