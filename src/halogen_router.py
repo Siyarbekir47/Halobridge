@@ -12,7 +12,8 @@ import time
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
-from aiohttp import ClientError, ClientSession, ClientTimeout, web
+from aiohttp import ClientError, ClientSession, ClientTimeout, MultipartReader, StreamReader, web
+from backend_auth import BackendAuth, BackendAuthError
 from halogen_dashboard import Dashboard, INFERENCE_ENDPOINTS
 from halogen_deploy import DeployManager, DeployRoutes
 from halogen_updates import ContainerUpdater
@@ -110,11 +111,16 @@ class ModelManager:
         self.active_requests = 0
         self.maintenance = False
 
+    def backend_headers(self, model=None):
+        auth = getattr(self, "backend_auth", None)
+        return auth.headers(model or self.switch_target or self.current_model or self.default_model) if auth else {}
+
     async def backend_model_entries(self) -> list[dict]:
         if self.session is None:
             return []
         try:
             async with self.session.get(f"{self.backend_url or BACKEND_URL}/v1/models",
+                                        headers=self.backend_headers(),
                                         timeout=ClientTimeout(total=5)) as response:
                 if response.status != 200:
                     return []
@@ -595,9 +601,10 @@ class ModelManager:
     async def reserve_request(
         self,
         requested_model: Optional[str],
-        *, auxiliary: bool = False,
+        *, auxiliary: bool = False, auxiliary_task: Optional[str] = None,
     ) -> str:
         self._check_maintenance()
+        auxiliary = auxiliary or auxiliary_task is not None
         target_model = self.current_model if auxiliary else requested_model or self.current_model
 
         if target_model not in self.models:
@@ -625,14 +632,28 @@ class ModelManager:
 
                 if auxiliary:
                     target_model = self.current_model
-                    if requested_model not in {entry["id"] for entry in await self.auxiliary_models()}:
+                    entries = await self.auxiliary_models()
+                    served_model = requested_model
+                    if auxiliary_task:
+                        from npu import NPU_MODELS
+                        def task(entry):
+                            value = entry.get("task", NPU_MODELS.get(entry["id"]))
+                            return "classify" if value == "moderation" else value
+                        candidates = [entry["id"] for entry in entries if task(entry) == auxiliary_task]
+                        if requested_model not in candidates:
+                            if len(candidates) > 1:
+                                raise web.HTTPUnprocessableEntity(text=json.dumps({"error": {
+                                    "type": "model_not_found", "message": "Name a loaded NPU model for this task",
+                                    "available_models": candidates}}), content_type="application/json")
+                            served_model = candidates[0] if candidates else None
+                    if served_model not in {entry["id"] for entry in entries}:
                         raise web.HTTPServiceUnavailable(text=json.dumps({"error": {
                             "type": "model_unavailable", "message": "NPU model is unavailable on the active backend"}}),
                             content_type="application/json", headers={"Retry-After": "5"})
 
                 if self.current_model == target_model:
                     self.active_requests += 1
-                    return target_model
+                    return served_model if auxiliary else target_model
 
                 self.switching = True
                 self.switch_target = target_model
@@ -697,20 +718,15 @@ async def list_models(request: web.Request) -> web.Response:
     models = manager.models if manager is not None else request.app.get("models", MODELS)
 
     auxiliary = await manager.auxiliary_models() if manager is not None and hasattr(manager, "auxiliary_models") else []
-    return web.json_response(
-        {
-            "object": "list",
-            "data": [
-                {
-                    "id": model,
-                    "object": "model",
-                    "created": created,
-                    "owned_by": settings.APP,
-                }
-                for model in models
-            ] + auxiliary,
-        }
-    )
+    data = [
+        {"id": model, "object": "model", "type": "model", "display_name": model,
+         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created)),
+         "created": created, "owned_by": settings.APP}
+        for model in models
+    ] + auxiliary
+    return web.json_response({"object": "list", "data": data, "has_more": False,
+                              "first_id": data[0]["id"] if data else None,
+                              "last_id": data[-1]["id"] if data else None})
 
 
 async def router_status(request: web.Request) -> web.Response:
@@ -738,6 +754,31 @@ def filtered_response_headers(
     }
 
 
+async def multipart_model(request, body):
+    """Inspect the small model field while forwarding the original MIME bytes."""
+    stream = StreamReader(request.protocol, limit=max(len(body), 65536))
+    stream.feed_data(body)
+    stream.feed_eof()
+    try:
+        reader = MultipartReader(request.headers, stream)
+        model = None
+        while (part := await reader.next()) is not None:
+            if not hasattr(part, "name"):
+                raise ValueError("Nested multipart uploads are unsupported")
+            if part.name == "model":
+                if model is not None:
+                    raise ValueError("Duplicate model field")
+                value = bytearray()
+                while not part.at_eof():
+                    value.extend(await part.read_chunk())
+                    if len(value) > 512:
+                        raise ValueError("Model field is too large")
+                model = value.decode("utf-8")
+        return model
+    except (ValueError, AssertionError, UnicodeError) as exc:
+        raise web.HTTPBadRequest(text="Invalid audio multipart body") from exc
+
+
 async def proxy_request(request: web.Request) -> web.StreamResponse:
     manager: ModelManager = request.app["manager"]
     session: ClientSession = request.app["session"]
@@ -747,7 +788,11 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
     requested_model: Optional[str] = None
     payload = {}
 
-    if body:
+    if request.path in {"/v1/audio/transcriptions", "/v1/images/edits", "/v1/images/variations"} and request.content_type == "multipart/form-data":
+        requested_model = await multipart_model(request, body)
+        payload = {"model": requested_model} if requested_model else {}
+
+    elif body:
         try:
             decoded = json.loads(body)
             if isinstance(decoded, dict):
@@ -759,6 +804,11 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
             pass
 
     auxiliary = False
+    auxiliary_task = None
+    if hasattr(manager, "auxiliary_models"):
+        auxiliary_task = {"/v1/systemone": "decision", "/v1/images/generations": "image",
+                          "/v1/images/edits": "image", "/v1/images/variations": "image",
+                          "/v1/audio/transcriptions": "transcribe", "/classify": "classifier"}.get(request.path)
     if requested_model and hasattr(manager, "auxiliary_models") and requested_model not in manager.models:
         provider = getattr(manager, "npu_names", lambda _: set())
         auxiliary = requested_model in provider(manager.current_model)
@@ -766,14 +816,21 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
         # switch. A declared but unavailable NPU returns a retryable 503.
         if (not auxiliary and request.path == "/v1/moderations"
                 and requested_model.startswith(("omni-moderation", "text-moderation"))):
-            requested_model = None  # Upstream resolves its OpenAI-compatible moderation alias.
-    reserved_model = (await manager.reserve_request(requested_model, auxiliary=True) if auxiliary
-                      else await manager.reserve_request(requested_model))
+            auxiliary_task = "classify"  # Preserve the alias in the forwarded body.
+    if request.path == "/v1/moderations" and not requested_model and hasattr(manager, "auxiliary_models"):
+        auxiliary_task = "classify"
+    if auxiliary_task:
+        admission_model = {"vllm-sr/d3-lite": "d3-lite", "vllm-sr/d3-nano": "d3-nano"}.get(requested_model, requested_model) if auxiliary_task == "decision" else requested_model
+        reserved_model = await manager.reserve_request(admission_model, auxiliary_task=auxiliary_task)
+    elif auxiliary:
+        reserved_model = await manager.reserve_request(requested_model, auxiliary=True)
+    else:
+        reserved_model = await manager.reserve_request(requested_model)
     track_usage = request.method == "POST" and request.path in INFERENCE_ENDPOINTS
     trace = await dashboard.begin_request(
         request,
         payload,
-        requested_model if auxiliary else reserved_model,
+        reserved_model,
     ) if track_usage else None
     headers = filtered_request_headers(request)
     if track_usage:
@@ -798,6 +855,21 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
     backend_url = f"{request.app.get('backend_url') or BACKEND_URL}{request.rel_url}"
 
     try:
+        try:
+            config = request.app.get("config")
+            # Only authenticated router clients may use the bridge's credential.
+            # Without router authentication, forward the client's own key so
+            # enabling backend auth cannot accidentally open inference to all.
+            backend_headers = (getattr(manager, "backend_headers", lambda: {})()
+                               if config and config.security.auth_token
+                               and _authenticated(request, config.security.auth_token) else {})
+        except BackendAuthError as exc:
+            status, error_text = 503, "backend_auth_unavailable"
+            raise web.HTTPServiceUnavailable(text=str(exc)) from exc
+        if backend_headers:
+            headers = {name: value for name, value in headers.items()
+                       if name.lower() not in {"authorization", "x-api-key"}}
+            headers.update(backend_headers)
         try:
             upstream = await session.request(
                 method=request.method,
@@ -1122,9 +1194,11 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
         )
         updater = ContainerUpdater(manager, session, models, config=config)
         deploy_manager = DeployManager(manager, config, updater=updater)
+        manager.backend_auth = BackendAuth(config.router, deploy_manager.npu_assets.profiles)
         updater.checkpoint_assets = deploy_manager.assets
         updater.npu_assets = deploy_manager.npu_assets
         async def validate_assets(model):
+            manager.backend_headers(model)  # Check mounted credentials before activation.
             await deploy_manager.assets.validate_start(model)
             for profile in deploy_manager.npu_assets.profiles():
                 if profile.model_id == model and profile.env.get("HALOGEN_NPU_MODELS"):
@@ -1170,6 +1244,9 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     deploy_routes = DeployRoutes(deploy_manager)
     app_updater = AppUpdater(manager, session, config=config,
                              container_updater=updater, deploy_manager=deploy_manager)
+    from cache_cleanup import CacheCleanup
+    cache_cleanup = CacheCleanup(deploy_manager, app_updater)
+    deploy_manager.cache_cleanup = cache_cleanup
 
     app = web.Application(
         client_max_size=128 * 1024 * 1024,
@@ -1184,6 +1261,7 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     app["models"] = models
     app["backend_url"] = config.router.backend_url
     app["config"] = config
+    app["cache_cleanup"] = cache_cleanup
 
     if skipped:
         LOG.warning("Model discovery skipped entries: %s", "; ".join(skipped))
@@ -1227,12 +1305,14 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
     app_updater.register_routes(app)
     updater.start_checks()
     app_updater.start_checks()
+    cache_cleanup.start()
     app.router.add_get("/v1/models", list_models)
     app.router.add_get("/router/status", router_status)
 
     app.router.add_route("*", "/{tail:.*}", proxy_request)
 
     async def close_session(_: web.Application) -> None:
+        await cache_cleanup.close()
         if deploy_manager._job_task and not deploy_manager._job_task.done():
             deploy_manager._job_task.cancel()
             await asyncio.gather(deploy_manager._job_task, return_exceptions=True)

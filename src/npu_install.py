@@ -8,7 +8,7 @@ import re
 import stat
 from pathlib import Path
 
-from npu import (DOC_URL, NPU_MODELS, TASK_ROUTES, check_runtime, host_setup, host_status,
+from npu import (CUSTOM_TASKS, DOC_URL, MODEL_MIN_VERSION, NPU_MODELS, TASK_ROUTES, check_runtime, host_setup, host_status,
                  parse_models, patch_quadlet)
 from profiles import parse_quadlet, validate_profile
 from semver import normalize_version, version_tuple
@@ -29,7 +29,7 @@ class NpuInstallMixin:
 
     async def npu_status(self):
         state = host_status()
-        state.update({"models": [{"id": model, "task": task, "endpoint": TASK_ROUTES[task]}
+        state.update({"models": [{"id": model, "task": task, "endpoint": "/v1/systemone" if model in {"d3-lite", "d3-nano"} else TASK_ROUTES[task]}
                                   for model, task in NPU_MODELS.items()],
                       "profiles": [{"id": p.profile_id, "image": p.image,
                                     "models": p.env.get("HALOGEN_NPU_MODELS", "")}
@@ -49,13 +49,18 @@ class NpuInstallMixin:
             return result
         manifests = {}
         for image in dict.fromkeys(p.image for p in profiles):
-            if (version_tuple(image.rsplit(":", 1)[-1]) or (0, 0, 0)) < (0, 16, 2):
+            version = version_tuple(image.rsplit(":", 1)[-1]) or (0, 0, 0)
+            if version < (0, 16, 2):
                 raise AssetError("Update all selected profiles to Halogen 0.16.2 or newer before NPU Setup")
-            manifest = await self.npu_assets.manifest(image)
+            for model in models:
+                minimum = MODEL_MIN_VERSION.get(model, (0, 16, 2))
+                if version < minimum:
+                    raise AssetError(f"NPU model {model} requires Halogen {'.'.join(map(str, minimum))} or newer")
+            manifest = await self.npu_assets.manifest(image, self._run)
             if manifest.key in manifests:
                 manifests[manifest.key]["images"].append(image)
                 continue
-            bases = [m for m, info in manifest.models.items() if info["task"] != "generate"] if any(m.startswith("/") for m in models) else []
+            bases = [m for m, info in manifest.models.items() if info["task"] in CUSTOM_TASKS] if any(m.startswith("/") for m in models) else []
             selection = self.npu_assets.selection(manifest, models, profiles, bases)
             plan = selection.plan()
             plan["image"] = image
@@ -66,7 +71,7 @@ class NpuInstallMixin:
         result["custom_models"] = [m for m in models if m.startswith("/")]
         return result
 
-    async def quick_npu(self, payload):
+    async def quick_npu(self, payload, *, download_only=False):
         from halogen_deploy import DeployError
         self._require_enabled()
         if self.recovery_required or self.deploy_lock.locked() or (self.updater and self.updater.running):
@@ -78,14 +83,17 @@ class NpuInstallMixin:
         if not isinstance(value, str) or (requested is not None and
                 (not isinstance(requested, list) or not all(isinstance(p, str) for p in requested))):
             raise DeployError("NPU models must be a string and profiles must be a list of IDs")
+        if download_only and not value:
+            raise DeployError("Select at least one NPU model to download")
         await self.npu_plan(value, requested)
-        if value:
+        if value and not download_only:
             state = host_status()
             if not state["ready"]:
                 raise DeployError("; ".join(state["errors"]))
-        self._start_pipeline_job("quick-npu", 4)
-        self._job_task = asyncio.create_task(self._run_quick_npu(value, requested))
-        return {"ok": True, "kind": "quick-npu"}
+        kind = "quick-npu-download" if download_only else "quick-npu"
+        self._start_pipeline_job(kind, 2 if download_only else 4)
+        self._job_task = asyncio.create_task(self._run_quick_npu(value, requested, download_only=download_only))
+        return {"ok": True, "kind": kind}
 
     async def _npu_runtime_check(self, image, mounts, custom_mounts=()):
         return await check_runtime(self._run, image, mounts, custom_mounts)
@@ -104,7 +112,7 @@ class NpuInstallMixin:
             mounts.append((str(source), model, "ro,z"))
         return mounts
 
-    async def _run_quick_npu(self, value, requested):
+    async def _run_quick_npu(self, value, requested, *, download_only=False):
         record = None
         stop = asyncio.Event()
         heartbeat = asyncio.create_task(self._heartbeat(stop, "preparing NPU assets"))
@@ -115,19 +123,24 @@ class NpuInstallMixin:
             models = parse_models(value) if value else []
             self.job["step"] = 1
             if models:
-                mounts = [tuple(v) for v in host_status()["xrt_mounts"]]
+                mounts = [tuple(v) for v in host_status()["xrt_mounts"]] if not download_only else []
                 for image in dict.fromkeys(p.image for p in profiles):
-                    await self._run_stream(["podman", "pull", image], timeout=1800)
+                    if not download_only:
+                        await self._run_stream(["podman", "pull", image], timeout=1800)
                     active_profile = next((p for p in profiles if p.model_id == self.manager.current_model), None)
-                    if self.updater and active_profile and active_profile.image == image:
+                    if not download_only and self.updater and active_profile and active_profile.image == image:
                         if await self.updater._inspect_image(image) != await self.updater._container_image(active_profile.model_id):
                             raise AssetError("The pulled image differs from the running image; use the engine update first")
-                    manifest = await self.npu_assets.manifest(image, self._run, refresh=True)
-                    bases = [m for m, info in manifest.models.items() if info["task"] != "generate"] if any(m.startswith("/") for m in models) else []
+                    manifest = await self.npu_assets.manifest(image, self._run, refresh=not download_only)
+                    bases = [m for m, info in manifest.models.items() if info["task"] in CUSTOM_TASKS] if any(m.startswith("/") for m in models) else []
                     selection = self.npu_assets.selection(manifest, models, profiles, bases)
                     await selection.prepare(None, self._download_asset, self._append_job_line)
                     locations[image] = selection.root
                 self.job["step"] = 2
+                if download_only:
+                    self._append_job_line("NPU files downloaded and verified. Activate them after the host checks pass.")
+                    self.job["state"] = "done"
+                    return
                 for profile in profiles:
                     custom = self._npu_custom_mounts(profile, models)
                     await self._npu_runtime_check(profile.image, mounts, custom)
@@ -198,7 +211,7 @@ class NpuInstallMixin:
                     self.recovery_required = True
                     self.manager.maintenance = True
                     self._append_job_line(f"NPU recovery required: {error}; restart Halobridge to retry")
-            elif self.manager.maintenance:
+            elif not download_only and self.manager.maintenance:
                 await self.manager.end_maintenance()
             self.job["state"] = "cancelled" if isinstance(exc, asyncio.CancelledError) else "error"
             self.job["error"] = str(exc) or "Cancelled"

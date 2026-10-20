@@ -18,6 +18,12 @@ import zlib
 from aiohttp import ClientSession, ClientTimeout
 
 MODELS = ("qwen3.8-flash", "qwen3.8-flash-uncensored", "halogen-swift15", "halogen-swift15-abliterated")
+CYBER_MODEL = "halogen-cyber-frost"
+
+
+def generation_settings(model):
+    return {"max_tokens": 1024, "reasoning_effort": "low"} if model == CYBER_MODEL else {
+        "max_tokens": 256, "reasoning_effort": "minimal"}
 
 
 def test_image():
@@ -56,7 +62,7 @@ async def main(args):
                                    {"type": "image_url", "image_url": {"url": test_image()}}]
                     reply = await request("/v1/chat/completions", {
                         "model": model, "messages": [{"role": "user", "content": content}],
-                        "max_tokens": 256, "reasoning_effort": "minimal", "stream": False})
+                        **generation_settings(model), "stream": False})
                     if not reply.get("choices"):
                         raise RuntimeError(f"{model} {kind}: missing choices")
                     message = reply["choices"][0].get("message") or {}
@@ -69,16 +75,20 @@ async def main(args):
                         version = health.get("version") or {}
                         if not version.get("engine") or tuple(map(int, version["engine"].lstrip("v").split("."))) < (0, 15, 1):
                             raise RuntimeError(f"{model}: incompatible engine version")
+                    if model == CYBER_MODEL:
+                        version = health.get("version") or {}
+                        if tuple(map(int, version.get("engine", "0.0.0").lstrip("v").split("."))) < (0, 17, 5):
+                            raise RuntimeError(f"{model}: incompatible engine version")
                     print(json.dumps({"model": model, "kind": kind, "answer": message["content"],
                                       "usage": reply.get("usage"), "version": health.get("version")}))
         finally:
             if original and original in installed:
                 await request("/v1/chat/completions", {"model": original, "messages": [{"role": "user", "content": "Reply OK."}],
-                                                      "max_tokens": 32, "reasoning_effort": "minimal"})
+                                                      **generation_settings(original)})
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:8731")
-    parser.add_argument("--models", nargs="+", default=MODELS, choices=MODELS)
+    parser.add_argument("--models", nargs="+", default=MODELS, choices=(*MODELS, CYBER_MODEL))
     asyncio.run(main(parser.parse_args()))

@@ -167,6 +167,18 @@ class RenderImportTests(unittest.TestCase):
 
 
 class TemplateTests(unittest.TestCase):
+    def test_01811_controls_and_incompatible_kv_modes(self):
+        profile = official_template("0.18.11", Path("/host/models"), Path("/host/cache"))
+        profile.env.update(HALOGEN_KV8="1", HALOGEN_CACHE_LEAD="1", HALOGEN_SPEC_GROUP="1",
+                           HALOGEN_ACCESS_LOG="quiet", HALOGEN_SAMPLED_GATE="0.95,0.98",
+                           HALOGEN_FORK="1", HALOGEN_FORK_MAP="auto")
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(parse_quadlet(render_quadlet(profile)).env, profile.env)
+        profile.env["HALOGEN_COMPOSABLE_CONTEXT"] = "1"
+        self.assertTrue(any("cannot combine" in e for e in validate_profile(profile)))
+        profile.env.pop("HALOGEN_COMPOSABLE_CONTEXT")
+        profile.env["HALOGEN_SAMPLED_GATE"] = "nan,2"
+        self.assertTrue(any("probabilities" in e for e in validate_profile(profile)))
     def assert_common_runtime_env(self, profile: Profile) -> None:
         expected = {
             "HALOGEN_CTX": "262144",
@@ -261,6 +273,30 @@ class TemplateTests(unittest.TestCase):
         models = next(v for v in profile.volumes if v[1] == "/models")
         self.assertIn("ro", models[2])
 
+    def test_0180_features_validate_versions_paths_and_record_policy(self):
+        profile = official_template("0.18.0", Path("/host/models"), Path("/host/cache"))
+        profile.env.update(HALOGEN_FORK="1", HALOGEN_FORK_HANDLES="8", HALOGEN_FORK_TTL_S="600.5",
+                           HALOGEN_FORK_GIB="2.5", HALOGEN_NEXT_TOKEN_S="990.5",
+                           HALOGEN_RECORD_DIR="/cache/records", HALOGEN_RECORD_TEXT="prompt,reply",
+                           HALOGEN_RECORD_GIB="2", HALOGEN_RECORD_DAYS="0",
+                           HALOGEN_API_KEY="key-one,key-two", HALOGEN_NPU_MODELS="qwen3-asr-0.6b")
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(parse_quadlet(render_quadlet(profile)).env, profile.env)
+        for key, value in (("HALOGEN_RECORD_TEXT", "none,prompt"), ("HALOGEN_RECORD_TEXT", "prompt,prompt"),
+                           ("HALOGEN_RECORD_DIR", "/models/records"), ("HALOGEN_RECORD_DIR", "/unmounted/records"),
+                           ("HALOGEN_API_KEY", "key,broken key"), ("HALOGEN_FORK_GIB", "NaN")):
+            original = profile.env.get(key)
+            profile.env[key] = value
+            self.assertTrue(validate_profile(profile), (key, value))
+            profile.env[key] = original
+        profile.env["HALOGEN_API_KEY_FILE"] = "/cache/key"
+        self.assertTrue(any("not both" in error for error in validate_profile(profile)))
+        profile.env.pop("HALOGEN_API_KEY_FILE")
+        profile.image = profile.image.replace("0.18.0", "0.17.5")
+        errors = validate_profile(profile)
+        self.assertTrue(any("HALOGEN_FORK" in error for error in errors))
+        self.assertTrue(any("qwen3-asr" in error for error in errors))
+
     def test_env_fields_cover_documented_variables(self):
         for key in (
             "HALOGEN_CTX",
@@ -276,6 +312,31 @@ class TemplateTests(unittest.TestCase):
             "HALOGEN_REASONING_EFFORT",
         ):
             self.assertIn(key, ENV_FIELDS)
+
+    def test_0182_controls_validate_values_versions_and_session_dependency(self):
+        profile = official_template("0.18.2", Path("/host/models"), Path("/host/cache"))
+        additions = {"HALOGEN_NPU_DEC_RESUME": "2", "HALOGEN_NPU_DEC_ENTRIES": "6",
+                     "HALOGEN_STRICT_TOOLS": "1", "HALOGEN_CLIENT_MARKERS": "text",
+                     "HALOGEN_QSA_FORCE_SEL": "1", "HALOGEN_RETRY_GRACE_S": "20.5",
+                     "HALOGEN_FORK": "1", "HALOGEN_FORK_MAP": "claude-code"}
+        profile.env.update(additions)
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(parse_quadlet(render_quadlet(profile)).env, profile.env)
+        for key, invalid in (("HALOGEN_NPU_DEC_RESUME", "3"), ("HALOGEN_NPU_DEC_ENTRIES", "0"),
+                             ("HALOGEN_RETRY_GRACE_S", "121"), ("HALOGEN_CLIENT_MARKERS", "unknown"),
+                             ("HALOGEN_FORK_MAP", "unknown"), ("HALOGEN_FORK", "0")):
+            profile.env[key] = invalid
+            self.assertTrue(validate_profile(profile), key)
+            profile.env[key] = additions[key]
+        profile.image = profile.image.replace("0.18.2", "0.18.1")
+        errors = validate_profile(profile)
+        for key in ("HALOGEN_NPU_DEC_RESUME", "HALOGEN_NPU_DEC_ENTRIES", "HALOGEN_STRICT_TOOLS", "HALOGEN_CLIENT_MARKERS"):
+            self.assertTrue(any(key in error and "0.18.2" in error for error in errors), key)
+        self.assertFalse(any("HALOGEN_FORK_MAP" in error for error in errors))
+        profile.image = profile.image.replace("0.18.1", "0.18.0")
+        errors = validate_profile(profile)
+        self.assertTrue(any("HALOGEN_FORK_MAP" in error and "0.18.1" in error for error in errors))
+        self.assertTrue(any("HALOGEN_RETRY_GRACE_S" in error and "0.18.1" in error for error in errors))
 
 
 if __name__ == "__main__":

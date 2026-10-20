@@ -79,6 +79,8 @@ class RouterConfig:
     bind: list[str] = field(default_factory=lambda: ["127.0.0.1"])
     port: int = 8731
     backend_url: str = "http://127.0.0.1:8831"
+    backend_api_key: str = field(default="", repr=False)
+    backend_api_key_file: str = ""
     drain_timeout_s: int = 7200
     start_timeout_s: int = 600
     stop_timeout_s: int = 180
@@ -87,10 +89,24 @@ class RouterConfig:
 
     @classmethod
     def from_section(cls, s: dict[str, Any]) -> "RouterConfig":
+        key = _as_optional_str(s, "backend_api_key")
+        key_file = _as_optional_str(s, "backend_api_key_file")
+        if key and key_file:
+            raise ConfigError("router: set backend_api_key or backend_api_key_file, not both")
+        if key:
+            from backend_auth import first_key, BackendAuthError
+            try:
+                first_key(key)
+            except BackendAuthError as exc:
+                raise ConfigError("router.backend_api_key is invalid") from exc
+        if key_file and not Path(key_file).expanduser().is_absolute():
+            raise ConfigError("router.backend_api_key_file must be an absolute host path")
         return cls(
             bind=_as_str_list(s, "bind", ["127.0.0.1"]),
             port=_as_int(s, "port", 8731, minimum=1),
             backend_url=_as_str(s, "backend_url", "http://127.0.0.1:8831").rstrip("/"),
+            backend_api_key=key,
+            backend_api_key_file=key_file,
             drain_timeout_s=_as_int(s, "drain_timeout_s", 7200),
             start_timeout_s=_as_int(s, "start_timeout_s", 600),
             stop_timeout_s=_as_int(s, "stop_timeout_s", 180),
@@ -205,6 +221,14 @@ class DeployConfig:
     allowed_roots: list[Path] = field(default_factory=lambda: [Path.home()])
     models_root: Path = field(default_factory=lambda: Path.home() / "halogen/models")
     cache_root: Path = field(default_factory=lambda: Path.home() / "halogen/cache")
+    cache_cleanup_enabled: bool = True
+    cache_cleanup_free_percent: int = 15
+    cache_cleanup_target_percent: int = 20
+    cache_cleanup_interval_s: int = 60
+
+    def __post_init__(self):
+        if not 1 <= self.cache_cleanup_free_percent < self.cache_cleanup_target_percent <= 95:
+            raise ConfigError("deploy: cache cleanup percentages must satisfy 1 <= free < target <= 95")
 
     @classmethod
     def from_section(cls, s: dict[str, Any]) -> "DeployConfig":
@@ -214,6 +238,10 @@ class DeployConfig:
         return cls(
             enabled=_as_bool(s, "enabled", True),
             allowed_roots=[_expand(str(r)) for r in raw_roots],
+            cache_cleanup_enabled=_as_bool(s, "cache_cleanup_enabled", True),
+            cache_cleanup_free_percent=_as_int(s, "cache_cleanup_free_percent", 15),
+            cache_cleanup_target_percent=_as_int(s, "cache_cleanup_target_percent", 20),
+            cache_cleanup_interval_s=_as_int(s, "cache_cleanup_interval_s", 60, minimum=10),
             models_root=_expand(
                 _as_str(s, "models_root", str(Path.home() / "halogen/models"))
             ),

@@ -99,7 +99,7 @@
 
 <div class="section-head"><h2 data-i18n="installed_models">Installed models</h2><button id="deployRefresh" data-i18n="refresh_models">Refresh</button></div>      <div id="deployList"><p>–</p></div>
       <div id="quickDeploy" class="quick-deploy" hidden>
-        <h2 data-i18n="quick_title">Install a model</h2><label for="quickModel" class="muted" data-i18n="choose_model">Model to install</label><select id="quickModel"><option value="official" data-i18n="model_official">Official model</option><option value="uncensored" data-i18n="model_uncensored">Uncensored model</option><option value="swift15">Swift 1.5</option><option value="swift15-abliterated">Swift 1.5 Abliterated</option></select>
+        <h2 data-i18n="quick_title">Install a model</h2><label for="quickModel" class="muted" data-i18n="choose_model">Model to install</label><select id="quickModel"><option value="official" data-i18n="model_official">Official model</option><option value="uncensored" data-i18n="model_uncensored">Uncensored model</option><option value="swift15">Swift 1.5</option><option value="swift15-abliterated">Swift 1.5 Abliterated</option><option value="cyber-frost">CYBER-FROST 3.8</option></select>
         <div class="deploy-fields">
           <label id="quickTokenField" hidden><span data-i18n="hf_token">HF token — READ only required</span><input id="quickHfToken" type="password" autocomplete="off" autocapitalize="off"></label>
         </div>
@@ -110,16 +110,21 @@
           <button type="button" id="quickSwiftBtn" class="primary" hidden disabled data-i18n="quick_swift">Install Swift model</button>
         </div>
         <div id="swiftPlan" class="shared-plan" role="status" hidden></div>
+        <div id="cyberTemplateNotice" hidden>
+          <p class="warning" data-i18n="cyber_template_note">This model always thinks. Its own sidecars and tokenizer are required.</p>
+          <label class="chk"><input id="acceptForcedThinking" type="checkbox"><span data-i18n="cyber_template_accept">Allow this model's template with forced thinking.</span></label>
+        </div>
         <p id="quickNote" class="muted" data-i18n="quick_note">Official downloads its checkpoint on first start. Uncensored downloads and converts the GGUF. Tokenizer, vision and N-Gram files are shared by all profiles.</p>
       </div>
 
       <details id="npuSetup" class="quick-deploy"><summary data-i18n="npu_title">NPU models alongside your GPU model</summary>
         <p class="explanation" data-i18n="npu_hint">Choose the tasks to run on the NPU. Requires Halogen 0.16.2 or newer and host NPU setup.</p>
         <p id="npuHost" role="status"></p>
-        <details><summary data-i18n="npu_host_setup">Host setup &amp; diagnostics</summary><div class="detail-body">
+        <details id="npuHostSetup"><summary data-i18n="npu_host_setup">Host setup &amp; diagnostics</summary><div class="detail-body">
           <p data-i18n="npu_host_hint">Install the NPU driver, firmware and matching XRT plugin. Enable IOMMU and hold the GPU fabric clock with the host service.</p>
           <pre id="npuHostCommands" class="deploy-diff"></pre>
-          <p><code>halobridge npu-check</code> · <a href="https://github.com/peonist-ai/halogen-flash-server/blob/v0.16.2/docs/NPU.md" target="_blank" rel="noopener noreferrer" data-i18n="npu_docs">Upstream setup instructions</a></p>
+          <p data-i18n="npu_host_admin">Host drivers, firmware and XRT require administrator setup. Remove disabled IOMMU boot options and reboot before activation.</p>
+          <p><code>halobridge npu-check</code> · <a href="https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.2/docs/NPU.md" target="_blank" rel="noopener noreferrer" data-i18n="npu_docs">Upstream setup instructions</a></p>
         </div></details>
         <fieldset><legend data-i18n="npu_select_models">NPU tasks</legend><div id="npuModelChoices" class="deploy-fields"></div></fieldset>
         <div class="deploy-fields">
@@ -127,7 +132,8 @@
           <label><span data-i18n="npu_custom">Custom fine-tunes (comma-separated /models directories)</span><input id="npuCustom" type="text" placeholder="/models/my-guard"></label>
         </div>
         <p class="muted" data-i18n="npu_shared_hint">Files are shared across profiles and prepared before restarting. The previous version stays available for rollback.</p>
-        <div class="deploy-actions"><button id="npuPlanBtn" data-i18n="npu_preview">Preview downloads</button><button id="npuInstallBtn" class="primary" disabled data-i18n="npu_apply">Apply NPU selection</button></div>
+        <div class="deploy-actions"><button id="npuPlanBtn" data-i18n="npu_preview">Preview downloads</button><button id="npuDownloadBtn" disabled data-i18n="npu_download">Download files only</button><button id="npuInstallBtn" class="primary" disabled data-i18n="npu_apply">Download &amp; activate</button></div>
+        <p id="npuActionHint" class="muted" role="status"></p>
         <div id="npuPlan" class="shared-plan" role="status" hidden></div>
         <p id="npuError" class="failure" role="alert" hidden></p>
       </details>
@@ -138,6 +144,7 @@
           <option value="uncensored" data-i18n="deploy_tpl_uncensored">Uncensored (OrcaRouter IQ4_XS)</option>
           <option value="swift15-quick">Swift 1.5</option>
           <option value="swift15-abliterated-quick">Swift 1.5 Abliterated</option>
+          <option value="cyber-frost-quick">CYBER-FROST 3.8</option>
           <option value="custom" data-i18n="deploy_tpl_custom">Custom model (GGUF or .hgn files)</option>
         </select>
         <button type="button" id="deployLoadTemplate" data-i18n="deploy_load_template">Edit template</button>
@@ -195,6 +202,7 @@
       <p class="list-title" data-i18n="system_title">System · current state</p>
       <dl class="detail-grid"><div><dt data-i18n="label_ram">RAM</dt><dd id="ram">–</dd></div><div><dt data-i18n="label_gpu">GPU</dt><dd id="gpu">–</dd></div><div><dt data-i18n="label_pool">KV pool</dt><dd id="pool">–</dd></div><div><dt data-i18n="label_disk">Disk</dt><dd id="disk">–</dd></div></dl>
       <dl class="detail-grid"><div><dt data-i18n="label_context">Context / Slots</dt><dd id="context">–</dd></div><div><dt data-i18n="label_max_tokens">Output default / cap</dt><dd id="maxTokens">–</dd></div><div><dt data-i18n="label_reasoning">Reasoning default</dt><dd id="reasoning">–</dd></div><div><dt data-i18n="label_version">Version</dt><dd id="version">–</dd></div></dl>
+      <p id="admissionStatus" class="explanation" hidden></p>
       <p class="list-title" id="engineCaption" data-i18n="engine_caption_static">Engine · selected period</p>
       <dl class="detail-grid"><div><dt data-i18n="label_engine_tps">Generation, weighted</dt><dd id="engineTps">–</dd></div><div><dt data-i18n="label_prefill">Prefill, weighted</dt><dd id="prefillTps">–</dd></div><div><dt data-i18n="label_mtp">MTP commit / round</dt><dd id="mtp">–</dd></div><div><dt data-i18n="label_pld">PLD acceptance / round</dt><dd id="pld">–</dd></div></dl>
       <p class="explanation" data-i18n="engine_explanation">Engine measurements come from local completion logs. They may also include direct backend calls and are independent of the router requests above.</p>
