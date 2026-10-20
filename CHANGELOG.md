@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.32
+
+- Preserve active backend model metadata and context limits.
+- Fix Terminal Bench context discovery with manual services.
+
 ## 0.1.31
 
 - Support Halogen 0.18.11 and new NPU models.

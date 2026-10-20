@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.31 supports Halogen 0.18.11. Install the Halobridge update, then
+Halobridge 0.1.32 supports Halogen 0.18.11. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -36,6 +36,27 @@ A request for another installed GPU profile switches the GPU backend.
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
 0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, and ASR needs 0.18.0+. Use 0.18.11 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
+
+## Model metadata and benchmark discovery
+
+`GET /v1/models` preserves the active GPU backend's model metadata, including
+its context limit (`meta.n_ctx`, `n_ctx`, `context_length` or `max_model_len`,
+as reported by the engine). This also works with `models.auto_discover = false`
+and an explicit `manual.service`; no Quadlet or deployment support is needed.
+Inactive GPU profiles remain listed, but do not inherit the active model's limits.
+An unavailable backend leaves the configured IDs discoverable without inventing
+a context length.
+
+To verify the active model's metadata and run the Terminal Bench doctor:
+
+```bash
+curl --fail-with-body -sS http://127.0.0.1:8831/v1/models | python3 -m json.tool
+curl --fail-with-body -sS http://127.0.0.1:8731/v1/models | python3 -m json.tool
+./terminal_bench.py doctor --endpoint http://127.0.0.1:8731/v1 --model halogen-qwen3.8-flash-next
+```
+
+Use your actual model ID and configured backend port. `--model` selects the
+benchmark target when Halobridge advertises multiple GPU or NPU models.
 
 ## System One: classify a ticket and estimate urgency
 
