@@ -788,7 +788,7 @@ async def multipart_model(request, body):
                 model = value.decode("utf-8")
         return model
     except (ValueError, AssertionError, UnicodeError) as exc:
-        raise web.HTTPBadRequest(text="Invalid audio multipart body") from exc
+        raise web.HTTPBadRequest(text="Invalid multipart body") from exc
 
 
 async def proxy_request(request: web.Request) -> web.StreamResponse:

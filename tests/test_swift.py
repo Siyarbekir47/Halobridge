@@ -135,7 +135,7 @@ class SwiftFilesTests(unittest.IsolatedAsyncioTestCase):
         originals = {p: p.read_bytes() for p in (official, swift)}
         self.downloads.clear()
         plan = self.deploy.swift_plan("cyber-frost")
-        self.assertEqual(plan["engine_version"], "0.18.11")
+        self.assertEqual(plan["engine_version"], "0.18.13")
         self.assertEqual(plan["minimum_engine_version"], "0.17.5")
         self.assertTrue(plan["template_unchecked"])
         self.assertTrue(all(f["source_path"] is None for f in plan["files"]))
@@ -626,7 +626,7 @@ class SwiftCatalogTests(unittest.TestCase):
         for variant in swift_catalog.SWIFT_VARIANTS:
             profile = swift_quick_template(variant, Path("/models-root"), Path("/cache-root"), assets.locations(variant))
             self.assertEqual(validate_profile(profile), [])
-            self.assertTrue(profile.image.endswith(":0.18.11"))
+            self.assertTrue(profile.image.endswith(":0.18.13"))
             self.assertEqual(profile.env["HALOGEN_KV_POOL_POSITIONS"], "262144")
             self.assertEqual(profile.env["HALOGEN_WEIGHTS_LOCK"], "1")
             self.assertNotIn("HALOGEN_DOWNLOAD", profile.env)

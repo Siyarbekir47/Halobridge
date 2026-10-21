@@ -49,6 +49,22 @@ def fixture_manifest(program=b"new program"):
 
 
 class ManifestTests(unittest.TestCase):
+    def test_01812_and_01813_catalogs_match_the_official_images(self):
+        previous = bundled_manifest("0.18.11")
+        for version, digest in (
+            ("0.18.12", "a87f3dcde4eb6855461d90604c4d8b6020eb268d1c3397dc2024797f6e3d6807"),
+            ("0.18.13", "472aeca115d8eb1a2325e2030ceaa8644a89d7f8701bff28cc0ebb3d0fd5d130"),
+        ):
+            with self.subTest(version=version):
+                current = bundled_manifest(version)
+                self.assertEqual(current.key, digest)
+                self.assertEqual(set(current.models), set(NPU_MODELS))
+                for model in NPU_MODELS:
+                    before = {(a.model, a.name): a.digest for a in previous.select([model])}
+                    after = {(a.model, a.name): a.digest for a in current.select([model])}
+                    self.assertNotEqual(before, after, model)
+                previous = current
+
     def test_01811_catalog_and_multimodal_decision_files(self):
         manifest = bundled_manifest("0.18.11")
         self.assertEqual(manifest.key, "aa9e38801e05da999feb46741df7d275b2ab1de3ab8851873d1dc650f6ba713b")
@@ -345,6 +361,9 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             payload = await request.json()
             self.received.append((request.path, payload))
             self.headers.append(dict(request.headers))
+            if payload.get("npu_unavailable"):
+                return web.json_response({"error": {"type": "engine_busy", "message": "NPU restarting"}},
+                                         status=503, headers={"Retry-After": "5"})
             if payload.get("hold"):
                 self.entered.set()
                 await self.hold.wait()
@@ -434,6 +453,36 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(image, self.audio_body)
             row = self.dashboard.db.execute("SELECT model FROM requests ORDER BY id DESC LIMIT 1").fetchone()
             self.assertEqual(row[0], "flux2-klein-4b")
+        self.manager.perform_switch.assert_not_awaited()
+
+    async def test_four_image_edit_preserves_every_image_and_model_after_uploads(self):
+        form = FormData(quote_fields=False)
+        images = [b"\x89PNG\r\n\x1a\nimage-" + bytes([index]) for index in range(4)]
+        for index, data in enumerate(images):
+            form.add_field("image" if index % 2 else "image[]", data,
+                           filename=f"source-{index}.png", content_type="image/png")
+        form.add_field("model", "flux2-klein-4b")
+        form.add_field("prompt", "Place the objects from image 2 to image 4 in image 1.")
+        response = await self.client.post("/v1/images/edits", data=form)
+        self.assertEqual(response.status, 200, await response.text())
+        await response.read()
+        offsets = [self.audio_body.index(data) for data in images]
+        self.assertEqual(offsets, sorted(offsets))
+        self.assertEqual(self.manager.current_model, "halogen-swift15")
+        self.assertEqual(self.manager.active_requests, 0)
+        self.manager.perform_switch.assert_not_awaited()
+
+    async def test_npu_restart_503_keeps_gpu_serving_and_npu_can_recover(self):
+        response = await self.client.post("/v1/chat/completions", json={"model": "qwen3.5-2b", "npu_unavailable": True})
+        self.assertEqual(response.status, 503)
+        self.assertEqual(response.headers["Retry-After"], "5")
+        await response.read()
+        self.assertEqual(self.manager.active_requests, 0)
+        for model in ("halogen-swift15", "qwen3.5-2b"):
+            response = await self.client.post("/v1/chat/completions", json={"model": model})
+            self.assertEqual(response.status, 200, await response.text())
+            await response.read()
+        self.assertEqual(self.manager.current_model, "halogen-swift15")
         self.manager.perform_switch.assert_not_awaited()
 
     async def test_d3_alias_and_picture_preserved_on_systemone(self):
@@ -716,6 +765,22 @@ class EngineUpdateTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(before.env, after.env)
             self.assertEqual(before.host_port, after.host_port)
         self.assertEqual(self.downloads, ["devices/u0.elf"])
+        self.assertEqual({p: p.read_bytes() for p in self.old_files}, self.old_files)
+
+    async def test_01813_update_prepares_npu_assets_and_preserves_gpu_settings(self):
+        self.updater.latest_version = "0.18.13"
+        self.updater._fetch_latest = AsyncMock(return_value="0.18.13")
+        with patch("test_updates.NEW", "0.18.13"):
+            await self.updater.start("0.18.13")
+            await self.updater.task
+        self.assertEqual(self.updater.job["phase"], "succeeded", self.updater.job)
+        self.assertEqual(self.downloads, ["devices/u0.elf"])
+        for path, original in self.originals.items():
+            before, after = parse_quadlet(original.decode()), parse_quadlet(path.read_text())
+            self.assertTrue(after.image.endswith(":0.18.13"))
+            self.assertEqual(before.env, after.env)
+            self.assertEqual(before.host_port, after.host_port)
+            self.assertIn(self.new.key, next(host for host, target, _ in after.volumes if target == "/models/npu"))
         self.assertEqual({p: p.read_bytes() for p in self.old_files}, self.old_files)
 
     async def test_failed_engine_activation_restores_old_npu_bindings_and_bytes(self):
