@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.32 supports Halogen 0.18.11. Install the Halobridge update, then
+Halobridge 0.1.33 supports Halogen 0.18.13. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -34,7 +34,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, and ASR needs 0.18.0+. Use 0.18.11 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, and ASR needs 0.18.0+. Use 0.18.13 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## Model metadata and benchmark discovery
@@ -122,7 +122,7 @@ request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.18.11 and select **one** speech model in
+Update the target GPU profiles to 0.18.13 and select **one** speech model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -143,7 +143,7 @@ text pass through unchanged. History records the loaded model, duration, status
 and response size; it stores neither audio nor transcript, and invents no token
 counts. Transcription queues with the other NPU work and keeps the GPU loaded.
 
-## Added through Halogen 0.18.11
+## Added through Halogen 0.18.13
 
 Enable the required models in NPU Setup first. Existing API authentication still
 applies to every example. Flash checkpoints do not need replacing.
@@ -177,18 +177,25 @@ curl --fail-with-body -sS localhost:8731/v1/embeddings \
 
 EmbeddingGemma image inputs use `image_url` parts with inline base64, and audio
 inputs use `input_audio` parts with `data` and `format:"wav"`; see the
-[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/docs/NPU.md).
+[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.13/docs/NPU.md).
 
 ### Image edits and variations
 
-Both multipart routes use `flux2-klein-4b`, preserve the active GPU model and
-return a 512x512 image. Edits also accept generation sizes on 0.18.9+ but still
-return 512x512; check the response's `size`. Disable both routes with
-`HALOGEN_NPU_IMAGE_EDITS=0` if desired.
+Both multipart routes use `flux2-klein-4b` and preserve the active GPU model.
+On 0.18.12+, edits accept one to four repeated `image` or `image[]` fields,
+up to 25 MiB per picture. Refer to them as image 1 through image 4 in upload
+order. A single-image edit can return 1024x1024 with `size=1024x1024`; edits
+with multiple images return 512x512. Variations still accept exactly one image
+and return 512x512. Check the response's `size` for the output dimensions.
+Disable both routes with `HALOGEN_NPU_IMAGE_EDITS=0` if desired.
 
 ```bash
 curl --fail-with-body -sS localhost:8731/v1/images/edits \
-  -F model=flux2-klein-4b -F image=@source.png -F 'prompt=Make the sky orange'
+  -F model=flux2-klein-4b -F image=@source.png -F 'prompt=Make the sky orange' \
+  -F size=1024x1024
+curl --fail-with-body -sS localhost:8731/v1/images/edits \
+  -F model=flux2-klein-4b -F image=@scene.png -F image=@object.png \
+  -F 'prompt=Place the object from image 2 in the scene from image 1'
 curl --fail-with-body -sS localhost:8731/v1/images/variations \
   -F model=flux2-klein-4b -F image=@source.png
 ```
@@ -449,9 +456,43 @@ speculate together automatically. Faster decode and prompt processing, improved
 disk-prefix cache reuse, streamed tool-call cleanup and schema/tool fixes work
 without a new endpoint. Late system/developer turns in Chat Completions are
 treated as user text at their position; images in those late turns are refused.
-GPU checkpoints remain unchanged from 0.16.2 through 0.18.11. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
+GPU checkpoints remain unchanged from 0.16.2 through 0.18.13. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
+
+### Streaming during long prompts and NPU recovery (0.18.13)
+
+These improvements use the existing endpoints. Empty profile-editor fields
+inherit these engine defaults:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `HALOGEN_ADMIT_SPLICE_MS` | `500` | Keep streaming replies moving while reading another long prompt; `0` disables it. |
+| `HALOGEN_ADMIT_SPLICE_FOR` | `all` | Apply to every stream; `h` limits it to human turns. |
+| `HALOGEN_ADMIT_NEST` | `1` | Start a short text prompt during another request's prefill; `0` disables it. |
+| `HALOGEN_ADMIT_NEST_MAX` | `1024` | Maximum new, uncached tokens for nested admission; `0` disables it. |
+| `HALOGEN_CACHE_STAGE` | `2` | Use a 64 MiB pinned staging buffer for cache copies; `0` restores legacy copies. |
+| `HALOGEN_NPU_RESTARTS` | `3` | Restart a faulted NPU engine while Flash keeps serving; `0` disables restarts. |
+
+Nested admission does not apply to images or composable context. It reserves
+about 0.33 GiB of pinned host memory and 32 MiB of GPU memory. NPU restarts back
+off for 5, 10 and 15 seconds by default; the retry budget resets after ten
+minutes of stable operation. Clients should handle temporary 503 responses.
+
+The 0.18.12 and 0.18.13 NPU catalogs contain refreshed assets. The engine updater
+prepares and verifies the selected models in a new shared tree before stopping
+the active backend, and retains the previous tree for rollback.
+
+On supported hosts, `GET /metrics` includes
+`halogen:gpu_queues_evicted_seconds_total`: cumulative time the kernel evicted
+GPU queues while moving mapped memory. A rising counter during slow requests
+points to compaction or reclaim stalls. The engine's request log also reports
+`evicted_ms` for this delay. Query through the router with:
+
+```bash
+curl --fail-with-body -sS localhost:8731/metrics \
+  | grep 'halogen:gpu_queues_evicted_seconds_total'
+```
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.13/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.13/CHANGELOG.md).

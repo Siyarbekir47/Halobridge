@@ -853,6 +853,7 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_NPU_EMB_BATCH', 'select:0,1', 'deploy_f_npu_batch'],
   ['HALOGEN_NPU_VERIFY', 'select:0,1', 'deploy_f_npu_verify'],
   ['HALOGEN_NPU_STALL_S', 'number', 'deploy_f_npu_stall'],
+  ['HALOGEN_NPU_RESTARTS', 'number', 'deploy_f_npu_restarts'],
   ['HALOGEN_NPU_DEC_RESUME', 'select:0,1,2', 'deploy_f_npu_dec_resume'],
   ['HALOGEN_NPU_DEC_ENTRIES', 'number', 'deploy_f_npu_dec_entries'],
   ['HALOGEN_NPU_IMAGE_EDITS', 'select:0,1', 'deploy_f_npu_image_edits'],
@@ -872,6 +873,10 @@ const ENGINE_ENV_FIELDS = [
   ['HALOGEN_PLE_PAR', 'select:0,1', 'deploy_f_ple_par'],
   ['HALOGEN_MTP_DEPTH', 'number', 'deploy_f_mtp_depth'],
   ['HALOGEN_ADMIT_TICKS', 'number', 'deploy_f_admit_ticks'],
+  ['HALOGEN_ADMIT_SPLICE_MS', 'number', 'deploy_f_admit_splice_ms'],
+  ['HALOGEN_ADMIT_SPLICE_FOR', 'select:all,h', 'deploy_f_admit_splice_for'],
+  ['HALOGEN_ADMIT_NEST', 'select:0,1', 'deploy_f_admit_nest'],
+  ['HALOGEN_ADMIT_NEST_MAX', 'number', 'deploy_f_admit_nest_max'],
   ['HALOGEN_PREFILL_KEEP_TRUNK', 'select:0,1', 'deploy_f_keep_trunk'],
   ['HALOGEN_REPETITION_PENALTY', 'number', 'deploy_f_repetition_penalty'],
   ['HALOGEN_TEMPLATE_UNCHECKED', 'select:0,1', 'deploy_f_template_unchecked'],
@@ -893,7 +898,8 @@ const ENGINE_ENV_FIELDS = [
   ['HALOGEN_SAMPLED_DEPTH', 'number', 'deploy_f_sampled_depth'],
   ['HALOGEN_SAMPLED_GATE', 'text', 'deploy_f_sampled_gate'],
   ['HALOGEN_CACHE_LEAD', 'select:0,1', 'deploy_f_cache_lead'],
-  ['HALOGEN_SPEC_GROUP', 'select:0,1', 'deploy_f_spec_group'],
+  ['HALOGEN_CACHE_STAGE', 'select:0,2', 'deploy_f_cache_stage'],
+  ['HALOGEN_SPEC_GROUP', 'select:0,1,2,3,4', 'deploy_f_spec_group'],
   ['HALOGEN_ACCESS_LOG', 'select:quiet,all,off', 'deploy_f_access_log'],
 ];
 const SESSION_ENV_FIELDS = [

@@ -45,8 +45,9 @@ MODEL_MIN_VERSION = {"flux2-klein-4b": (0, 17, 0),
                      "d3-lite": (0, 18, 11), "d3-nano": (0, 18, 11)}
 # The 0.18.1 image's catalog was verified byte-for-byte against 0.18.0.
 # Only explicitly verified versions share a bundle; later images are read locally.
+# The 0.18.12 and 0.18.13 bundles are distinct models.txt files from their GHCR images.
 BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0"}
-BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11"} | set(BUNDLED_CATALOG_ALIASES)
+BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13"} | set(BUNDLED_CATALOG_ALIASES)
 TASK_ROUTES = {
     "decision": "/v1/chat/completions", "generate": "/v1/chat/completions",
     "embedding": "/v1/embeddings", "score": "/v1/rerank",
@@ -60,7 +61,7 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 PATH_RE = re.compile(r"^/models/[A-Za-z0-9_./-]+$")
 REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 XRT_LIBS = ("libxrt_coreutil.so.2", "libxrt_core.so.2", "libxrt_driver_xdna.so.2")
-DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.11/docs/NPU.md"
+DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.13/docs/NPU.md"
 
 
 def parse_models(value: str) -> list[str]:

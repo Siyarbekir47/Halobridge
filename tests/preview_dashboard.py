@@ -10,11 +10,12 @@ from aiohttp import web
 from test_dashboard import database, insert
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from profiles import official_template, custom_template, swift_quick_template, profile_to_dict, ENV_FIELDS
+from profiles import DEFAULT_ENGINE_VERSION, official_template, custom_template, swift_quick_template, profile_to_dict, ENV_FIELDS
 from swift_catalog import SHARED_ASSETS, SWIFT_VARIANTS, variant_info, variant_assets, variant_engine
 from official_checkpoints import OFFICIAL_CHECKPOINTS
 from halogen_router import _login_response, _request_lang
 from npu import NPU_MODELS, TASK_ROUTES, bundled_manifest, parse_models
+from settings import app_version
 
 
 def create_preview():
@@ -31,7 +32,7 @@ def create_preview():
                 'api': {'active_model': 'qwen3.8-flash', 'status': 'ok'},
                 'backend': {'status': 'ok', 'in_flight': 0, 'queued': 0, 'context': 262144,
                             'slots': 4, 'max_tokens_default': 8192, 'max_tokens_cap': 65536,
-                            'reasoning_effort_default': 'xhigh', 'admission': {'reserve': 1, 'priority_in_flight': 1, 'waiting_for_reserve': 2}, 'version': {'api': '0.17.2', 'engine': '0.17.2'}},
+                            'reasoning_effort_default': 'xhigh', 'admission': {'reserve': 1, 'priority_in_flight': 1, 'waiting_for_reserve': 2}, 'version': {'api': DEFAULT_ENGINE_VERSION, 'engine': DEFAULT_ENGINE_VERSION}},
                 'system': {'gpu_busy_percent': 8, 'memory': {'used_bytes': 62*1024**3, 'total_bytes': 128*1024**3},
                            'disk_used_bytes': 420*1024**3, 'disk_total_bytes': 2000*1024**3},
                 'cache': {'pool': {'usage_ratio': .3}, 'model_bytes': {},
@@ -74,8 +75,8 @@ def create_preview():
                         'plan': {'files': files, 'filesystems': [{'path': '/home/demo/models', 'free_bytes': 200 * 2**30,
                                  'required_bytes': choice['asset'].size if key == 'ht43' else 0,
                                  'reserve_bytes': 5 * 2**30 if key == 'ht43' else 0}]}})
-    updates = {'current_version': '0.17.2', 'latest_version': '0.17.2', 'checked_at': time.time(),
-               'configured_versions': {'qwen3.8-flash': '0.17.2'}, 'up_to_date': True, 'running': False,
+    updates = {'current_version': DEFAULT_ENGINE_VERSION, 'latest_version': DEFAULT_ENGINE_VERSION, 'checked_at': time.time(),
+               'configured_versions': {'qwen3.8-flash': DEFAULT_ENGINE_VERSION}, 'up_to_date': True, 'running': False,
                'supported': True, 'support_error': None, 'checkpoint': {
                    'current': choices[0]['target'], 'target': choices[0]['target'], 'target_key': 'v2',
                    'label': 'v2', 'available': False, 'choices': choices}}
@@ -112,7 +113,7 @@ def create_preview():
     app.router.add_post('/dashboard/api/updates/check', update_status)
     app.router.add_post('/dashboard/api/updates/checkpoint', install_checkpoint)
     # The self-update interaction is simulated; no installation or restart occurs.
-    app_updates = {'current_version': '0.1.27', 'latest_version': '0.1.27',
+    app_updates = {'current_version': app_version(), 'latest_version': app_version(),
                    'checked_at': time.time(), 'source_ref': 'develop',
                    'update_available': False, 'up_to_date': True, 'running': False,
                    'supported': True, 'can_install': False, 'job': None,
@@ -134,7 +135,7 @@ def create_preview():
         return web.json_response(app_updates)
     app.router.add_get('/dashboard/api/app-updates', app_update_status)
     app.router.add_post('/dashboard/api/app-updates/{action}', app_update_status)
-    profile = profile_to_dict(official_template('0.17.2', PurePosixPath('/home/demo/models'), PurePosixPath('/home/demo/cache')))
+    profile = profile_to_dict(official_template(DEFAULT_ENGINE_VERSION, PurePosixPath('/home/demo/models'), PurePosixPath('/home/demo/cache')))
     profile['env'].update(HALOGEN_CACHE_EVICT='0', HALOGEN_NPU_EMB_BATCH='0', HALOGEN_NPU_VERIFY='1')
     profile['volumes'].append(['/opt/xilinx/xrt', '/opt/xilinx/xrt', 'ro'])
     npu_ready = True
@@ -153,7 +154,7 @@ def create_preview():
             'profiles': [{'id': 'official', 'image': profile['image'], 'models': profile['env'].get('HALOGEN_NPU_MODELS', '')}]})
     async def npu_plan(request):
         models = parse_models(request.query['models']) if request.query.get('models') else []
-        manifest = bundled_manifest()
+        manifest = bundled_manifest(DEFAULT_ENGINE_VERSION)
         files = [{'name': asset.model + '/' + asset.name,
                   'path': '/home/demo/models/shared/halogen-npu/' + manifest.key + '/' + asset.model + '/' + asset.name,
                   'size': asset.size, 'status': 'download', 'download_bytes': asset.size,
@@ -186,7 +187,7 @@ def create_preview():
             p.volumes = [(host.replace('\\', '/'), container, mode) for host, container, mode in p.volumes]
             return web.json_response({'profile': profile_to_dict(p)})
         factory = custom_template if request.match_info['kind'] == 'custom' else official_template
-        p = factory('0.13.2', PurePosixPath('/home/demo/models'), PurePosixPath('/home/demo/cache'))
+        p = factory(DEFAULT_ENGINE_VERSION, PurePosixPath('/home/demo/models'), PurePosixPath('/home/demo/cache'))
         return web.json_response({'profile': profile_to_dict(p)})
     async def hf(request):
         return web.json_response({'installed': True, 'default_repo': 'demo/model', 'default_file': 'model.gguf'})

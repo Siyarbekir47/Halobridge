@@ -1,0 +1,2 @@
+# Keep verified upstream NPU catalogs byte-identical on every checkout.
+src/halobridge_data/npu/models-*.txt text eol=lf

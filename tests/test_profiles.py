@@ -167,6 +167,41 @@ class RenderImportTests(unittest.TestCase):
 
 
 class TemplateTests(unittest.TestCase):
+    def test_01813_admission_cache_and_restart_controls_round_trip(self):
+        profile = official_template("0.18.13", Path("/host/models"), Path("/host/cache"))
+        profile.env.update(HALOGEN_ADMIT_SPLICE_MS="500", HALOGEN_ADMIT_SPLICE_FOR="all",
+                           HALOGEN_ADMIT_NEST="1", HALOGEN_ADMIT_NEST_MAX="1024",
+                           HALOGEN_CACHE_STAGE="2", HALOGEN_NPU_RESTARTS="3", HALOGEN_SPEC_GROUP="4")
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(parse_quadlet(render_quadlet(profile)).env, profile.env)
+        self.assert_common_runtime_env(profile)
+
+    def test_new_controls_require_their_engine_version(self):
+        for name, value, old, supported in (
+            ("HALOGEN_ADMIT_SPLICE_MS", "0", "0.18.11", "0.18.12"),
+            ("HALOGEN_ADMIT_SPLICE_FOR", "h", "0.18.11", "0.18.12"),
+            ("HALOGEN_CACHE_STAGE", "0", "0.18.11", "0.18.12"),
+            ("HALOGEN_ADMIT_NEST", "0", "0.18.12", "0.18.13"),
+            ("HALOGEN_ADMIT_NEST_MAX", "0", "0.18.12", "0.18.13"),
+            ("HALOGEN_NPU_RESTARTS", "0", "0.18.12", "0.18.13"),
+        ):
+            with self.subTest(name=name):
+                profile = official_template(old, Path("/host/models"), Path("/host/cache"))
+                profile.env[name] = value
+                self.assertTrue(any(f"{name}: requires Halogen {supported}" in e for e in validate_profile(profile)))
+                profile.image = profile.image.rsplit(":", 1)[0] + ":" + supported
+                self.assertEqual(validate_profile(profile), [])
+
+    def test_new_controls_reject_invalid_values(self):
+        for name, value in (("HALOGEN_ADMIT_SPLICE_MS", "-1"), ("HALOGEN_ADMIT_SPLICE_MS", "1.5"),
+                            ("HALOGEN_ADMIT_SPLICE_FOR", "agents"), ("HALOGEN_ADMIT_NEST", "2"),
+                            ("HALOGEN_ADMIT_NEST_MAX", "-1"), ("HALOGEN_NPU_RESTARTS", "-1"),
+                            ("HALOGEN_CACHE_STAGE", "1"), ("HALOGEN_SPEC_GROUP", "5")):
+            with self.subTest(name=name, value=value):
+                profile = official_template("0.18.13", Path("/host/models"), Path("/host/cache"))
+                profile.env[name] = value
+                self.assertTrue(any(name in e for e in validate_profile(profile)))
+
     def test_01811_controls_and_incompatible_kv_modes(self):
         profile = official_template("0.18.11", Path("/host/models"), Path("/host/cache"))
         profile.env.update(HALOGEN_KV8="1", HALOGEN_CACHE_LEAD="1", HALOGEN_SPEC_GROUP="1",
