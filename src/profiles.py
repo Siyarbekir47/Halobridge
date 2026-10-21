@@ -55,6 +55,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_NPU_VERIFY": FieldSpec("flag"),
     "HALOGEN_NPU_PORT": FieldSpec("int", 1024, 65535),
     "HALOGEN_NPU_STALL_S": FieldSpec("float", 0, 86400),
+    "HALOGEN_NPU_RESTARTS": FieldSpec("int", 0, 65536),
     "HALOGEN_NPU_DEC_RESUME": FieldSpec("enum", choices=("0", "1", "2")),
     "HALOGEN_NPU_DEC_ENTRIES": FieldSpec("int", 1, 1024),
     "HALOGEN_CACHE_EVICT": FieldSpec("flag"),
@@ -66,6 +67,10 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_PLE_PAR": FieldSpec("flag"),
     "HALOGEN_MTP_DEPTH": FieldSpec("int", 1, 63),
     "HALOGEN_ADMIT_TICKS": FieldSpec("int", 0, 65536),
+    "HALOGEN_ADMIT_SPLICE_MS": FieldSpec("int", 0, 86400000),
+    "HALOGEN_ADMIT_SPLICE_FOR": FieldSpec("enum", choices=("all", "h")),
+    "HALOGEN_ADMIT_NEST": FieldSpec("flag"),
+    "HALOGEN_ADMIT_NEST_MAX": FieldSpec("int", 0, 1_048_576),
     "HALOGEN_PREFILL_KEEP_TRUNK": FieldSpec("flag"),
     "HALOGEN_REPETITION_PENALTY": FieldSpec("float", 0.01, 100),
     "HALOGEN_CK_OVERLAY": FieldSpec("text"),
@@ -98,7 +103,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_SAMPLED_DEPTH": FieldSpec("int", 1, 63),
     "HALOGEN_SAMPLED_GATE": FieldSpec("probabilities"),
     "HALOGEN_CACHE_LEAD": FieldSpec("flag"),
-    "HALOGEN_SPEC_GROUP": FieldSpec("flag"),
+    "HALOGEN_SPEC_GROUP": FieldSpec("int", 0, 4),
     "HALOGEN_ACCESS_LOG": FieldSpec("enum", choices=("quiet", "all", "off")),
     "HALOGEN_FORK_AUTO_KEEPS": FieldSpec("int", 0, 65536),
     "HALOGEN_GUARD_STREAMS": FieldSpec("int", 1, 65536),
@@ -142,6 +147,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_CACHE_SNAP3": FieldSpec("flag"),
     "HALOGEN_CACHE_FULL": FieldSpec("flag"),
     "HALOGEN_CACHE_INPLACE": FieldSpec("flag"),
+    "HALOGEN_CACHE_STAGE": FieldSpec("enum", choices=("0", "2")),
     "HALOGEN_CACHE_DIR": FieldSpec("path"),
     "HALOGEN_CACHE_DISK_GIB": FieldSpec("int", 0, 100_000),
     "HALOGEN_CACHE_PRUNE_OLD": FieldSpec("flag"),
@@ -161,6 +167,8 @@ FEATURE_MIN_VERSION = {
     **{key: (0, 18, 6) for key in ("HALOGEN_CHAT_TEMPLATE", "HALOGEN_SAMPLED_DEPTH", "HALOGEN_SAMPLED_GATE")},
     "HALOGEN_CACHE_LEAD": (0, 18, 8), "HALOGEN_KV8": (0, 18, 9),
     "HALOGEN_SPEC_GROUP": (0, 18, 11), "HALOGEN_ACCESS_LOG": (0, 18, 11),
+    **{key: (0, 18, 12) for key in ("HALOGEN_ADMIT_SPLICE_MS", "HALOGEN_ADMIT_SPLICE_FOR", "HALOGEN_CACHE_STAGE")},
+    **{key: (0, 18, 13) for key in ("HALOGEN_ADMIT_NEST", "HALOGEN_ADMIT_NEST_MAX", "HALOGEN_NPU_RESTARTS")},
     **{key: (0, 18, 2) for key in ("HALOGEN_NPU_DEC_RESUME", "HALOGEN_NPU_DEC_ENTRIES",
                                   "HALOGEN_STRICT_TOOLS", "HALOGEN_CLIENT_MARKERS")},
 }
@@ -446,7 +454,7 @@ def profile_to_dict(profile: Profile) -> dict:
 
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
-DEFAULT_ENGINE_VERSION = "0.18.11"
+DEFAULT_ENGINE_VERSION = "0.18.13"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"

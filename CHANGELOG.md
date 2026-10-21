@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.33
+
+- Support Halogen 0.18.13 and refreshed, verified NPU assets.
+- Expose streaming admission, cache staging and NPU restart controls.
+- Support four-image edits and document GPU eviction metrics.
+- Preserve existing checkpoints, context limits and slots.
+
 ## 0.1.32
 
 - Preserve active backend model metadata and context limits.

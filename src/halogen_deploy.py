@@ -28,6 +28,7 @@ from aiohttp import web
 
 from discovery import discover
 from profiles import (
+    DEFAULT_ENGINE_VERSION,
     ENV_FIELDS,
     OFFICIAL_WEIGHTS_REPO,
     REPO_ID_RE,
@@ -1189,7 +1190,7 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             latest = getattr(self.updater, "latest_version", None)
             if latest:
                 return str(latest)
-        return "0.18.11"
+        return DEFAULT_ENGINE_VERSION
 
     async def _any_other_service_active(self, profile_id: str) -> bool:
         if not self.quadlet_dir.is_dir():
