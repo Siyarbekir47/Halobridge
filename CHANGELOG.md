@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.34
+
+- Support Halogen 0.18.14 and verified NPU TTS assets.
+- Add an API Playground with examples, uploads, streaming and timings.
+- Play and download generated speech and images in the dashboard.
+- Expose NPU interleaving and prompt-cache pool growth controls.
+
 ## 0.1.33
 
 - Support Halogen 0.18.13 and refreshed, verified NPU assets.
