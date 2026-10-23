@@ -254,9 +254,10 @@ auto_discover = false
 
 ## Dashboard
 
-The dashboard is organized into four workspaces: **Overview** for usage and
+The dashboard is organized into five workspaces: **Overview** for usage and
 breakdowns, **Requests** for paginated history and request details, **Models**
-for profiles, installation and model files, and **System** for host health,
+for profiles, installation and model files, **API Playground** for endpoint tests,
+and **System** for host health,
 updates and telemetry maintenance. The active model and connection status stay
 visible across workspaces. Monitoring views share the selected reporting period.
 
@@ -386,7 +387,7 @@ config, processor files, conversion manifest and license live in
 plus the installer's 5 GiB free-space reserve. Repeated setup reuses verified
 files and preserves runtime changes.
 
-New CYBER-FROST templates use **Halogen 0.18.13** (minimum 0.17.5), **262144 context/KV pool**,
+New CYBER-FROST templates use **Halogen 0.18.14** (minimum 0.17.5), **262144 context/KV pool**,
 **two slots**, and the same generation defaults as Swift Abliterated. Its model
 card only exercised 32768 context and one slot; the larger configuration still
 needs a smoke test on the target host. No NPU models are enabled by default.
@@ -611,14 +612,40 @@ You can keep the dashboard but disable installation:
 allow_install = false
 ```
 
-## Halogen 0.18.13 support
+## API Playground
 
-New templates use Halogen 0.18.13. Existing profiles keep their settings until
+The **API Playground** tab tests the public inference and inspection endpoints
+through this router. Choose an example and a model, enter text or upload files,
+then press **Send request**. It includes chat, images/vision, tools, structured
+JSON, Responses, Messages, decisions, embeddings, reranking, moderation,
+transcription, text to speech, metrics, tokenizer and session routes.
+
+Responses show total duration, first-byte time, streamed text, HTTP errors and
+raw response headers. Images and WAV audio can be previewed and downloaded;
+streamed PCM can be downloaded as-is or played as WAV after completion. **Stop**
+aborts the request and keeps partial text. The advanced section exposes editable
+request JSON, Halogen headers and an optional backend API key.
+
+Nothing generates automatically. Inputs, uploads and keys are not saved in browser
+storage. Requests use the normal router and history; selecting another GPU profile
+can trigger a model switch. NPU models must first be installed and activated in
+**Models**. See [endpoint examples and prerequisites](docs/API.md).
+
+## Halogen 0.18.14 support
+
+New templates use Halogen 0.18.14. Existing profiles keep their settings until
 you update their engine in **System → Engine updates**. Flash checkpoints,
 context limits and slot counts are unchanged. NPU file updates use the selected
-image's verified catalog; shared files are reused. The 0.18.12 and 0.18.13 images
-each require refreshed NPU files. Halobridge downloads and verifies the selected
+image's verified catalog; shared files are reused. The 0.18.12–0.18.14 images
+have distinct NPU catalogs. Halobridge downloads and verifies the selected
 models before restarting, retaining the previous files for rollback.
+
+0.18.14 adds `qwen3-tts-0.6b-customvoice` and `qwen3-tts-1.7b-customvoice`
+on `/v1/audio/speech`. Select one TTS model in NPU Setup; one ASR model can remain
+enabled alongside it. The Playground provides voices, language, speaking style
+(1.7B only), audio playback and downloads. The profile editor also exposes
+`HALOGEN_NPU_SPLICE` (short NPU jobs between generation steps, opt-in) and
+`HALOGEN_POOL_GROW` (allow longer answers to reclaim idle cache, enabled by default).
 
 Streaming replies now continue during long prompt processing, and short prompts
 can start alongside it. Empty profile fields inherit the engine's new defaults:
@@ -694,8 +721,8 @@ The profile editor also exposes session limits, request records, backend API key
 
 Halobridge supports the new NPU image and System One routes, priority admission,
 and the engine's new cache, schema and decode settings. Update Halobridge, then
-use **System → Engine updates** to update the backend profiles to **0.18.13**.
-New Official, Orca, Swift and CYBER-FROST templates use 0.18.13; existing settings and engine versions are preserved during model repair.
+use **System → Engine updates** to update the backend profiles to **0.18.14**.
+New Official, Orca, Swift and CYBER-FROST templates use 0.18.14; existing settings and engine versions are preserved during model repair.
 
 The GPU checkpoints are unchanged from 0.16.2. The engine update brings faster
 decode and long-prompt processing, speculative decoding for two conversations,
@@ -706,11 +733,11 @@ Leave `HALOGEN_MTP_DEPTH` empty for the engine's adaptive depth; an explicit
 value continues to fix the depth.
 
 See the [endpoint guide](docs/API.md) for use cases, prerequisites and runnable
-examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.13/CHANGELOG.md)
+examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.14/CHANGELOG.md)
 for the engine changes. The upstream Compose recipe is an alternative deployment;
 Halobridge's managed setup continues to use Podman Quadlets.
 
-## NPU models with Halogen 0.18.13
+## NPU models with Halogen 0.18.14
 
 The GPU model and the selected NPU models run together behind Halobridge's
 existing port. Requests select an NPU model by its `model` ID; they do not
@@ -733,9 +760,9 @@ loaded by the currently active backend.
 
 ### Host preparation
 
-1. Update the selected backend profiles to **Halogen 0.18.13** using
+1. Update the selected backend profiles to **Halogen 0.18.14** using
    the dashboard's engine updater. Your GPU checkpoint remains selected.
-2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.13/docs/NPU.md#host)
+2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.14/docs/NPU.md#host)
    for the Linux `amdxdna` driver, firmware, XRT and its NPU plugin. The service
    user needs access to `/dev/accel/accel0`. Enable IOMMU; `amd_iommu=off` and
    `iommu=off` are incompatible, while `iommu=pt` is supported.
@@ -865,7 +892,7 @@ moderation accept up to 4096. The decision limit is 4096 on earlier engines. `qw
 option without sampling. Moderation reports labels and probabilities rather
 than meaningful OpenAI category scores. NPU and GPU work share the chip's
 memory bandwidth and power budget. See the
-[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.13/docs/NPU.md)
+[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.14/docs/NPU.md)
 for supported request options.
 
 ### Own NPU fine-tunes and advanced flags

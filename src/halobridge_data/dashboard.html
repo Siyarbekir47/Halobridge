@@ -17,12 +17,13 @@
     <a href="#overview" data-view="overview"><span aria-hidden="true">◫</span><span data-i18n="nav_overview">Overview</span></a>
     <a href="#requests" data-view="requests"><span aria-hidden="true">≡</span><span data-i18n="nav_requests">Requests</span></a>
     <a href="#models" data-view="models"><span aria-hidden="true">▱</span><span data-i18n="nav_models">Models</span></a>
+    <a href="#playground" data-view="playground"><span aria-hidden="true">⌘</span><span data-i18n="nav_playground">API Playground</span></a>
     <a href="#system" data-view="system"><span aria-hidden="true">⚙</span><span data-i18n="nav_system">System</span><span id="systemAttention" class="attention" hidden>!</span></a>
   </nav>
   <div class="sidebar-bottom">
     <div class="sidebar-preference"><label for="themeSelect" data-i18n="theme_label">Appearance</label><select id="themeSelect" aria-label="Appearance" data-i18n-attr="aria-label:theme_label"><option value="system" data-i18n="theme_system">System</option><option value="light" data-i18n="theme_light">Light</option><option value="dark" data-i18n="theme_dark">Dark</option></select></div>
     <div class="sidebar-preference"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect" aria-label="Language" data-i18n-attr="aria-label:lang_label"><option value="en">English</option><option value="de">Deutsch</option></select></div>
-    <small>Halobridge <span id="appVersion">v0.1.24</span></small>
+    <small>Halobridge <span id="appVersion">v0.1.34</span></small>
   </div>
 </aside>
 <main class="shell" id="mainContent" tabindex="-1">
@@ -89,6 +90,45 @@
     <div class="pager"><span id="pageInfo">Page 1 of 1</span><button id="prevPage" disabled data-i18n="btn_prev">← Back</button><button id="nextPage" disabled data-i18n="btn_next">Next →</button></div>
   </section>
 
+</div><div id="view-playground" class="view" hidden>
+  <div class="playground-toolbar">
+    <label class="pg-endpoint"><span data-i18n="pg_endpoint">Endpoint / example</span><select id="pgEndpoint"></select></label>
+    <label><span data-i18n="pg_model">Model</span><input id="pgModel" list="pgModels" autocomplete="off" spellcheck="false"><datalist id="pgModels"></datalist></label>
+    <button id="pgRefresh" type="button" data-i18n="pg_refresh">Refresh models</button>
+  </div>
+  <p id="pgModelStatus" class="muted" role="status"></p>
+  <div class="pg-route"><code id="pgRoute"></code><span id="pgPurpose" class="muted"></span></div>
+  <p id="pgRequirement" class="notice"></p>
+  <div class="playground-workspace">
+    <form id="pgForm" class="pg-compose">
+      <label id="pgInputField"><span id="pgInputLabel" data-i18n="pg_input">Input</span><textarea id="pgInput" rows="6" spellcheck="false"></textarea></label>
+      <div id="pgSpeechFields" class="pg-fields" hidden>
+        <label><span data-i18n="pg_voice">Voice</span><select id="pgVoice"><option>aiden</option><option>dylan</option><option>eric</option><option>ono_anna</option><option selected>ryan</option><option>serena</option><option>sohee</option><option>uncle_fu</option><option>vivian</option></select></label>
+        <label><span data-i18n="pg_language">Language</span><select id="pgLanguage"><option>auto</option><option>chinese</option><option>english</option><option>french</option><option>german</option><option>italian</option><option>japanese</option><option>korean</option><option>portuguese</option><option>russian</option><option>spanish</option><option>beijing_dialect</option><option>sichuan_dialect</option></select></label>
+        <label class="pg-wide"><span data-i18n="pg_instructions">Speaking style (1.7B only)</span><input id="pgInstructions" autocomplete="off"></label>
+      </div>
+      <label id="pgSizeField" hidden><span data-i18n="pg_size">Image size</span><select id="pgSize"><option>512x512</option><option>1024x1024</option><option>256x256</option><option>768x768</option><option>768x512</option><option>512x768</option><option>1024x768</option><option>768x1024</option><option>1024x576</option><option>576x1024</option><option>640x512</option><option>512x640</option><option>896x512</option><option>512x896</option><option>1024x448</option><option>448x1024</option><option>1024x512</option><option>512x1024</option><option>1024x640</option><option>640x1024</option></select></label>
+      <label id="pgFileField" hidden><span id="pgFileLabel" data-i18n="pg_files">Files</span><input id="pgFiles" type="file"><small id="pgFileHint" class="muted"></small></label>
+      <label id="pgHandleField" hidden><span data-i18n="pg_handle">Session name to release</span><input id="pgHandle" autocomplete="off" maxlength="128"></label>
+      <label id="pgConfirmField" class="chk" hidden><input id="pgConfirm" type="checkbox"><span data-i18n="pg_confirm_delete">Release this session's saved state.</span></label>
+      <label id="pgStreamField" class="chk"><input id="pgStream" type="checkbox"><span data-i18n="pg_stream">Stream response</span></label>
+      <details id="pgAdvanced"><summary data-i18n="pg_advanced">Request JSON &amp; headers</summary><div class="detail-body">
+        <label id="pgBodyField"><span data-i18n="pg_body">Request JSON (editable)</span><textarea id="pgBody" rows="12" spellcheck="false" aria-label="Request JSON" data-i18n-attr="aria-label:pg_body"></textarea></label>
+        <label><span data-i18n="pg_headers">Extra headers (JSON object)</span><textarea id="pgHeaders" rows="3" spellcheck="false">{}</textarea></label>
+        <label><span data-i18n="pg_key">Backend API key (optional; kept only in this tab)</span><input id="pgKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      </div></details>
+      <div class="pg-actions"><button id="pgSend" type="submit" class="primary" data-i18n="pg_send">Send request</button><button id="pgStop" type="button" hidden data-i18n="pg_stop">Stop</button><button id="pgReset" type="button" data-i18n="pg_reset">Reset example</button></div>
+      <p class="muted" data-i18n="pg_privacy">Requests use this router and appear in Requests. Inputs, files and the key stay in this tab; nothing runs automatically. Choosing another GPU model can switch the active backend.</p>
+    </form>
+    <section class="pg-result" aria-labelledby="pgResultTitle">
+      <div class="section-head"><h2 id="pgResultTitle" data-i18n="pg_result">Response</h2><button id="pgClear" type="button" data-i18n="pg_clear">Clear</button></div>
+      <div id="pgStatus" class="pg-status" role="status" aria-live="polite" data-i18n="pg_idle">Ready for your first request.</div>
+      <dl class="pg-timings"><div><dt data-i18n="pg_total">Total</dt><dd id="pgTotal">&ndash;</dd></div><div><dt data-i18n="pg_first_byte">First byte</dt><dd id="pgFirstByte">&ndash;</dd></div><div><dt data-i18n="pg_received">Received</dt><dd id="pgReceived">&ndash;</dd></div></dl>
+      <div id="pgMedia" class="pg-media"></div>
+      <pre id="pgAnswer" class="pg-answer" tabindex="0" hidden></pre>
+      <details id="pgRawDetails"><summary data-i18n="pg_raw">Raw response &amp; response headers</summary><pre id="pgResponseHeaders"></pre><pre id="pgRaw" tabindex="0"></pre></details>
+    </section>
+  </div>
 </div><div id="view-models" class="view" hidden>
   <div class="subnav" role="group" data-i18n-attr="aria-label:model_tools"><button id="profilesTab" aria-pressed="true" aria-controls="profilesPanel" data-i18n="profiles_tab">Profiles &amp; installation</button><button id="assetsTab" aria-pressed="false" aria-controls="assetsPanel" data-i18n="assets_tab">Model files</button></div>
   <p id="deployHint" class="muted">–</p>
@@ -278,4 +318,4 @@
       </div>
     </div></details></section></div><footer><span id="updated" data-i18n="footer_not_updated">Not updated yet</span><span data-i18n="footer_note">Recorded locally · 365-day retention</span></footer>
 <noscript><p class="notice">Enable JavaScript to use the dashboard.</p></noscript>
-</main><script src="/dashboard/assets/dashboard.js" defer></script></body></html>
+</main><script src="/dashboard/assets/playground.js" defer></script><script src="/dashboard/assets/dashboard.js" defer></script></body></html>

@@ -167,6 +167,19 @@ class RenderImportTests(unittest.TestCase):
 
 
 class TemplateTests(unittest.TestCase):
+    def test_01814_npu_splicing_and_pool_growth_are_versioned_flags(self):
+        for name in ("HALOGEN_NPU_SPLICE", "HALOGEN_POOL_GROW"):
+            profile = official_template("0.18.13", Path("/host/models"), Path("/host/cache"))
+            profile.env[name] = "0"
+            self.assertTrue(any("requires Halogen 0.18.14" in e for e in validate_profile(profile)))
+            profile.image = profile.image.replace(":0.18.13", ":0.18.14")
+            for value in ("0", "1"):
+                profile.env[name] = value
+                self.assertEqual(validate_profile(profile), [])
+                self.assertEqual(parse_quadlet(render_quadlet(profile)).env[name], value)
+            profile.env[name] = "2"
+            self.assertTrue(any(name in e for e in validate_profile(profile)))
+
     def test_01813_admission_cache_and_restart_controls_round_trip(self):
         profile = official_template("0.18.13", Path("/host/models"), Path("/host/cache"))
         profile.env.update(HALOGEN_ADMIT_SPLICE_MS="500", HALOGEN_ADMIT_SPLICE_FOR="all",

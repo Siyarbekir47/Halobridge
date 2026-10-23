@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.33 supports Halogen 0.18.13. Install the Halobridge update, then
+Halobridge 0.1.34 supports Halogen 0.18.14. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -25,6 +25,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `POST /v1/chat/completions` | NPU `qwen3.5-2b` | Short text jobs and summaries beside the GPU model; no thinking, tools or vision. |
 | `POST /v1/images/generations` **new in 0.17.0** | NPU `flux2-klein-4b` | Generate icons, illustrations, placeholders or simple diagrams from a text prompt. |
 | `POST /v1/audio/transcriptions` **new in 0.18.0** | NPU `qwen3-asr-0.6b` or `qwen3-asr-1.7b` | Convert a WAV recording to text for meeting notes, dictation or searchable audio. |
+| `POST /v1/audio/speech` **new in 0.18.14** | NPU `qwen3-tts-0.6b-customvoice` or `qwen3-tts-1.7b-customvoice` | Speak text with a preset voice; WAV or PCM output. |
 | `POST /classify` | Custom sequence classifier | Label inputs with the labels trained into your classifier. |
 | `GET /halogen/handles` | Sessions enabled on the active GPU profile | Inspect kept conversation states. |
 | `DELETE /halogen/handles/<name>` | Sessions enabled on the active GPU profile | Release one kept state. |
@@ -34,8 +35,23 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, and ASR needs 0.18.0+. Use 0.18.13 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.18.14 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
+
+## Test in the dashboard
+
+Open **API Playground** to run these requests without curl. Each endpoint has
+an example, model selection and editable JSON. Upload fields prepare images and
+WAV files; speech and image results include playback/previews and downloads.
+The result shows HTTP status, total time, first-byte time, raw data and headers.
+First-byte time includes routing, admission and model work; it is not necessarily
+time to the first generated token. Streaming text appears live; streamed PCM is
+playable after completion. Stop cancels the browser request.
+
+The advanced section accepts `X-Halogen-*` and Anthropic version/beta headers.
+Use the dedicated API-key field for backend authentication. Credentials and
+request inputs are kept in memory only. Requests pass through the usual router
+and telemetry. No inference runs on opening the tab or selecting an example.
 
 ## Model metadata and benchmark discovery
 
@@ -122,7 +138,7 @@ request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.18.13 and select **one** speech model in
+Update the target GPU profiles to 0.18.14 and select **one** ASR model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -143,7 +159,37 @@ text pass through unchanged. History records the loaded model, duration, status
 and response size; it stores neither audio nor transcript, and invents no token
 counts. Transcription queues with the other NPU work and keeps the GPU loaded.
 
-## Added through Halogen 0.18.13
+## Speech: turn text into audio (0.18.14)
+
+Activate one `qwen3-tts-0.6b-customvoice` or `qwen3-tts-1.7b-customvoice` model
+in NPU Setup. This is independent of the one-ASR-model limit.
+
+```bash
+curl --fail-with-body -sS localhost:8731/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3-tts-1.7b-customvoice","input":"Hello from Halobridge.","voice":"ryan","language":"english","response_format":"wav"}' \
+  -o speech.wav
+```
+
+The nine voices are `aiden`, `dylan`, `eric`, `ono_anna`, `ryan`, `serena`,
+`sohee`, `uncle_fu` and `vivian`. Input is limited to 4096 characters and about
+2.5 minutes of output. `language` is optional (`auto` by default). The 1.7B model
+also accepts `instructions` for speaking style; 0.6B refuses that field.
+`response_format` is `wav` or `pcm` (16-bit mono, 24 kHz); use `stream:true`
+with PCM. Compressed formats and `speed` values other than 1 are unsupported.
+
+The talker runs on the NPU with CPU audio decoding. Other NPU work normally
+waits until speech finishes; Flash stays loaded. `HALOGEN_NPU_SPLICE=1` allows
+short decisions, embeddings, reranks and moderation between steps, but can delay
+the streaming guard, so it defaults to 0. These controls are in the profile editor.
+Audio content and speech text are excluded from Halobridge telemetry buffers;
+history records duration, model, status and response bytes without invented tokens.
+
+0.18.14 also enables `HALOGEN_POOL_GROW=1`: a long answer can reclaim idle prompt
+cache to reach its requested budget. `0` restores the old behavior. Existing
+checkpoint, context and slot settings are preserved during the engine update.
+
+## Added through Halogen 0.18.14
 
 Enable the required models in NPU Setup first. Existing API authentication still
 applies to every example. Flash checkpoints do not need replacing.
@@ -177,7 +223,7 @@ curl --fail-with-body -sS localhost:8731/v1/embeddings \
 
 EmbeddingGemma image inputs use `image_url` parts with inline base64, and audio
 inputs use `input_audio` parts with `data` and `format:"wav"`; see the
-[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.13/docs/NPU.md).
+[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.14/docs/NPU.md).
 
 ### Image edits and variations
 
@@ -456,7 +502,7 @@ speculate together automatically. Faster decode and prompt processing, improved
 disk-prefix cache reuse, streamed tool-call cleanup and schema/tool fixes work
 without a new endpoint. Late system/developer turns in Chat Completions are
 treated as user text at their position; images in those late turns are refused.
-GPU checkpoints remain unchanged from 0.16.2 through 0.18.13. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
+GPU checkpoints remain unchanged from 0.16.2 through 0.18.14. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
 
 ### Streaming during long prompts and NPU recovery (0.18.13)
 
@@ -494,5 +540,5 @@ curl --fail-with-body -sS localhost:8731/metrics \
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.13/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.13/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.14/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.14/CHANGELOG.md).

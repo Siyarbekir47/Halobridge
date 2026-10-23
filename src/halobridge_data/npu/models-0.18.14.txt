@@ -1,0 +1,341 @@
+# Our NPU models (the bare names HALOGEN_NPU_MODELS takes in the default mode),
+# and the files each must hold. Read by the entrypoint before anything starts:
+# every file's size and sha256 must match. Filled by the release that publishes
+# the files; one line a model, then one line a file:
+#
+#   model <id> repo=<org>/<repo> revision=<commit> task=decision|embedding|score|classify|generate|image|transcribe|guard|speak [devices=<id>] source=<org>/<repo>@<commit> license=<spdx>
+#
+# The task is what the front end serves the model for: decision (the deciders'
+# decisions), embedding (/v1/embeddings; EmbeddingGemma 2's devices/ also holds
+# the programs for its image and audio inputs, one set; a model with a vis/ set takes images
+# through it), score (rerank), classify (moderation,
+# /v1/moderations) and generate (text generation, /v1/chat/completions; the
+# generation model's devices/ also holds its decode program, and its one cache
+# capacity bounds the prompt plus max_tokens) and image (text to image,
+# /v1/images/generations: FLUX.2-klein-4B; its devices/ holds a program a
+# resolution, its text encoder's and the taef2 decoder's weights) and transcribe (speech to text,
+# /v1/audio/transcriptions: Qwen3-ASR; its tokenizer.json is built from the checkpoint's vocabulary and merges)
+# and guard (the streaming guard, Qwen3Guard-Stream: no route of its own, the `guard` field of /v1/chat/completions
+# watches a reply with it; its heads.npz sits beside its weight file) and speak (text to speech, /v1/audio/speech: Qwen3-TTS
+# CustomVoice; its devices/ holds the talker's and the code predictor's programs, hf/ the checkpoint's own files the engine reads
+# on the host, tokenizer/tokenizer.json built from the checkpoint's vocabulary and merges).
+#   file  <id> <path under /models/npu/<id>/> <bytes> <sha256>
+#
+# The paths are devices/devices.hnpm, devices/<shape>.elf, devices/consts.hnpb,
+# devices/NOTICE.md, <id>.hnpw, tokenizer/tokenizer.json and the streaming guard's heads.npz (a text-to-speech set
+# also holds devices/pf/, the prompt's prefill set, and hf/, the checkpoint's own files). A model whose line
+# names devices=<other id> holds no devices/ of its own: it runs on that model's
+# (fetched alone under HALOGEN_DOWNLOAD), and lists only its weight file and
+# tokenizer (the dense models share one set: the device never reads the
+# vocabulary). A user's own fine-tune of one of these runs on the same devices/
+# files (its weight file is converted from the user's checkpoint by the NPU
+# engine).
+#
+# A model may also carry a second program set of its own in a sub-directory,
+# with its own weight file: a speech model's audio encoder in enc/, an image
+# embedder's vision tower in vis/ (each devices.hnpm, its .elf files,
+# weights.hnpw and NOTICE.md). Its file lines name those paths (file <id>
+# vis/devices.hnpm ...), after devices/ and before <id>.hnpw, and the
+# entrypoint passes the directory to the NPU engine as a second set beside the
+# model's own. This holds for a model on another's devices= too: wemm-embedding-4b
+# runs its text on decider-4b's devices/ and its images on its own vis/.
+#
+# An empty repo= (and revision=) is a model whose files are recorded but have no
+# download source yet: the files are still checked, and HALOGEN_DOWNLOAD names
+# the missing files instead of fetching them. A release fills repo= and
+# revision= when it uploads the files.
+#
+# A model line with no file lines yet is a model this image will carry once a
+# release records its files (built and pinned on a release host): the entrypoint refuses
+# it by name until then, HALOGEN_DOWNLOAD fetches nothing for it, and every other model is
+# unaffected. The set's build writes the file lines (OUT/release/pins-<id>.txt).
+
+model decider-0.8b repo=peonist-ai/halogen-npu-decider-0.8b revision=258225cccc72622c3d1c663df43345a18d95ed4e task=decision source=Mapika/decider-0.8b license=apache-2.0
+file decider-0.8b devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file decider-0.8b devices/consts.hnpb 27119000 3e849c93e8911539e5caf1f10264c3b21ec13cb50ffd7f2c4ba7eda94dbef6e8
+file decider-0.8b devices/devices.hnpm 125324 c8fa731e039a143e69198212b8f5891abb357607257778f52f6c004bfba2311d
+file decider-0.8b devices/u0.elf 15610008 2fc3d6fe44e7a0b2ecf2f89bb513d3fdb0fcf0e5ff2813fd8f0a36dcb475b87e
+file decider-0.8b devices/u1.elf 8434056 d9246a43c521000ea8502c5954b15d867af8c90678f1d9589af5166920852d05
+file decider-0.8b devices/u10.elf 10624056 a13922dc3dfc8e0b04e3c89d8f66228cef62ae91e08eb1fa0fc5a5c62941b13e
+file decider-0.8b devices/u11.elf 18525736 7688b75fdeee300997c22dd44c57ac6542f46f1bd3b030eb1a207ab72a4c0a5b
+file decider-0.8b devices/u12.elf 18813976 b127341eaa165419c45f4c460721e286f5b56c2ff432b3ced0eff012f6c89ac1
+file decider-0.8b devices/u13.elf 20341848 8e130c87aa0223cd3bba234eb34656b67c6d7aa2365ca435865d1671ef409a25
+file decider-0.8b devices/u14.elf 18525736 af7ff3a8a6b16b82f1b21bbae5a7f931cff1add075a4f36953ace853bef70e18
+file decider-0.8b devices/u15.elf 18813976 577e026161da3440ba0681335c033fb2dcd12ae1ec31a3e2cc5eaa4154cbc648
+file decider-0.8b devices/u16.elf 20341848 13ad6b569015b4dac041b92cbef097a63289c544b55d3d947aee8f843c4a5cf0
+file decider-0.8b devices/u17.elf 18525736 1b02b18c454aed40a6394b1d19d5eee9734d31a500f3c9922a69f71ccac887f4
+file decider-0.8b devices/u18.elf 18813976 00235cae8219a4e151a3ca9260020e0151dc1257ebbedddff3958e0f853cc21f
+file decider-0.8b devices/u19.elf 20341848 23201074a2b15b745e343fe5c6ac22fe35e51fc97d922e4d9e2b880b467c5329
+file decider-0.8b devices/u2.elf 8591784 2f14543a3e0e07bf5b6afd6b849ec52f51a0a7bb4d784dee3bf957646c0b2306
+file decider-0.8b devices/u20.elf 18525736 422cf8764c8c13724c4962fe1b1600112325d4c388fca4cda3552e7e3866451e
+file decider-0.8b devices/u21.elf 18813976 e7d12b1f3248aa12a9f50e70a03c944c27c506506dab16675c3ffda09823b1cf
+file decider-0.8b devices/u22.elf 22003064 678469ca9befe2afae3b0366ca286f9f2b2e47c15515ca7d9f90277a45a7b6f6
+file decider-0.8b devices/u23.elf 18525736 6b8bd6d13a647816f41d65f8c71f0cbb8687ccf69a3a99c4d56a1e8690bf0392
+file decider-0.8b devices/u24.elf 18813976 e45f746f07eb95299bf8a98ff70a3dcd1470ffc7cefb7319fbf93f14e9e59100
+file decider-0.8b devices/u25.elf 22003064 9c1bf6687566cf0b2dd3451f5d56dd84484632a77dbbcd602680d826109e1e6b
+file decider-0.8b devices/u3.elf 9121048 193fc5236e7bdcb794ec8f0a87298c3a4f7432c0b5476e9af2b2d80c925062f9
+file decider-0.8b devices/u4.elf 9657928 ea2cdfb1b68927df4b0489a9de457aeeba2760349cd46c75b9c0a71a6d694cd5
+file decider-0.8b devices/u5.elf 10194808 678409df56d6cd5e71a1de9ba929edcc3bb31d13b15d899278cab09552dbc109
+file decider-0.8b devices/u6.elf 11276216 f28ba8b08600d6c23c08296c4abbb05b772cba51e999910ba9688d317268d84b
+file decider-0.8b devices/u7.elf 12354008 8a003c956075951b2ab73ba40f31f11d0f82bc1484c7fcb3c0077c81a4961c19
+file decider-0.8b devices/u8.elf 14519384 b368c56ec1867a6cf5d640c0c50612b7887b0c125b00e3c54486e25b8426a161
+file decider-0.8b devices/u9.elf 16689560 b361de279076cece9c587fe7cde5b17b48272b265e9ac2dc5eac211302ffde7f
+file decider-0.8b devices/u26.elf 8416488 ce59f8753b9b929b06750a1343f4161268e8c1dd535ee310c3b79d611677ab5a
+file decider-0.8b decider-0.8b.hnpw 2300855960 9108bb2d200cabb1b898e5dfe4b398dd993020bf6874501e8333a5c6e62c06d4
+file decider-0.8b tokenizer/tokenizer.json 19989325 06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523
+model decider-4b repo=peonist-ai/halogen-npu-decider-4b revision=01f1d8e14b6a565eb485bca102a1a2f6cc8b5381 task=decision source=Mapika/decider-4b@eb5fbdfc9448473ec25e399882912863afbdb70e license=apache-2.0
+file decider-4b devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file decider-4b devices/consts.hnpb 13271352 a875fc7420091ee85916d0bb11d5a94bee9f55d9d0157232d8162d8a305bc2e4
+file decider-4b devices/devices.hnpm 62341 c58efd6b7be9bdd13527a88f633c4f606032e14403d0aebde26499feb7a61b4b
+file decider-4b devices/u0.elf 8732744 d10fae7427515445c9a4e24c617b03e90b11e617157373bda6b5fd41c1a00270
+file decider-4b devices/u1.elf 8772760 8b777907e45cf193323650b4fa75222bffc302a5aa32728c0e00d8f5e2461f23
+file decider-4b devices/u10.elf 12818840 d441ffa02599f63da270c8829cc26e0d82823f19585c48df05edda9d32332708
+file decider-4b devices/u11.elf 19093096 d3f9df828d166e1dc41442ff7c8ae40134a8303f28e3d49aec6de9b0837da928
+file decider-4b devices/u12.elf 19743800 cebab5474e2f9b4a7394c83fe04344b2983ca41615be729b6abff843c2bbfc31
+file decider-4b devices/u13.elf 19093096 cc3a5488706fdbd3a7cdc28dacfd4a918b5d2417a793d0cf641f8962c158f63d
+file decider-4b devices/u14.elf 19743800 1e28313f8259a8191f5b8fe67bcd8c829b588d7b6eed665e20bcabe90503f29a
+file decider-4b devices/u2.elf 9124008 8802d5f962f20b8588b573ddbb0733143e222a611a27faad0e3dd9ee761a709e
+file decider-4b devices/u3.elf 10068648 75daad2676acf6f0f3755d142c5e9c27be05116e2794c0c6b4c8f447edc81bce
+file decider-4b devices/u4.elf 11021576 a54e85a16eba088ee08f34552d5d858a2da0f3d5afde6bd86c177c5fb8e4eeb4
+file decider-4b devices/u5.elf 11974504 3f7348405a069888a7f0963af262a04e06237d288c5f97ce42e5c74a5adffaa5
+file decider-4b devices/u6.elf 13892968 3edcc54bd67ddca44518bcedaf6f4362923809f3571f5637d49b8bd4d2621ad4
+file decider-4b devices/u7.elf 15804200 a99d48be81dabe1669ab95bd4e7a3d54906df481d8bd790ddf0af73ea7381fa9
+file decider-4b devices/u8.elf 19646136 474dfc2f2d7493e3e8cc91f8ede73bd0c43f8280d05afa69bd3b40c7d89ce1e2
+file decider-4b devices/u9.elf 23501704 aae8b0f281b6a3adeb9fec5382fc46039f23d1b288af76041b2c5b5dabc3736b
+file decider-4b decider-4b.hnpw 5692927608 b4bb8b9143068afbf1f4986fbb54365d356a8b52811fafd9a74dd344db6c4e23
+file decider-4b tokenizer/tokenizer.json 19989325 06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523
+model qwen3-embedding-0.6b repo=peonist-ai/halogen-npu-qwen3-embedding-0.6b revision=8fd44c9f18861618a509bea75c51ff8a37e3bd5d task=embedding source=Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3 license=apache-2.0
+file qwen3-embedding-0.6b devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file qwen3-embedding-0.6b devices/consts.hnpb 8495512 5af7c1f2f24d45a9054872bba882461cf7f6ffda832e785b700643d6467ad88b
+file qwen3-embedding-0.6b devices/devices.hnpm 35465 85d870f6b900de1829659955f0dc701d57984580f5e5ec251add5d6969f03e3d
+file qwen3-embedding-0.6b devices/u0.elf 2975008 f74df12eb8c79e4e90cbedcc1dd8f142219772d400e3a142fde8a95378b105eb
+file qwen3-embedding-0.6b devices/u1.elf 3266848 ac5a3f89f934951b315b62ab53e1d0a74dbe6396134192641c405d08da332754
+file qwen3-embedding-0.6b devices/u10.elf 3298656 ef2e0f399f149a5476955bcf233c6fa2e896fcef1f86ecb0d8113c952c41a8b2
+file qwen3-embedding-0.6b devices/u11.elf 3298656 68a2519eee2d6a61ccc4ca2007e3186d44c9eb4e81162d742fe2f1756ec5a528
+file qwen3-embedding-0.6b devices/u12.elf 3298656 2bdc6abfa58cac1d5795a3ef52fe8a9ab4e7c2a4792822d615499a913401f728
+file qwen3-embedding-0.6b devices/u13.elf 3298656 4a3ce14f7ba15987b9bcbb4a010083e8aef68cd87c20cbe43403a98263179fe2
+file qwen3-embedding-0.6b devices/u2.elf 4015328 5e4f0d3342f262816289866d7e8c966f56a9f938c2e12e7341718cc7312aa480
+file qwen3-embedding-0.6b devices/u3.elf 4326976 94cf5d269fa286d91c26bf4654cedf101c047d23c4495b74c9c129cdc33b210f
+file qwen3-embedding-0.6b devices/u4.elf 4953792 cbd2796050d4c675f5cb3da117111087d510173e26f262f1b36aab66dd49dc91
+file qwen3-embedding-0.6b devices/u5.elf 4940112 7bf6a4470546bb888da02af395c07d92a24fb6d43aef27eb2151b3a9eda19e4d
+file qwen3-embedding-0.6b devices/u6.elf 6174544 10b9d50b635993e1f9c23775c0b94901d922c1e433cd10910e9f97174235f5ac
+file qwen3-embedding-0.6b devices/u7.elf 2983776 e0b06063b7379d05c85b3f435b819d96fda1223d8025d6d15958854b5711ace9
+file qwen3-embedding-0.6b devices/u8.elf 3298656 3bad204f782a68b97e27c1172530b13d7fbb0b495fa95f9504530a1048560644
+file qwen3-embedding-0.6b devices/u9.elf 2983776 875e313280358ce116e2a51a29a2c42794b5a9fadb3d48db702c90d18d838c2c
+file qwen3-embedding-0.6b qwen3-embedding-0.6b.hnpw 813032248 b9f9901429df7b46ec17153aa3899f738adbea8e4356080da0c6e6586fb750d1
+file qwen3-embedding-0.6b tokenizer/tokenizer.json 11423705 def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a
+model qwen3-reranker-0.6b repo=peonist-ai/halogen-npu-qwen3-reranker-0.6b revision=56c8cfa84a67f07577d0e26c2f67f18e39d2516e task=score devices=qwen3-embedding-0.6b source=Qwen/Qwen3-Reranker-0.6B@e61197ed45024b0ed8a2d74b80b4d909f1255473 license=apache-2.0
+file qwen3-reranker-0.6b qwen3-reranker-0.6b.hnpw 813032248 57e4f9bd3b25aa9bd2eb1784dae6dcc64cadbd908236ea9ba4d03feee8a171fe
+file qwen3-reranker-0.6b tokenizer/tokenizer.json 11422654 aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4
+model qwen3guard-gen-0.6b repo=peonist-ai/halogen-npu-qwen3guard-gen-0.6b revision=36e9db2f0405b0a9e86e5615b36b8a8db0229a30 task=classify devices=qwen3-embedding-0.6b source=Qwen/Qwen3Guard-Gen-0.6B@fada3b2f655b89601929198343c94cd2f64d93cc license=apache-2.0
+file qwen3guard-gen-0.6b qwen3guard-gen-0.6b.hnpw 813581112 59d8ffc439ae5d3a2bb60c67c14a538e3456c8bfc53923ea260c232a6fac41f4
+file qwen3guard-gen-0.6b tokenizer/tokenizer.json 11422654 aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4
+model qwen3guard-stream-0.6b repo=peonist-ai/halogen-npu-qwen3guard-stream-0.6b revision=83f8f2ab0c55811cd15277d986d4c4e88c6288ca task=guard devices=qwen3-embedding-0.6b source=Qwen/Qwen3Guard-Stream-0.6B@74e1479150e9029d6778993f00491108323bb6f8 license=apache-2.0
+file qwen3guard-stream-0.6b qwen3guard-stream-0.6b.hnpw 813585376 3304508136b6435632c00042606fb0d0204869374abf8daacb734f7ce7c776d9
+file qwen3guard-stream-0.6b tokenizer/tokenizer.json 11422654 aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4
+file qwen3guard-stream-0.6b heads.npz 4247478 ad426b23dcd257fc1350b0b5b9311f3f1348ede6928ea69417067ac5ece58c41
+model qwen3-embedding-4b repo=peonist-ai/halogen-npu-qwen3-embedding-4b revision=0ab7221987083c7f2ba4fcde2a2219dc95ab0523 task=embedding source=Qwen/Qwen3-Embedding-4B@5cf2132abc99cad020ac570b19d031efec650f2b license=apache-2.0
+file qwen3-embedding-4b devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file qwen3-embedding-4b devices/consts.hnpb 5218200 123713df2e2339e2906754b6f3556da83874939ba8b751cc62d7b3703f6f4a2b
+file qwen3-embedding-4b devices/devices.hnpm 14976 24065d912b3182c3ca497f7aa0bca40a212bbcddcb88a13276f9a5c6c32cfee9
+file qwen3-embedding-4b devices/u0.elf 3652064 8ee68d87cc53ab63a91e5853b0f574715d938d79605342c48e7cb6c31ec228ec
+file qwen3-embedding-4b devices/u1.elf 3962448 8ab1bf38e777f3457a7e406d523b44259f5866b18c705b06b2c31abe9ba4f62a
+file qwen3-embedding-4b devices/u2.elf 4226464 867546de2f13c2d0aebbbe1de02d45acec2f32eb7fea57f07143c6151dbdd888
+file qwen3-embedding-4b devices/u3.elf 4764128 59ae1bb5f7274bc9a9fc6575de6252e271b12e95e5c82e232fbf2e93de63f376
+file qwen3-embedding-4b devices/u4.elf 5844832 63282bd8169a3304474c4ca1d2bfbc1d15adb92b0a19c5fbf95855561e9c5f4e
+file qwen3-embedding-4b devices/u5.elf 5568464 307e9eb35fdca3fc473c10e39d0b24c3dcdfec95e2f5c6c016de2acc68666999
+file qwen3-embedding-4b qwen3-embedding-4b.hnpw 4872961208 0437c87a47749a761320d249b5856050e0fe9116a2cebe8874eb36d999ecf01f
+file qwen3-embedding-4b tokenizer/tokenizer.json 11422947 83cdf8c3a34f68862319cb1810ee7b1e2c0a44e0864ae930194ddb76bb7feb8d
+model qwen3-reranker-4b repo=peonist-ai/halogen-npu-qwen3-reranker-4b revision=2cca7588f6e6aa07a8420fee908d4d1921c6efd1 task=score devices=qwen3-embedding-4b source=Qwen/Qwen3-Reranker-4B@22e683669bc0f0bd69640a1354a6d0aebcfeede5 license=apache-2.0
+file qwen3-reranker-4b qwen3-reranker-4b.hnpw 4872981688 5f9f2c158b2f14b015d31ace8b4c578e05ede10883ed16f401034d261ffd8def
+file qwen3-reranker-4b tokenizer/tokenizer.json 11422654 aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4
+model embeddinggemma-2 repo=peonist-ai/halogen-npu-embeddinggemma-2 revision=0f934587975da89c73ff68bbc345f8ad08fb52bb task=embedding source=google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b license=apache-2.0
+file embeddinggemma-2 devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file embeddinggemma-2 devices/devices.hnpm 18378 1316b90f99e90c8a40c6b7cef3ee9b2bd5e1cf93a6e077020696840036d0a707
+file embeddinggemma-2 devices/u0.elf 1840416 f3b6b39db8fa64e84a74330c1d7f7f2b47d98c67e32b3196f905b66f55585a6f
+file embeddinggemma-2 devices/u1.elf 2210560 aa2296462d151049d785cd7ace24c5f60633e56abaad98e1cd92c8d47f123ac7
+file embeddinggemma-2 devices/u2.elf 3580680 b53f55bdf199ad56ec325d1c9c1bf9d5447297783ba7099db337a39d61d54b6c
+file embeddinggemma-2 devices/u3.elf 3956872 e4d80f556f733b403c236bfe9d73ded35de4c1ee41e5e2ed820adff20020f1e9
+file embeddinggemma-2 devices/u4.elf 4705416 5c6c17cbf8063220a63cddf9cc8b6f0c08d53d26f43a34066f27ae1c7696bb04
+file embeddinggemma-2 devices/u5.elf 5552624 bba34375fb63e283d0ee814d4d4e23f7c25dd7f0920734c675c9f170e54eb89f
+file embeddinggemma-2 devices/consts.hnpb 1263072 5af94293c2ee2469ec1209752d663b65278f78da978dcbf04b2b516a475ae949
+file embeddinggemma-2 embeddinggemma-2.hnpw 1077826144 e46cdde70f264ec0f03499148043b043af748a4165c0785ff64dabd5019156e6
+file embeddinggemma-2 tokenizer/tokenizer.json 32170510 4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4
+model qwen3.5-2b repo=peonist-ai/halogen-npu-qwen3.5-2b revision=5bd5c985211e37fc204ea98ba992d7afc8a037f7 task=generate source=Qwen/Qwen3.5-2B@15852e8c16360a2fea060d615a32b45270f8a8fc license=apache-2.0
+file qwen3.5-2b devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file qwen3.5-2b devices/consts.hnpb 7215192 37e4350b410b0356f41bce17bbad0369135b8f59562b0d140dc7db4bc4782171
+file qwen3.5-2b devices/devices.hnpm 11947 721781c8fb0973722c3be772eb0f242c6a25d3b3eec0efac8aabdd053647b855
+file qwen3.5-2b devices/u0.elf 9215576 ca21681a598863e154f7e99435b4b70b3452c43ba8e92c630c3513f3862d3497
+file qwen3.5-2b devices/u1.elf 12438104 a39522487ae1253b8c6d81c859091e2678f155d3c07bab2dff1d455f0874356e
+file qwen3.5-2b devices/u2.elf 25399704 708928f60194a94884e702bad61809fa833c021f7061cdc5f0792512fc02e642
+file qwen3.5-2b devices/u3.elf 2387616 ad9188aa5d2102eda076e14a8813b6e2f134c5effc9ad04480116ec292b2960d
+file qwen3.5-2b qwen3.5-2b.hnpw 3600455264 6b8a5f1a8fc701ff7afa2ddd773a5d17d25d82fb6066ab49aaf6da07e27e2f14
+file qwen3.5-2b tokenizer/tokenizer.json 12807982 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+
+model flux2-klein-4b repo=peonist-ai/halogen-npu-flux2-klein-4b revision=79524d2bb970a18ade84829d55f41cc7f209f1e2 task=image source=black-forest-labs/FLUX.2-klein-4B@e7b7dc27f91deacad38e78976d1f2b499d76a294 license=apache-2.0
+file flux2-klein-4b devices/devices.hnpm 42002 f4fc54a9dd436591d9aa156db9ca4e8396cba9b7edd165cf2088485f9fc5139d
+file flux2-klein-4b devices/taef2.safetensors 10723524 701d31c0ecbef3b609fe236e2e3a65ffb17f3a94237acdd771e8ea3194df557a
+file flux2-klein-4b devices/u0.elf 1437936 b2b37baf020cc720725a108483b23f0d02e19b918e3c7fe21924f7e794ccb6a1
+file flux2-klein-4b devices/u1.elf 5166264 20cfa67d819430e9aa05695be2c011b702de50cf785c4dfa8e4f43c42aa5a560
+file flux2-klein-4b devices/u10.elf 8062200 0c7591a16fc3021340a970a29376f10db46d84971b692c90b27eeef2f0a07925
+file flux2-klein-4b devices/u11.elf 9105464 89dc6135d4f9067225f6e51d20bab849f52c9ba24129d715df50f411c13c9fa7
+file flux2-klein-4b devices/u2.elf 4765368 da1fb250327aa503929391dc7fa4860d02bb6bfeb3af7fc86aecb05218325748
+file flux2-klein-4b devices/u3.elf 6391416 edc33cf3a16e6079c0c8fd985384c74fe7e615172c474c4701eded59dc684118
+file flux2-klein-4b devices/u4.elf 5456280 d14bbe688f8273e6c84ebef14ca49bdb3b031e66aa848d9efb8e4f8f86f2948b
+file flux2-klein-4b devices/u5.elf 7327416 ffbe9c92f56774335dfbf0252ceebe323b61ecb6ebf4de3b8ed8dd42e8c936da
+file flux2-klein-4b devices/u6.elf 5975672 cdea1b210565c043acbe99dccff74d698b1bd54042ad0d155a836ed046a2796f
+file flux2-klein-4b devices/u7.elf 8263416 a852041773f61631d57010f543a236c459b9b85fa11e18c940fd5e5063933e46
+file flux2-klein-4b devices/u8.elf 6497304 45fee971234e589189e7f23aa9be93fc6d0b33b636ca17f223ed9c7b3a97e2a4
+file flux2-klein-4b devices/u9.elf 7018936 11011732eef9047b0d5933d62ba483a2c09422192e59a3c00edd326ab38213a5
+file flux2-klein-4b flux2-klein-4b.hnpw 8028493384 913caa1f5508be42edc8790ed5229c58128798276e4a8c1f5b36a49b52172608
+file flux2-klein-4b tokenizer/tokenizer.json 11422654 aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4
+file flux2-klein-4b devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file flux2-klein-4b devices/TAEF2-LICENSE.md 1513 3079c1c4ffed3f3077b80aac47a773c5dd626d27ace342de43238ce991867be1
+file flux2-klein-4b devices/consts.hnpb 1578616 d368febd8a2ab4774e34874e38118d54d043b57b4a23edf2d7953c8af67ce69f
+model qwen3-asr-0.6b repo=peonist-ai/halogen-npu-qwen3-asr-0.6b revision=b21cd6703b56fc3cd2d5c1bed252cd6a2ef4f611 task=transcribe source=Qwen/Qwen3-ASR-0.6B@5eb144179a02acc5e5ba31e748d22b0cf3e303b0 license=apache-2.0
+file qwen3-asr-0.6b devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file qwen3-asr-0.6b devices/consts.hnpb 2540936 5ae638bf2c2c0f9547d76a8935925f3ff60e3d1fe38d92917ce80b3440a2db5e
+file qwen3-asr-0.6b devices/devices.hnpm 10327 8ecea0ba829ffef85d894a5eb7978dcd5b1a4033e95d68e80b0119307e0ef64d
+file qwen3-asr-0.6b devices/fold.bin 3584 d7271ecee19ad4c551205481a6e78589b93eb8f57d95414f681c543df158ebf6
+file qwen3-asr-0.6b devices/u0.elf 2975008 bd257019b1ce252069fdab5bc8f99df05b0621d54e773eee785e71fed255ce43
+file qwen3-asr-0.6b devices/u1.elf 3016080 6f486464b98e5384257b6f27f77a2d10cbb3066ecf8436c4b05ffddfec672e73
+file qwen3-asr-0.6b devices/u2.elf 3266848 19751271143499b57247d0bc6cf444c6836e7c0e3c9a8a833d3d738f81c34462
+file qwen3-asr-0.6b devices/u3.elf 4015328 caf01dd3d49fb660078fffd366982d69992d7138f10354b2084f1df0cf67c8f4
+file qwen3-asr-0.6b devices/u4.elf 5771072 609403f1a578ab91739a65dc1eadf8b7d083a90ca4c63f2b2f2d7582b39cad9e
+file qwen3-asr-0.6b enc/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file qwen3-asr-0.6b enc/devices.hnpm 2846 baed662e63ee3ac5d9081aa67c0a12d73685c0e1ee7530446bffa3bd456097a6
+file qwen3-asr-0.6b enc/u0.elf 1059728 83727d0beb113ce3212ec0b183a1e237b804c14b99038c991830598dfb925204
+file qwen3-asr-0.6b enc/u1.elf 1142336 d39a2eac45a286a9ab7b6c2734ba5298ea84c9ec803d6890504415f1258b9246
+file qwen3-asr-0.6b enc/weights.hnpw 243748296 aba64116f568a217555088270422314ec7d52a3fb809d955a74ba49a8f1d342f
+file qwen3-asr-0.6b enc/consts.hnpb 196512 77c344103a2cca46d6f2ce14e7118da997702e27ce8f7ba3acb94d4d671d7075
+file qwen3-asr-0.6b qwen3-asr-0.6b.hnpw 1286181400 99a13222f7bb94c9eb0ea21c5245ce3b8110835c27b113be4cce1339622bcf05
+file qwen3-asr-0.6b tokenizer/tokenizer.json 11424116 df2d00266ff92c5a4c7689a3f6b659546303679a3306d85160dbcea64c9d773d
+model qwen3-asr-1.7b repo=peonist-ai/halogen-npu-qwen3-asr-1.7b revision=cf36ee5ad5aebe647dd9d40768cd1371c8d40560 task=transcribe source=Qwen/Qwen3-ASR-1.7B@7278e1e70fe206f11671096ffdd38061171dd6e5 license=apache-2.0
+file qwen3-asr-1.7b devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file qwen3-asr-1.7b devices/consts.hnpb 2540936 be1fc65b1b3a1b0f5cbef67cbc8496e6aac2c9340b8b3f88c2b19d69738e25ff
+file qwen3-asr-1.7b devices/devices.hnpm 10344 d7ff57d0e120c65968b6f50d6c33e3107b05a897104aa3c300024ce84d082780
+file qwen3-asr-1.7b devices/fold.bin 3584 f7642e0091966cde32ae4815c354607ea47800410f4bda051462c0bd13143434
+file qwen3-asr-1.7b devices/u0.elf 2977408 2f0acc646950c88c8fb21b60bf646a751b24d712ed7691bbdd2864e93bc21ec3
+file qwen3-asr-1.7b devices/u1.elf 3018480 4aaecc09c457da471c5904f46857a946345dfa8975869801f39cfae376b173f3
+file qwen3-asr-1.7b devices/u2.elf 3263648 4a3843efd61f73ad548187101e5609deab2628dd902ebffc3bf557bbe6a4371e
+file qwen3-asr-1.7b devices/u3.elf 4010016 25047397acd14e0576d0dba110bef40a986f5b75714b1f728b804ba9f468a023
+file qwen3-asr-1.7b devices/u4.elf 5125744 9f7269d93235b41caea00ed91e09228fe8b8b02c57b2d432488062bfc29c6925
+file qwen3-asr-1.7b enc/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file qwen3-asr-1.7b enc/devices.hnpm 3276 6afebd800d67749e9d84e5dbc7f993db9b8aeed2ef12e1770292f281edc0b44c
+file qwen3-asr-1.7b enc/u0.elf 1130944 15c906a96d872e4e4a58511f3517eb40f473be8dad3c2fe166bade5341845c0f
+file qwen3-asr-1.7b enc/u1.elf 1209248 652bd390de79611f26ed4493d09f09da83e0afddc1bc7733cb1081461bf8aa4a
+file qwen3-asr-1.7b enc/weights.hnpw 372124936 5af6bcc65f4e4a9dedaa2fdf43cd3b71594c382329e6066860a8f61b914eff97
+file qwen3-asr-1.7b enc/consts.hnpb 196512 77c344103a2cca46d6f2ce14e7118da997702e27ce8f7ba3acb94d4d671d7075
+file qwen3-asr-1.7b qwen3-asr-1.7b.hnpw 3628769816 83d7d0c6ee55777495cd728270dcb9b69a962dcca8276fdb1361f9a10865a104
+file qwen3-asr-1.7b tokenizer/tokenizer.json 11424116 df2d00266ff92c5a4c7689a3f6b659546303679a3306d85160dbcea64c9d773d
+model wemm-embedding-4b repo=peonist-ai/halogen-npu-wemm-embedding-4b revision=38f1379199b3ae5286a589c9cf02ec5ca6288004 task=embedding devices=decider-4b source=tencent/WeMM-Embedding-4B@41a4fafdd26252ddff05c025413af7e61e26f08e license=apache-2.0
+file wemm-embedding-4b vis/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file wemm-embedding-4b vis/devices.hnpm 7007 9b010f7ae1e16a8c2df01ff3ba1ed59bddf8ea5a3c0344bc209fa091e928bff2
+file wemm-embedding-4b vis/u0.elf 3420488 ceb09ac171e1eed3f33a63523f8aeda238267fea2220413addf0429a38812913
+file wemm-embedding-4b vis/u1.elf 5103224 2a7a6cbd6649fd4e2ad28f0ad369538f982585a0984e356478d1d7fca603e9b4
+file wemm-embedding-4b vis/weights.hnpw 385016552 2acbb5ed0177e625614e83c73f74b08292317f1ab3a99f7b0a8400c2077c3648
+file wemm-embedding-4b vis/consts.hnpb 285080 7037614f882c438903c918e8ab4aec44c77d799135cf7eaf460fecf8e679bcf4
+file wemm-embedding-4b wemm-embedding-4b.hnpw 5691690616 38bc8fb6f5666a3d8e8288af1be282a7a51b97aa579067ba8d87c163bfce06bb
+file wemm-embedding-4b tokenizer/tokenizer.json 19990378 40e444c744512f423da4c8443c47c21e22ff76056ba4e9796a81c04c13a9daf0
+model d3-lite repo=peonist-ai/halogen-npu-d3-lite revision=2def562ec3af8bfe75b6e1d5c6366b65ae46adfb task=decision source=vllm-sr/d3-lite@03560c26f5199c3c04129a2ccb38960c913635e0 license=apache-2.0
+file d3-lite devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file d3-lite devices/consts.hnpb 12672920 6f223c1c4f72c74597be446f69fe135cc65ac2dd162da3eece44389b865fd591
+file d3-lite devices/devices.hnpm 49463 ab8d378e3cc5ded9a6a28b47f31ba393663a1cfae203f506da7893fbdf3cbdc8
+file d3-lite devices/u0.elf 15825768 bde9cc60e37ad4c2bdd2b847056bb527bd87e5bac6a942a391f20432255852b7
+file d3-lite devices/u1.elf 8564456 1a01c8f9472cab39812e05320f03cf4e0f5e5416deac68d5044ba3a7410402b2
+file d3-lite devices/u10.elf 10754456 27d4764021322d3ebcd90f88596061c8d281de5dfec86a6bfaca2dba5144a561
+file d3-lite devices/u2.elf 8665720 eb18ec874c4f3da951017deb3859be5e82a99ffd822d9415ce06e18be9e021ca
+file d3-lite devices/u3.elf 9194552 fde1a18d3d747941a759e9b2518d1736c80c1fb6ee36da0a2da0baefc467f4da
+file d3-lite devices/u4.elf 9740728 4ef143f8a7af6c1c0eba18eb0c9ad699ef789b2c80ab03ed1e7ae6b670daabf4
+file d3-lite devices/u5.elf 10277128 c57290c3ed2e2209f5c448e1ef4bfc854ca1f8d29f3b396abc498556728e15b1
+file d3-lite devices/u6.elf 11363704 ecd51dc2f2c20cf1d2f55dd47246ebd60078d279c06524b1b7b39de9f12e6de0
+file d3-lite devices/u7.elf 12450472 e4c16551db87359e039bc4a75988460eb7f55ebfe1403ec538009b53ff8148d1
+file d3-lite devices/u8.elf 14624328 47a1b0189bd137e969a966493b6e4c95a686299d6b5a8c5a6658a22e4d4d710e
+file d3-lite devices/u9.elf 16809048 7f3a9aa2c040612f47248c891988d60e550d7748947b45bd9547552033c6bf11
+file d3-lite devices/u11.elf 8570648 6633ba5f4402de94480858f0bc8650ae432afe8036d4da6a9f82f4740065e092
+file d3-lite vis/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file d3-lite vis/devices.hnpm 6118 f539dbfa4d6b3b907f6ef17f07585bac8f6f534f801d855137897019eb9bd23e
+file d3-lite vis/u0.elf 3144680 16dcce2b4bf62c526b41ce4d782fe7963b88daa7b693d24622dfae295957712a
+file d3-lite vis/u1.elf 4570696 f6a1a1e13a01cf10996668f0da05ac6f5a7a1d1202e5db1ce53dcc28c89e2215
+file d3-lite vis/weights.hnpw 136172648 8a45a3ada2316948928522be9f2f5b0a1f0e2ef8bdcf50a1b27c3a132b4f1272
+file d3-lite vis/consts.hnpb 512208 6f4633018c90f8512fc728b3adde95a2b88a2044dddaf6b5871add9ea21ecd60
+file d3-lite d3-lite.hnpw 2271419312 6512d1bdc220a79bb5d8fc265cdec7d93d329381ddfc4c2fd55dec38ae96275d
+file d3-lite tokenizer/tokenizer.json 12807982 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+model d3-nano repo=peonist-ai/halogen-npu-d3-nano revision=2f7bc2e484074318a016914323075fa62d2424d0 task=decision source=vllm-sr/d3-nano@462efc366229ea268cf4eed3738b3fc4415e4817 license=apache-2.0
+file d3-nano devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file d3-nano devices/consts.hnpb 11897736 d6c7e7e48d2d7d4252be94b88bfe99e3f1e73068046d33de9f018c745fabe4c7
+file d3-nano devices/devices.hnpm 42274 18edd1aaf0d36b742fa974f2d719ca5464f9a3893d7d4eebda5a242a201bb574
+file d3-nano devices/u0.elf 8576104 51d3fbb1fcf63d9311392d31ebe4b2e02dc356ec397cfca9e4b13e8f60851f5b
+file d3-nano devices/u1.elf 8569912 5dfa4557e87438cc7fec35bf8e5a9c39510c29b4749d57405bab47185a935f89
+file d3-nano devices/u10.elf 10745368 1e531cf3dc833819ea367e7cb54c9d818d4aa8e0f6261f362d03126d3ee1ebbc
+file d3-nano devices/u2.elf 8662520 9779cc776e2f60e4aecd2836f0a076925ee9f0e28e17adc2685d069b11702a8d
+file d3-nano devices/u3.elf 9189240 ee014b55a1e5021d90b5ddfd17c6931d56f5ba5efa010786f126373ce08f6595
+file d3-nano devices/u4.elf 9733528 443c36e0e16d74cc56593858251a3e78a796336081a23fcb085901738bc5ddd1
+file d3-nano devices/u5.elf 10268040 746d16eabc36f87519edb5036c7bd1766a8b2f1b6c6be2a82eacb4c952474670
+file d3-nano devices/u6.elf 11351288 70bb650dc922ff5f67aa10a5da8742cc7c6a35c8a1b438a5d58d252b93ed60d2
+file d3-nano devices/u7.elf 12434728 dbc26d9eaef8d8852f9dd577e0c8b63e13ba3ce0aaebf274e79378589a74b193
+file d3-nano devices/u8.elf 14601928 b8eacafcf575fc4dd14a19819bd5fd97c90ebd78379b906dd07191c80702c71d
+file d3-nano devices/u9.elf 16779992 c9a9b80a72520df0872fcd737e326da519dc84fe56633d388d501bcecdcd9d97
+file d3-nano vis/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file d3-nano vis/devices.hnpm 7518 a8719a240e4252461ecf90389fc0f50a9e7ac772f619ee4cb48bd2a7377d7a09
+file d3-nano vis/u0.elf 5401296 25552cf5fce73e7636f58f262743acc4cb407539c3bb344c33714dc02e6ee948
+file d3-nano vis/u1.elf 7292912 4c5564a100639154cd5a016c8222cb2981e832e8aee26d4df812b182cc5cd1d8
+file d3-nano vis/weights.hnpw 382653160 a3cce1bfb7d72b9e7ab9f639c81ed2745cbbf080ae3ac053913b05fd5151026d
+file d3-nano vis/consts.hnpb 602296 69d70cffe9dcef31999a345e71d91c28882d09a1cafa62027e158e509ce939f2
+file d3-nano d3-nano.hnpw 2589916208 60f372e759a98213935f091bb398a0cbaad3010939f1ee0eba8b70dadeebb156
+file d3-nano tokenizer/tokenizer.json 12807982 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+# held: text to speech, its files not recorded by any release yet, so the entrypoint refuses it by name
+model qwen3-tts-0.6b-customvoice repo=peonist-ai/halogen-npu-qwen3-tts-0.6b-customvoice revision=a3866d9b17c0a9217246c20770689b3fa3eb02cd task=speak source=Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice@85e237c12c027371202489a0ec509ded67b5e4b5 license=apache-2.0
+file qwen3-tts-0.6b-customvoice devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file qwen3-tts-0.6b-customvoice devices/consts.hnpb 1581776 8d979554d2ed9906b8f40ac7a4c838fc1bff6cef501f44c84d0a3be080dadd0e
+file qwen3-tts-0.6b-customvoice devices/devices.hnpm 1535 e8fbe2a9aae89f1689d733307a5d8a5915c08329aba34b0d8c70541d4555d340
+file qwen3-tts-0.6b-customvoice devices/pf/consts.hnpb 1941152 7025797c43cbe18d5773fda2aea0c02817b350c417ec67eedaef95b51a8792e0
+file qwen3-tts-0.6b-customvoice devices/pf/devices.hnpm 12432 fab0c46e4c2ede96800e718bbc8d8d64eae062d3d7e11ac6c8e65d7f7a6845ff
+file qwen3-tts-0.6b-customvoice devices/pf/u0.elf 2959232 476027878722ed6f34f48306991ce8c3f8f96477162565403cca88f1c545d076
+file qwen3-tts-0.6b-customvoice devices/pf/u1.elf 2975008 f99e239446f74c2c3cf9d95913619196eb9e02f06cc3d8fe500a3238cc1155ae
+file qwen3-tts-0.6b-customvoice devices/pf/u2.elf 3016080 80746e16fa804a25be308e36447403ea329b2bace7117f98206d03c2b1892157
+file qwen3-tts-0.6b-customvoice devices/pf/u3.elf 3266848 8744dc8adac2f87e62024c2005910c070311ab201e1950b752292a7571a9b1f1
+file qwen3-tts-0.6b-customvoice devices/pf/u4.elf 4015328 efedae2175e861f85e270a00695ea2780a0f8b1b13ca4f99e07ed4fb5a2e6eea
+file qwen3-tts-0.6b-customvoice devices/pf/weights.hnpw 508703544 107beca64aa4195fe995e954df9abafce7ea42bb1181bce03ecd92c7b54affc9
+file qwen3-tts-0.6b-customvoice devices/u0.elf 5732208 d35e81329c6eb7d1ae72804b81dc5d76d7e2ff07dc55768fca26888be616e4ea
+file qwen3-tts-0.6b-customvoice devices/u1.elf 1568384 95d037d9f364831fcb4604285146c0e77750d64bbe22dd0136b53f1e6c3a4551
+file qwen3-tts-0.6b-customvoice qwen3-tts-0.6b-customvoice.hnpw 540727016 4f2790d4293a0fdd1c4c3d32433a9d1ee1dc6f403afe82ad171cb7dbbf0140bf
+file qwen3-tts-0.6b-customvoice tokenizer/tokenizer.json 11418725 11451ba634be80e206ab41c839fb299401ccdd286fd4b40207fa4021b432b930
+file qwen3-tts-0.6b-customvoice hf/config.json 4908 81aca2b6fac304944d8acf345272d8a9a727d5fc2e2e66b222ab4729340c7455
+file qwen3-tts-0.6b-customvoice hf/generation_config.json 245 f1b90b4513f3b34c62851049e2492d7b4c5940daf1276f89c82b8ef04127f3aa
+file qwen3-tts-0.6b-customvoice hf/merges.txt 1671839 599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3
+file qwen3-tts-0.6b-customvoice hf/model.safetensors 1811626576 bc3c7e785eb961179c25450d1acff03f839e0002f2f3a5aeb67b5735c0fa2adb
+file qwen3-tts-0.6b-customvoice hf/preprocessor_config.json 127 efdde1022ea9d76928bf7a9cd53139138f5ba2e466e837f08f6105ab1af1c119
+file qwen3-tts-0.6b-customvoice hf/speech_tokenizer/config.json 2336 ee65bb901c876664ab8707c487157aa1a6ee57c65969b28fb5ec9dc211e68167
+file qwen3-tts-0.6b-customvoice hf/speech_tokenizer/configuration.json 76 6bc26d64eb5024b4d1dab5a52371958b429256d6c9d59787f1f5294a54e0cebd
+file qwen3-tts-0.6b-customvoice hf/speech_tokenizer/model.safetensors 682293092 836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258
+file qwen3-tts-0.6b-customvoice hf/speech_tokenizer/preprocessor_config.json 234 fcb3805e597e786d4067706e602f6688524640f8d3396790e2e09b5942fcbdfb
+file qwen3-tts-0.6b-customvoice hf/tokenizer_config.json 7344 dc3c31c3bdaedd5016382bb3cbe07323026775ad51f5a4fb564505992ae4a670
+file qwen3-tts-0.6b-customvoice hf/vocab.json 2776833 ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+model qwen3-tts-1.7b-customvoice repo=peonist-ai/halogen-npu-qwen3-tts-1.7b-customvoice revision=1a1a60eb2d1cff28b11687e82f5916d459a5a4c8 task=speak source=Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice@0c0e3051f131929182e2c023b9537f8b1c68adfe license=apache-2.0
+file qwen3-tts-1.7b-customvoice devices/NOTICE.md 3248 0f267b3d2523ddf14997ee58660a492a9eaf10ccf6b08bf19dfdc85b9a478b91
+file qwen3-tts-1.7b-customvoice devices/consts.hnpb 1581776 6e571b9d94026b203ffd905d064541b8faf6542356149eca2d173f0d8a6ea3f3
+file qwen3-tts-1.7b-customvoice devices/devices.hnpm 1535 7112f021b9ae1bc26a431883f9b162c67317a3f6b07b1e50ad033a5d0e0a454a
+file qwen3-tts-1.7b-customvoice devices/pf/consts.hnpb 1941152 7025797c43cbe18d5773fda2aea0c02817b350c417ec67eedaef95b51a8792e0
+file qwen3-tts-1.7b-customvoice devices/pf/devices.hnpm 12455 ffab0fcfdd2268157d039534572cdd5dcca8b9913eba48eede53e24eaf690e32
+file qwen3-tts-1.7b-customvoice devices/pf/u0.elf 2961632 3b85e8c97f0ac37fd5a3fddd5e940ca2cdadbe26710631e644325fb69baf6757
+file qwen3-tts-1.7b-customvoice devices/pf/u1.elf 2977408 d12ba1f316c3b2f0620ae479100e3a8565ba6382b1dbe90d133489ff38c4e233
+file qwen3-tts-1.7b-customvoice devices/pf/u2.elf 3018480 d3ab7b93977aee7800e990f412a2aeb2345bd92c8daeae59344c8773d1f9b139
+file qwen3-tts-1.7b-customvoice devices/pf/u3.elf 3263648 0786bf949d518dfeb075b8e8ff895382e89471c8c9f00e053b7d646207ffd544
+file qwen3-tts-1.7b-customvoice devices/pf/u4.elf 4010016 63559af40d3a6957839bdbb5a6cbf566ea7347bec4f9d8870381675b8cbdae7e
+file qwen3-tts-1.7b-customvoice devices/pf/weights.hnpw 1604993848 9dd964df8c801ef738ab8c9b6e6a0b26eae6009a0867246fb08a0f2a26c8fe99
+file qwen3-tts-1.7b-customvoice devices/u0.elf 5094544 c4039b7340abf75c5a05d2124814b5c8c0e064e224f18caa08fe0a86d4642e29
+file qwen3-tts-1.7b-customvoice devices/u1.elf 1568384 84432e81d8f1f5628811aafb300f3514a6d0e18acf1a82fc91167629637c18b3
+file qwen3-tts-1.7b-customvoice qwen3-tts-1.7b-customvoice.hnpw 1549981416 7298c959dfae3e60b748ce7fa1a6045687c84a5ee08ac8c966d9adcb44fc8130
+file qwen3-tts-1.7b-customvoice tokenizer/tokenizer.json 11418725 11451ba634be80e206ab41c839fb299401ccdd286fd4b40207fa4021b432b930
+file qwen3-tts-1.7b-customvoice hf/config.json 4908 17a07f527a1c25ea30b4e023a184482a23d3e279d697b1dc81b1bde498d29cf9
+file qwen3-tts-1.7b-customvoice hf/generation_config.json 245 f1b90b4513f3b34c62851049e2492d7b4c5940daf1276f89c82b8ef04127f3aa
+file qwen3-tts-1.7b-customvoice hf/merges.txt 1671839 599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3
+file qwen3-tts-1.7b-customvoice hf/model.safetensors 3833402552 38b1d5971bdbd982b561cccec982669a53b0537c3cf5e9bd4778ed07bb2f5137
+file qwen3-tts-1.7b-customvoice hf/preprocessor_config.json 127 efdde1022ea9d76928bf7a9cd53139138f5ba2e466e837f08f6105ab1af1c119
+file qwen3-tts-1.7b-customvoice hf/speech_tokenizer/config.json 2336 ee65bb901c876664ab8707c487157aa1a6ee57c65969b28fb5ec9dc211e68167
+file qwen3-tts-1.7b-customvoice hf/speech_tokenizer/configuration.json 76 6bc26d64eb5024b4d1dab5a52371958b429256d6c9d59787f1f5294a54e0cebd
+file qwen3-tts-1.7b-customvoice hf/speech_tokenizer/model.safetensors 682293092 836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258
+file qwen3-tts-1.7b-customvoice hf/speech_tokenizer/preprocessor_config.json 234 fcb3805e597e786d4067706e602f6688524640f8d3396790e2e09b5942fcbdfb
+file qwen3-tts-1.7b-customvoice hf/tokenizer_config.json 7344 dc3c31c3bdaedd5016382bb3cbe07323026775ad51f5a4fb564505992ae4a670
+file qwen3-tts-1.7b-customvoice hf/vocab.json 2776833 ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910

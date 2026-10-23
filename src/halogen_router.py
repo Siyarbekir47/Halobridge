@@ -820,7 +820,8 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
     if hasattr(manager, "auxiliary_models"):
         auxiliary_task = {"/v1/systemone": "decision", "/v1/images/generations": "image",
                           "/v1/images/edits": "image", "/v1/images/variations": "image",
-                          "/v1/audio/transcriptions": "transcribe", "/classify": "classifier"}.get(request.path)
+                          "/v1/audio/transcriptions": "transcribe", "/v1/audio/speech": "speak",
+                          "/classify": "classifier"}.get(request.path)
     if requested_model and hasattr(manager, "auxiliary_models") and requested_model not in manager.models:
         provider = getattr(manager, "npu_names", lambda _: set())
         auxiliary = requested_model in provider(manager.current_model)
