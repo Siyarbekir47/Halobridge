@@ -382,7 +382,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.received = []
         self.hold, self.entered = asyncio.Event(), asyncio.Event()
-        self.backend_entries = [{"id": "halogen-swift15"}] + [{"id": name, "task": "moderation" if task == "classify" else task} for name, task in NPU_MODELS.items()] + [{"id": "unexpected"}]
+        self.backend_entries = [{"id": "halogen-swift15"}] + [{"id": name, "task": {"classify": "moderation", "speak": "speech"}.get(task, task)} for name, task in NPU_MODELS.items()] + [{"id": "unexpected"}]
         self.headers = []
         async def backend(request):
             if request.path == "/v1/models":
@@ -517,7 +517,8 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_tts_stream_alias_preserves_binary_and_does_not_store_audio(self):
         model = "qwen3-tts-1.7b-customvoice"
-        self.backend_entries = [{"id": "halogen-swift15"}, {"id": model, "task": "speak"}]
+        # Halogen's runtime advertises "speech"; the download catalog calls it "speak".
+        self.backend_entries = [{"id": "halogen-swift15"}, {"id": model, "task": "speech"}]
         payload = {"model": "tts-1", "input": "Private speech text", "voice": "ryan", "response_format": "pcm", "stream": True}
         response = await self.client.post("/v1/audio/speech", json=payload)
         self.assertEqual(response.status, 200, await response.text() if response.status != 200 else '')
@@ -529,6 +530,27 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.dashboard._history(0, 99999999999)["total"], 1)
         self.assertEqual(self.manager.active_requests, 0)
         self.assertEqual(self.manager.current_model, "halogen-swift15")
+        self.manager.perform_switch.assert_not_awaited()
+
+    async def test_real_tts_discovery_metadata_routes_both_model_ids_and_alias(self):
+        for model in sorted(TTS_MODELS):
+            with self.subTest(model=model):
+                self.backend_entries = [{"id": "halogen-swift15"},
+                                        {"id": model, "backend": "npu", "task": "speech"},
+                                        {"id": "qwen3-embedding-0.6b", "task": "embedding"}]
+                listed = await self.client.get("/v1/models")
+                entry = next(e for e in (await listed.json())["data"] if e["id"] == model)
+                self.assertEqual(entry["task"], "speech")  # Preserve the upstream API metadata.
+                for requested in (model, "tts-1"):
+                    payload = {"model": requested, "input": "A short speech test.", "voice": "ryan"}
+                    response = await self.client.post("/v1/audio/speech", json=payload)
+                    self.assertEqual(response.status, 200, await response.text() if response.status != 200 else '')
+                    self.assertEqual(await response.read(), b"\x00\xff\x80\x01\x02\x03\x04\x05")
+                    self.assertEqual(self.received[-1], ("/v1/audio/speech", payload))
+                    row = self.dashboard.db.execute("SELECT model FROM requests ORDER BY id DESC LIMIT 1").fetchone()
+                    self.assertEqual(row[0], model)
+        self.assertEqual(self.manager.current_model, "halogen-swift15")
+        self.assertEqual(self.manager.active_requests, 0)
         self.manager.perform_switch.assert_not_awaited()
 
     async def test_npu_restart_503_keeps_gpu_serving_and_npu_can_recover(self):
