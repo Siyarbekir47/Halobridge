@@ -648,7 +648,8 @@ class ModelManager:
                         from npu import NPU_MODELS
                         def task(entry):
                             value = entry.get("task", NPU_MODELS.get(entry["id"]))
-                            return "classify" if value == "moderation" else value
+                            # Runtime API task names differ from the model download catalog.
+                            return {"moderation": "classify", "speech": "speak"}.get(value, value)
                         candidates = [entry["id"] for entry in entries if task(entry) == auxiliary_task]
                         if requested_model not in candidates:
                             if len(candidates) > 1:

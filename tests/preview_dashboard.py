@@ -262,7 +262,7 @@ def create_preview():
     # Synthetic playground API. Never connects to a real inference service.
     async def playground_api(request):
         if request.path == '/v1/models':
-            return web.json_response({'data': [{'id': 'qwen3.8-flash'}] + [{'id': name, 'task': task} for name, task in NPU_MODELS.items()]})
+            return web.json_response({'data': [{'id': 'qwen3.8-flash'}] + [{'id': name, 'task': {'classify': 'moderation', 'speak': 'speech'}.get(task, task)} for name, task in NPU_MODELS.items()]})
         if request.method != 'POST':
             return web.json_response({'fixture': True, 'path': request.path, 'method': request.method})
         if request.content_type == 'multipart/form-data':

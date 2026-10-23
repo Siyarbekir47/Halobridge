@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.35
+
+- Fix TTS routing with Halogen's speech task metadata.
+
 ## 0.1.34
 
 - Support Halogen 0.18.14 and verified NPU TTS assets.
