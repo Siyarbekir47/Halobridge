@@ -3,6 +3,8 @@
 Run: python tests/preview_dashboard.py
 """
 import time
+import asyncio
+import tomllib
 from pathlib import Path, PurePosixPath
 import sys
 
@@ -15,7 +17,7 @@ from swift_catalog import SHARED_ASSETS, SWIFT_VARIANTS, variant_info, variant_a
 from official_checkpoints import OFFICIAL_CHECKPOINTS
 from halogen_router import _login_response, _request_lang
 from npu import NPU_MODELS, TASK_ROUTES, bundled_manifest, parse_models
-from settings import app_version
+PREVIEW_VERSION = tomllib.loads((Path(__file__).resolve().parents[1] / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
 
 
 def create_preview():
@@ -113,7 +115,7 @@ def create_preview():
     app.router.add_post('/dashboard/api/updates/check', update_status)
     app.router.add_post('/dashboard/api/updates/checkpoint', install_checkpoint)
     # The self-update interaction is simulated; no installation or restart occurs.
-    app_updates = {'current_version': app_version(), 'latest_version': app_version(),
+    app_updates = {'current_version': PREVIEW_VERSION, 'latest_version': PREVIEW_VERSION,
                    'checked_at': time.time(), 'source_ref': 'develop',
                    'update_available': False, 'up_to_date': True, 'running': False,
                    'supported': True, 'can_install': False, 'job': None,
@@ -257,6 +259,48 @@ def create_preview():
     async def cleanup(_):
         await dashboard.close()
     app.on_cleanup.append(cleanup)
+    # Synthetic playground API. Never connects to a real inference service.
+    async def playground_api(request):
+        if request.path == '/v1/models':
+            return web.json_response({'data': [{'id': 'qwen3.8-flash'}] + [{'id': name, 'task': {'classify': 'moderation', 'speak': 'speech'}.get(task, task)} for name, task in NPU_MODELS.items()]})
+        if request.method != 'POST':
+            return web.json_response({'fixture': True, 'path': request.path, 'method': request.method})
+        if request.content_type == 'multipart/form-data':
+            reader = await request.multipart()
+            files = []
+            while (part := await reader.next()) is not None:
+                data = await part.read()
+                if part.filename:
+                    files.append({'field': part.name, 'bytes': len(data)})
+            return web.json_response({'text': 'Synthetic upload processed.', 'files': files})
+        data = await request.json()
+        if data.get('_preview_delay'):
+            await asyncio.sleep(10)
+        if data.get('_preview_error'):
+            return web.json_response({'error': {'message': 'Synthetic NPU unavailable'}}, status=503, headers={'Retry-After': '5'})
+        if request.path == '/v1/audio/speech':
+            import struct
+            samples = b'\x00\x00' * 2400
+            if data.get('response_format') == 'pcm':
+                return web.Response(body=samples, content_type='audio/pcm')
+            header = b'RIFF' + struct.pack('<I', 36 + len(samples)) + b'WAVEfmt ' + struct.pack('<IHHIIHH', 16, 1, 1, 24000, 48000, 2, 16) + b'data' + struct.pack('<I', len(samples))
+            return web.Response(body=header + samples, content_type='audio/wav')
+        if request.path == '/v1/images/generations':
+            return web.json_response({'data': [{'b64_json': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII='}], 'size': '512x512'})
+        if data.get('stream'):
+            response = web.StreamResponse(headers={'Content-Type': 'text/event-stream'})
+            await response.prepare(request)
+            for text in ['Local ', 'preview ', 'response.']:
+                import json
+                await response.write(('data: ' + json.dumps({'choices': [{'delta': {'content': text}}]}) + '\n\n').encode())
+                await asyncio.sleep(.02)
+            await response.write(b'data: [DONE]\n\n')
+            return response
+        return web.json_response({'choices': [{'message': {'content': 'Local preview response.'}}], 'usage': {'prompt_tokens': 12, 'completion_tokens': 4}, 'fixture': True})
+    app.router.add_get('/v1/models', playground_api)
+    app.router.add_route('*', '/v1/{tail:.*}', playground_api)
+    for path in ['/health', '/metrics', '/cache', '/props', '/slots', '/tokenize', '/detokenize', '/classify', '/halogen/handles', '/halogen/handles/{name}', '/router/status']:
+        app.router.add_route('*', path, playground_api)
     return app
 
 

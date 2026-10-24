@@ -50,11 +50,12 @@ async function apiFetch(url, options = {}) {
   }
   return response;
 }
+const playground = window.HalobridgePlayground.create({t, apiFetch, getLive: () => liveData, seconds, bytes});
 
 function showView(focus = false) {
   const requested = location.hash.slice(1);
-  currentView = ['overview', 'requests', 'models', 'system'].includes(requested) ? requested : 'overview';
-  for (const name of ['overview', 'requests', 'models', 'system']) $('view-' + name).hidden = name !== currentView;
+  currentView = ['overview', 'requests', 'models', 'playground', 'system'].includes(requested) ? requested : 'overview';
+  for (const name of ['overview', 'requests', 'models', 'playground', 'system']) $('view-' + name).hidden = name !== currentView;
   for (const link of document.querySelectorAll('[data-view]')) {
     if (link.dataset.view === currentView) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
@@ -62,10 +63,11 @@ function showView(focus = false) {
   $('viewTitle').textContent = t('nav_' + currentView);
   $('viewDescription').textContent = t('intro_' + currentView);
   document.title = `Halobridge · ${t('nav_' + currentView)}`;
-  $('analytics').hidden = currentView === 'models';
+  $('analytics').hidden = ['models', 'playground'].includes(currentView);
   if (focus) $('viewTitle').focus({preventScroll: true});
   if (currentView === 'overview' && currentAnalytics) renderChart(currentAnalytics);
   if (currentView === 'models' && focus) { refreshDeploy(); startJobPoll(); }
+  if (currentView === 'playground') playground.activate();
 }
 window.addEventListener('hashchange', () => showView(true));
 document.querySelector('.skip-link').addEventListener('click', event => {
@@ -854,6 +856,7 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_NPU_VERIFY', 'select:0,1', 'deploy_f_npu_verify'],
   ['HALOGEN_NPU_STALL_S', 'number', 'deploy_f_npu_stall'],
   ['HALOGEN_NPU_RESTARTS', 'number', 'deploy_f_npu_restarts'],
+  ['HALOGEN_NPU_SPLICE', 'select:0,1', 'deploy_f_npu_splice'],
   ['HALOGEN_NPU_DEC_RESUME', 'select:0,1,2', 'deploy_f_npu_dec_resume'],
   ['HALOGEN_NPU_DEC_ENTRIES', 'number', 'deploy_f_npu_dec_entries'],
   ['HALOGEN_NPU_IMAGE_EDITS', 'select:0,1', 'deploy_f_npu_image_edits'],
@@ -899,6 +902,7 @@ const ENGINE_ENV_FIELDS = [
   ['HALOGEN_SAMPLED_GATE', 'text', 'deploy_f_sampled_gate'],
   ['HALOGEN_CACHE_LEAD', 'select:0,1', 'deploy_f_cache_lead'],
   ['HALOGEN_CACHE_STAGE', 'select:0,2', 'deploy_f_cache_stage'],
+  ['HALOGEN_POOL_GROW', 'select:0,1', 'deploy_f_pool_grow'],
   ['HALOGEN_SPEC_GROUP', 'select:0,1,2,3,4', 'deploy_f_spec_group'],
   ['HALOGEN_ACCESS_LOG', 'select:quiet,all,off', 'deploy_f_access_log'],
 ];
@@ -1089,9 +1093,10 @@ async function refreshNpu() {
     $('npuHostCommands').textContent = (npuData.setup?.commands || []).join('\n');
     $('npuModelChoices').innerHTML = (npuData.models || []).map(model => `<label class="chk"><input type="checkbox" value="${esc(model.id)}" ${checked.has(model.id) ? 'checked' : ''}><span><strong>${esc(model.id)}</strong> <small>${esc(t(L['npu_model_' + model.id] ? 'npu_model_' + model.id : 'npu_task_' + model.task))} · ${esc(model.endpoint)}</small></span></label>`).join('');
     for (const input of $('npuModelChoices').querySelectorAll('input')) input.addEventListener('change', () => {
-      if (input.checked && input.value.startsWith('qwen3-asr-')) {
+      const speechFamily = ['qwen3-asr-', 'qwen3-tts-'].find(prefix => input.value.startsWith(prefix));
+      if (input.checked && speechFamily) {
         for (const other of $('npuModelChoices').querySelectorAll('input')) {
-          if (other !== input && other.value.startsWith('qwen3-asr-')) other.checked = false;
+          if (other !== input && other.value.startsWith(speechFamily)) other.checked = false;
         }
       }
       invalidateNpuPlan();
@@ -1501,6 +1506,7 @@ async function switchLanguage(lang) {
     try { localStorage.setItem('halobridge_lang', currentLang); } catch {}
     document.cookie = `halobridge_lang=${currentLang}; Path=/dashboard; SameSite=Lax`;
     applyLocale();
+    playground.translate();
     $('deployNotice').hidden = true;
     $('copyStatus').textContent = '';
     $('resetStatus').textContent = '';

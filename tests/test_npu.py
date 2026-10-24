@@ -25,6 +25,7 @@ import test_updates as updater_tests
 
 READY = {"ready": True, "errors": [], "xrt_mounts": []}
 IMAGE = "ghcr.io/peonist-ai/halogen-flash-server:0.16.2"
+TTS_MODELS = {name for name, task in NPU_MODELS.items() if task == "speak"}
 
 
 def fixture_manifest(program=b"new program"):
@@ -41,6 +42,13 @@ def fixture_manifest(program=b"new program"):
             paths.update({"enc/weights.hnpw": b"audio weights", "enc/devices.hnpm": b"audio record", "enc/u0.elf": program})
         if task == "image":
             paths["devices/taef2.safetensors"] = b"image decoder"
+        if task == "speak":
+            for name in ("hf/config.json", "hf/generation_config.json", "hf/model.safetensors",
+                         "hf/tokenizer_config.json", "hf/preprocessor_config.json", "hf/vocab.json", "hf/merges.txt",
+                         "hf/speech_tokenizer/config.json", "hf/speech_tokenizer/configuration.json",
+                         "hf/speech_tokenizer/model.safetensors", "hf/speech_tokenizer/preprocessor_config.json",
+                         "devices/pf/devices.hnpm", "devices/pf/weights.hnpw", "devices/pf/u0.elf"):
+                paths[name] = b"speech dependency"
         for name, data in paths.items():
             digest = hashlib.sha256(data).hexdigest()
             lines.append(f"file {model} {name} {len(data)} {digest}")
@@ -49,6 +57,34 @@ def fixture_manifest(program=b"new program"):
 
 
 class ManifestTests(unittest.TestCase):
+    def test_01814_catalog_pins_tts_dependencies_and_refreshed_decisions(self):
+        current = bundled_manifest("0.18.14")
+        self.assertEqual(current.key, "213a497dda130ffedb3f723bb3c2298906f85b2144397bb104fe1b8d197ecb0a")
+        self.assertEqual(set(current.models), set(NPU_MODELS))
+        for model in TTS_MODELS:
+            paths = {a.name for a in current.select([model])}
+            self.assertIn("hf/speech_tokenizer/model.safetensors", paths)
+            self.assertIn("devices/pf/weights.hnpw", paths)
+            incomplete = "\n".join(line for line in current.text.splitlines()
+                                   if not line.startswith(f"file {model} hf/speech_tokenizer/"))
+            with self.assertRaisesRegex(AssetError, "Incomplete NPU manifest"):
+                NpuManifest(incomplete)
+        old = bundled_manifest("0.18.13")
+        for model in ("decider-0.8b", "d3-lite", "d3-nano"):
+            self.assertNotEqual({a.name: a.digest for a in old.select([model])},
+                                {a.name: a.digest for a in current.select([model])})
+
+    def test_tts_selection_allows_one_talker_alongside_one_asr(self):
+        with self.assertRaisesRegex(ValueError, "only one text-to-speech"):
+            parse_models(",".join(sorted(TTS_MODELS)))
+        selected = "qwen3-asr-1.7b,qwen3-tts-0.6b-customvoice"
+        self.assertEqual(parse_models(selected), selected.split(","))
+        profile = official_template("0.18.13", Path("/host/models"), Path("/host/cache"))
+        profile.env["HALOGEN_NPU_MODELS"] = selected
+        self.assertTrue(any("0.18.14" in error for error in validate_profile(profile)))
+        profile.image = profile.image.replace(":0.18.13", ":0.18.14")
+        self.assertEqual(validate_profile(profile), [])
+
     def test_01812_and_01813_catalogs_match_the_official_images(self):
         previous = bundled_manifest("0.18.11")
         for version, digest in (
@@ -58,8 +94,8 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(version=version):
                 current = bundled_manifest(version)
                 self.assertEqual(current.key, digest)
-                self.assertEqual(set(current.models), set(NPU_MODELS))
-                for model in NPU_MODELS:
+                self.assertEqual(set(current.models), set(NPU_MODELS) - TTS_MODELS)
+                for model in current.models:
                     before = {(a.model, a.name): a.digest for a in previous.select([model])}
                     after = {(a.model, a.name): a.digest for a in current.select([model])}
                     self.assertNotEqual(before, after, model)
@@ -68,14 +104,14 @@ class ManifestTests(unittest.TestCase):
     def test_01811_catalog_and_multimodal_decision_files(self):
         manifest = bundled_manifest("0.18.11")
         self.assertEqual(manifest.key, "aa9e38801e05da999feb46741df7d275b2ab1de3ab8851873d1dc650f6ba713b")
-        self.assertEqual(set(manifest.models), set(NPU_MODELS))
+        self.assertEqual(set(manifest.models), set(NPU_MODELS) - TTS_MODELS)
         for name in ("d3-lite", "d3-nano", "embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b"):
             self.assertTrue(manifest.select([name]))
         self.assertTrue(any(a.model == "decider-4b" and a.name.startswith("devices/")
                             for a in manifest.select(["wemm-embedding-4b"])))
     def test_0180_catalog_accepts_asr_and_verifies_encoder_dependencies(self):
         latest = bundled_manifest("0.18.0")
-        self.assertEqual(set(latest.models), {m for m in NPU_MODELS if m not in {"embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b", "d3-lite", "d3-nano"}})
+        self.assertEqual(set(latest.models), {m for m in NPU_MODELS if m not in {"embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b", "d3-lite", "d3-nano"} | TTS_MODELS})
         for model in ("qwen3-asr-0.6b", "qwen3-asr-1.7b"):
             selected = latest.select([model])
             self.assertEqual({a.model for a in selected}, {model})
@@ -113,7 +149,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_real_image_manifest_lists_all_six_and_shares_dense_program(self):
         manifest = bundled_manifest("0.17.2")
-        self.assertEqual(set(manifest.models), {m for m in NPU_MODELS if m not in {"embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b", "d3-lite", "d3-nano", "decider-4b", "qwen3-embedding-4b", "qwen3-reranker-4b", "qwen3-asr-0.6b", "qwen3-asr-1.7b"}})
+        self.assertEqual(set(manifest.models), {m for m in NPU_MODELS if m not in {"embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b", "d3-lite", "d3-nano", "decider-4b", "qwen3-embedding-4b", "qwen3-reranker-4b", "qwen3-asr-0.6b", "qwen3-asr-1.7b"} | TTS_MODELS})
         assets = manifest.select(["qwen3-reranker-0.6b", "qwen3guard-gen-0.6b"])
         paths = {(a.model, a.name) for a in assets}
         self.assertNotIn(("qwen3-embedding-0.6b", "qwen3-embedding-0.6b.hnpw"), paths)
@@ -346,7 +382,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.received = []
         self.hold, self.entered = asyncio.Event(), asyncio.Event()
-        self.backend_entries = [{"id": "halogen-swift15"}] + [{"id": name, "task": "moderation" if task == "classify" else task} for name, task in NPU_MODELS.items()] + [{"id": "unexpected"}]
+        self.backend_entries = [{"id": "halogen-swift15"}] + [{"id": name, "task": {"classify": "moderation", "speak": "speech"}.get(task, task)} for name, task in NPU_MODELS.items()] + [{"id": "unexpected"}]
         self.headers = []
         async def backend(request):
             if request.path == "/v1/models":
@@ -361,6 +397,13 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             payload = await request.json()
             self.received.append((request.path, payload))
             self.headers.append(dict(request.headers))
+            if request.path == "/v1/audio/speech" and payload.get("voice"):
+                response = web.StreamResponse(headers={"Content-Type": "audio/pcm", "X-Speech-Test": "preserved"})
+                await response.prepare(request)
+                for chunk in (b"\x00\xff\x80\x01", b"\x02\x03\x04\x05"):
+                    await response.write(chunk)
+                await response.write_eof()
+                return response
             if payload.get("npu_unavailable"):
                 return web.json_response({"error": {"type": "engine_busy", "message": "NPU restarting"}},
                                          status=503, headers={"Retry-After": "5"})
@@ -468,6 +511,44 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         await response.read()
         offsets = [self.audio_body.index(data) for data in images]
         self.assertEqual(offsets, sorted(offsets))
+        self.assertEqual(self.manager.current_model, "halogen-swift15")
+        self.assertEqual(self.manager.active_requests, 0)
+        self.manager.perform_switch.assert_not_awaited()
+
+    async def test_tts_stream_alias_preserves_binary_and_does_not_store_audio(self):
+        model = "qwen3-tts-1.7b-customvoice"
+        # Halogen's runtime advertises "speech"; the download catalog calls it "speak".
+        self.backend_entries = [{"id": "halogen-swift15"}, {"id": model, "task": "speech"}]
+        payload = {"model": "tts-1", "input": "Private speech text", "voice": "ryan", "response_format": "pcm", "stream": True}
+        response = await self.client.post("/v1/audio/speech", json=payload)
+        self.assertEqual(response.status, 200, await response.text() if response.status != 200 else '')
+        self.assertEqual(await response.read(), b"\x00\xff\x80\x01\x02\x03\x04\x05")
+        self.assertEqual(response.headers["X-Speech-Test"], "preserved")
+        self.assertEqual(self.received[-1], ("/v1/audio/speech", payload))
+        row = self.dashboard.db.execute("SELECT model,response_bytes,input_tokens,output_tokens FROM requests").fetchone()
+        self.assertEqual(tuple(row), (model, 8, None, None))
+        self.assertEqual(self.dashboard._history(0, 99999999999)["total"], 1)
+        self.assertEqual(self.manager.active_requests, 0)
+        self.assertEqual(self.manager.current_model, "halogen-swift15")
+        self.manager.perform_switch.assert_not_awaited()
+
+    async def test_real_tts_discovery_metadata_routes_both_model_ids_and_alias(self):
+        for model in sorted(TTS_MODELS):
+            with self.subTest(model=model):
+                self.backend_entries = [{"id": "halogen-swift15"},
+                                        {"id": model, "backend": "npu", "task": "speech"},
+                                        {"id": "qwen3-embedding-0.6b", "task": "embedding"}]
+                listed = await self.client.get("/v1/models")
+                entry = next(e for e in (await listed.json())["data"] if e["id"] == model)
+                self.assertEqual(entry["task"], "speech")  # Preserve the upstream API metadata.
+                for requested in (model, "tts-1"):
+                    payload = {"model": requested, "input": "A short speech test.", "voice": "ryan"}
+                    response = await self.client.post("/v1/audio/speech", json=payload)
+                    self.assertEqual(response.status, 200, await response.text() if response.status != 200 else '')
+                    self.assertEqual(await response.read(), b"\x00\xff\x80\x01\x02\x03\x04\x05")
+                    self.assertEqual(self.received[-1], ("/v1/audio/speech", payload))
+                    row = self.dashboard.db.execute("SELECT model FROM requests ORDER BY id DESC LIMIT 1").fetchone()
+                    self.assertEqual(row[0], model)
         self.assertEqual(self.manager.current_model, "halogen-swift15")
         self.assertEqual(self.manager.active_requests, 0)
         self.manager.perform_switch.assert_not_awaited()
@@ -767,17 +848,17 @@ class EngineUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.downloads, ["devices/u0.elf"])
         self.assertEqual({p: p.read_bytes() for p in self.old_files}, self.old_files)
 
-    async def test_01813_update_prepares_npu_assets_and_preserves_gpu_settings(self):
-        self.updater.latest_version = "0.18.13"
-        self.updater._fetch_latest = AsyncMock(return_value="0.18.13")
-        with patch("test_updates.NEW", "0.18.13"):
-            await self.updater.start("0.18.13")
+    async def test_01814_update_prepares_npu_assets_and_preserves_gpu_settings(self):
+        self.updater.latest_version = "0.18.14"
+        self.updater._fetch_latest = AsyncMock(return_value="0.18.14")
+        with patch("test_updates.NEW", "0.18.14"):
+            await self.updater.start("0.18.14")
             await self.updater.task
         self.assertEqual(self.updater.job["phase"], "succeeded", self.updater.job)
         self.assertEqual(self.downloads, ["devices/u0.elf"])
         for path, original in self.originals.items():
             before, after = parse_quadlet(original.decode()), parse_quadlet(path.read_text())
-            self.assertTrue(after.image.endswith(":0.18.13"))
+            self.assertTrue(after.image.endswith(":0.18.14"))
             self.assertEqual(before.env, after.env)
             self.assertEqual(before.host_port, after.host_port)
             self.assertIn(self.new.key, next(host for host, target, _ in after.volumes if target == "/models/npu"))

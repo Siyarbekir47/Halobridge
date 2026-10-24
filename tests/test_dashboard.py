@@ -49,6 +49,17 @@ def insert(dashboard, **overrides):
 
 
 class TraceTests(unittest.TestCase):
+    def test_generated_audio_is_never_buffered_as_json_or_stream_text(self):
+        for content_type in ("audio/wav", "audio/pcm", "application/octet-stream"):
+            item = trace("/v1/audio/speech")
+            item.observe(b'{"usage":{"prompt_tokens":123,"completion_tokens":456}}', content_type)
+            self.assertFalse(item._json_buffer)
+            self.assertFalse(item._line_buffer)
+            item.finalize_parsing()
+            self.assertIsNone(item.input_tokens)
+            self.assertIsNone(item.output_tokens)
+            self.assertGreater(item.response_bytes, 0)
+
     def test_zero_is_a_measurement_and_timings_do_not_override_usage(self):
         t = trace()
         t.observe(json.dumps({

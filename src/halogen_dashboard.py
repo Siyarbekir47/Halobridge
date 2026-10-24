@@ -27,13 +27,13 @@ PERIOD_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "1y": 365 * 
 INFERENCE_ENDPOINTS = {"/v1/chat/completions", "/v1/completions", "/v1/responses",
                        "/v1/messages", "/v1/embeddings", "/v1/rerank", "/v1/moderations",
                        "/v1/systemone", "/v1/images/generations", "/v1/images/edits",
-                       "/v1/images/variations", "/v1/audio/transcriptions", "/classify"}
+                       "/v1/images/variations", "/v1/audio/transcriptions", "/v1/audio/speech", "/classify"}
 SERVE_HEAD_RE = re.compile(
     r"serve_api: (?P<mode>\w+) (?P<tokens>\d+) tok in "
     r"(?P<seconds>[\d.]+)s = (?P<tps>[\d.]+|n/a) t/s"
 )
 REQUEST_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses','/v1/messages')"
-HISTORY_SCOPE = "endpoint IN ('/v1/chat/completions','/v1/completions','/v1/responses','/v1/messages','/v1/embeddings','/v1/rerank','/v1/moderations','/v1/systemone','/v1/images/generations','/v1/audio/transcriptions','/classify')"
+HISTORY_SCOPE = "endpoint IN (" + ",".join("'" + endpoint + "'" for endpoint in sorted(INFERENCE_ENDPOINTS)) + ")"
 
 # Every aggregate uses this same population. Legacy counters cannot be repaired
 # from stored metadata: the original usage object was deliberately not retained.
@@ -296,7 +296,8 @@ class Trace:
         if self.first_byte_mono is None and chunk:
             self.first_byte_mono = time.monotonic()
         self.response_bytes += len(chunk)
-        if self.endpoint in {"/v1/images/generations", "/v1/audio/transcriptions"}:
+        if self.endpoint in {"/v1/images/generations", "/v1/images/edits", "/v1/images/variations",
+                             "/v1/audio/transcriptions", "/v1/audio/speech"}:
             return  # Keep image/audio/transcript content out of telemetry buffers.
         if "text/event-stream" in content_type.lower():
             self._line_buffer.extend(chunk)
@@ -893,7 +894,7 @@ class Dashboard:
             content_type="text/html",
             headers={
                 "Cache-Control": "no-store",
-                "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
+                "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; frame-ancestors 'none'",
                 "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
             },
         )
@@ -905,7 +906,7 @@ class Dashboard:
         from importlib.resources import files
 
         name = request.match_info["name"]
-        types = {"dashboard.css": "text/css", "dashboard.js": "application/javascript", "theme.js": "application/javascript"}
+        types = {"dashboard.css": "text/css", "dashboard.js": "application/javascript", "theme.js": "application/javascript", "playground.js": "application/javascript"}
         if name not in types:
             raise web.HTTPNotFound()
         content = files("halobridge_data").joinpath(name).read_text(encoding="utf-8")
