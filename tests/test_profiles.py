@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from profiles import (
+    DEFAULT_ENGINE_VERSION,
     ENV_FIELDS,
     OFFICIAL_WEIGHTS_REPO,
     Profile,
@@ -17,6 +18,7 @@ from profiles import (
     render_quadlet,
     uncensored_quick_template,
     uncensored_template,
+    swift_quick_template,
     validate_profile,
 )
 
@@ -167,6 +169,75 @@ class RenderImportTests(unittest.TestCase):
 
 
 class TemplateTests(unittest.TestCase):
+    def test_01815_controls_validate_values_versions_and_round_trip(self):
+        for name, valid, invalid in (
+            ("HALOGEN_ANSWER_GUARD", ("0", "1"), ("2", "-1")),
+            ("HALOGEN_DV_GRAMMAR", ("0", "1"), ("2", "yes")),
+            ("HALOGEN_GRAMMAR_JOINT", ("0", "1"), ("2", "-1")),
+            ("HALOGEN_OOM_SCORE_ADJ", ("0", "500", "1000"), ("-1", "1001", "1.5")),
+            ("HALOGEN_NPU_HOST_FLOOR_GIB", ("0", "4", "4.5"), ("-1", "NaN", "inf")),
+        ):
+            with self.subTest(name=name):
+                profile = official_template("0.18.14", Path("/host/models"), Path("/host/cache"))
+                profile.env[name] = valid[0]
+                self.assertTrue(any(f"{name}: requires Halogen 0.18.15" in e for e in validate_profile(profile)))
+                profile.image = profile.image.replace(":0.18.14", ":0.18.16")
+                for value in valid:
+                    profile.env[name] = value
+                    self.assertEqual(validate_profile(profile), [])
+                    self.assertEqual(parse_quadlet(render_quadlet(profile)).env[name], value)
+                for value in invalid:
+                    profile.env[name] = value
+                    self.assertTrue(any(name in e for e in validate_profile(profile)), value)
+
+    def test_large_kv_pool_is_opt_in_and_versioned(self):
+        profile = official_template("0.18.16", Path("/host/models"), Path("/host/cache"))
+        self.assert_common_runtime_env(profile)
+        profile.env.update(HALOGEN_KV8="1", HALOGEN_KV_SLOTS="8",
+                           HALOGEN_MAX_TOK="16384", HALOGEN_KV_POOL_POSITIONS="2097152")
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(parse_quadlet(render_quadlet(profile)).env, profile.env)
+        profile.env["HALOGEN_KV_POOL_POSITIONS"] = "2097153"
+        self.assertTrue(any("Maximum" in e for e in validate_profile(profile)))
+        profile.image = profile.image.replace(":0.18.16", ":0.18.14")
+        for value in ("2097152", "+2097152"):
+            profile.env["HALOGEN_KV_POOL_POSITIONS"] = value
+            self.assertTrue(any("requires Halogen 0.18.15" in e for e in validate_profile(profile)))
+        profile.env["HALOGEN_KV_POOL_POSITIONS"] = "1048576"
+        self.assertEqual(validate_profile(profile), [])
+
+    def test_combined_session_mapping_preserves_exact_value_and_dependencies(self):
+        profile = official_template("0.18.16", Path("/host/models"), Path("/host/cache"))
+        profile.env.update(HALOGEN_FORK="1", HALOGEN_FORK_MAP="claude-code,auto")
+        self.assertEqual(validate_profile(profile), [])
+        self.assertEqual(parse_quadlet(render_quadlet(profile)).env, profile.env)
+        profile.env["HALOGEN_FORK"] = "0"
+        self.assertTrue(any("requires HALOGEN_FORK=1" in e for e in validate_profile(profile)))
+        profile.env["HALOGEN_FORK"] = "1"
+        profile.image = profile.image.replace(":0.18.16", ":0.18.2")
+        self.assertTrue(any("requires Halogen 0.18.3" in e for e in validate_profile(profile)))
+        for value in ("claude-code,unknown", "auto;evil", "claude-code,auto\nEnvironment=EVIL=1"):
+            profile.env["HALOGEN_FORK_MAP"] = value
+            self.assertTrue(any("HALOGEN_FORK_MAP" in e for e in validate_profile(profile)))
+
+    def test_new_engine_templates_preserve_capacity_and_leave_new_options_unset(self):
+        self.assertEqual(DEFAULT_ENGINE_VERSION, "0.18.16")
+        profiles = [factory(DEFAULT_ENGINE_VERSION, Path("/host/models"), Path("/host/cache"))
+                    for factory in (official_template, uncensored_template, custom_template)]
+        from shared_assets import SharedAssets
+        assets = SharedAssets(Path("/host/models"), Path("/host/quadlets"), Path("/host/state"))
+        profiles += [swift_quick_template(variant, Path("/host/models"), Path("/host/cache"), assets.locations(variant))
+                     for variant in ("swift15", "swift15-abliterated", "cyber-frost")]
+        for profile in profiles:
+            with self.subTest(profile=profile.profile_id):
+                self.assertEqual(validate_profile(profile), [])
+                self.assertEqual(profile.env["HALOGEN_CTX"], "262144")
+                self.assertEqual(profile.env["HALOGEN_KV_SLOTS"], "2")
+                self.assertIn(profile.env["HALOGEN_KV_POOL_POSITIONS"], ("262144", "524288"))
+                for name in ("HALOGEN_FORK_MAP", "HALOGEN_NPU_SPLICE", "HALOGEN_ANSWER_GUARD",
+                             "HALOGEN_NPU_HOST_FLOOR_GIB", "HALOGEN_OOM_SCORE_ADJ"):
+                    self.assertNotIn(name, profile.env)
+
     def test_01814_npu_splicing_and_pool_growth_are_versioned_flags(self):
         for name in ("HALOGEN_NPU_SPLICE", "HALOGEN_POOL_GROW"):
             profile = official_template("0.18.13", Path("/host/models"), Path("/host/cache"))

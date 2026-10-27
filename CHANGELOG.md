@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.36
+
+- Support Halogen 0.18.16 and reuse verified NPU assets.
+- Expose answer guards, grammar and memory protection controls.
+- Allow larger KV pools and combined session mapping.
+- Preserve existing checkpoints, context limits and slots.
+
 ## 0.1.35
 
 - Fix TTS routing with Halogen's speech task metadata.

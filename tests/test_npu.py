@@ -57,6 +57,14 @@ def fixture_manifest(program=b"new program"):
 
 
 class ManifestTests(unittest.TestCase):
+    def test_01816_catalog_reuses_verified_01814_assets(self):
+        previous, current = bundled_manifest("0.18.14"), bundled_manifest("0.18.16")
+        self.assertEqual(current.key, "213a497dda130ffedb3f723bb3c2298906f85b2144397bb104fe1b8d197ecb0a")
+        self.assertEqual(current.text, previous.text)
+        self.assertEqual(set(current.models), set(NPU_MODELS))
+        for model in NPU_MODELS:
+            self.assertEqual(current.select([model]), previous.select([model]))
+
     def test_01814_catalog_pins_tts_dependencies_and_refreshed_decisions(self):
         current = bundled_manifest("0.18.14")
         self.assertEqual(current.key, "213a497dda130ffedb3f723bb3c2298906f85b2144397bb104fe1b8d197ecb0a")
@@ -848,17 +856,17 @@ class EngineUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.downloads, ["devices/u0.elf"])
         self.assertEqual({p: p.read_bytes() for p in self.old_files}, self.old_files)
 
-    async def test_01814_update_prepares_npu_assets_and_preserves_gpu_settings(self):
-        self.updater.latest_version = "0.18.14"
-        self.updater._fetch_latest = AsyncMock(return_value="0.18.14")
-        with patch("test_updates.NEW", "0.18.14"):
-            await self.updater.start("0.18.14")
+    async def test_01816_update_prepares_npu_assets_and_preserves_gpu_settings(self):
+        self.updater.latest_version = "0.18.16"
+        self.updater._fetch_latest = AsyncMock(return_value="0.18.16")
+        with patch("test_updates.NEW", "0.18.16"):
+            await self.updater.start("0.18.16")
             await self.updater.task
         self.assertEqual(self.updater.job["phase"], "succeeded", self.updater.job)
         self.assertEqual(self.downloads, ["devices/u0.elf"])
         for path, original in self.originals.items():
             before, after = parse_quadlet(original.decode()), parse_quadlet(path.read_text())
-            self.assertTrue(after.image.endswith(":0.18.14"))
+            self.assertTrue(after.image.endswith(":0.18.16"))
             self.assertEqual(before.env, after.env)
             self.assertEqual(before.host_port, after.host_port)
             self.assertIn(self.new.key, next(host for host, target, _ in after.volumes if target == "/models/npu"))
