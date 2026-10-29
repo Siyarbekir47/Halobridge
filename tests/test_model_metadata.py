@@ -97,8 +97,20 @@ class ModelMetadataTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(entry[field], 131072)
                 self.entry.pop(field)
 
+    async def test_vision_modalities_follow_the_active_backend_without_affecting_inactive_profiles(self):
+        self.manager.models["inactive"] = "inactive.service"
+        for modalities in (["text", "image"], ["text"]):
+            with self.subTest(input_modalities=modalities):
+                self.entry["architecture"] = {"input_modalities": modalities, "output_modalities": ["text"]}
+                entries = (await self.models())["data"]
+                self.assertEqual(entries[0]["architecture"], self.entry["architecture"])
+                self.assertNotIn("architecture", entries[1])
+        self.status = 503
+        self.assertTrue(all("architecture" not in entry for entry in (await self.models())["data"]))
+
     async def test_active_and_npu_metadata_share_one_probe(self):
-        auxiliary = {"id": "decider-4b", "task": "decision", "context_length": 32768}
+        auxiliary = {"id": "decider-4b", "task": "decision", "context_length": 32768,
+                     "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}}
         self.entries += [auxiliary, {"id": "unexpected", "meta": {"n_ctx": 1}}]
         self.manager.npu_names = lambda _: {"decider-4b"}
         entries = (await self.models())["data"]

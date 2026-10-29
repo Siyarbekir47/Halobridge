@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.35 supports Halogen 0.18.14. Install the Halobridge update, then
+Halobridge 0.1.37 supports Halogen 0.18.18. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -35,7 +35,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.18.14 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.18.18 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## Test in the dashboard
@@ -138,7 +138,7 @@ request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.18.14 and select **one** ASR model in
+Update the target GPU profiles to 0.18.18 and select **one** ASR model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -178,10 +178,11 @@ also accepts `instructions` for speaking style; 0.6B refuses that field.
 `response_format` is `wav` or `pcm` (16-bit mono, 24 kHz); use `stream:true`
 with PCM. Compressed formats and `speed` values other than 1 are unsupported.
 
-The talker runs on the NPU with CPU audio decoding. Other NPU work normally
-waits until speech finishes; Flash stays loaded. `HALOGEN_NPU_SPLICE=1` allows
-short decisions, embeddings, reranks and moderation between steps, but can delay
-the streaming guard, so it defaults to 0. These controls are in the profile editor.
+The talker runs on the NPU with CPU audio decoding; Flash stays loaded.
+From 0.18.15, `HALOGEN_NPU_SPLICE=1` is the default: short decisions,
+embeddings, reranks and moderation run between steps, with streaming guard
+checks first. `0` queues them behind the long job instead. On 0.18.14 this
+option defaults to 0. These controls are in the profile editor.
 Audio content and speech text are excluded from Halobridge telemetry buffers;
 history records duration, model, status and response bytes without invented tokens.
 
@@ -223,7 +224,7 @@ curl --fail-with-body -sS localhost:8731/v1/embeddings \
 
 EmbeddingGemma image inputs use `image_url` parts with inline base64, and audio
 inputs use `input_audio` parts with `data` and `format:"wav"`; see the
-[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.14/docs/NPU.md).
+[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md).
 
 ### Image edits and variations
 
@@ -502,7 +503,87 @@ speculate together automatically. Faster decode and prompt processing, improved
 disk-prefix cache reuse, streamed tool-call cleanup and schema/tool fixes work
 without a new endpoint. Late system/developer turns in Chat Completions are
 treated as user text at their position; images in those late turns are refused.
-GPU checkpoints remain unchanged from 0.16.2 through 0.18.14. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
+GPU checkpoints remain unchanged from 0.16.2 through 0.18.18. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
+
+### Tool compatibility and vision discovery (0.18.18)
+
+Update profiles directly to 0.18.18 in **System → Engine updates**. The
+0.18.17/0.18.18 fixes use the existing endpoints: kept conversations remain
+isolated in a full KV pool, automatic keeps no longer wait on themselves, and
+short prompts stay responsive beside long ones despite metrics reads or paused
+replies. Flash checkpoints, context and slot settings are unchanged. The
+0.18.18 NPU catalog matches 0.18.14/0.18.16; verified assets are reused.
+
+On `/v1/messages`, Claude Code's `tool_reference` blocks and `defer_loading`
+fields pass through unchanged. Newly loaded tools no longer invalidate the
+conversation's prompt cache. The editor exposes `HALOGEN_TOOL_DEFER` (0.18.18+):
+leave it empty for the engine default `1`, or set `0` to load tools up front.
+The `ENABLE_TOOL_SEARCH=false` client workaround is no longer needed. Tool-call
+arguments containing literal tool markup are preserved on Chat Completions,
+Responses and Messages, streamed or not.
+
+`GET /v1/models` now carries the active backend's vision capability in
+OpenRouter's format:
+
+```json
+{
+  "architecture": {
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"]
+  }
+}
+```
+
+Without its vision tower the inputs are `["text"]`. Halobridge preserves the
+advertised values, including each NPU model's own metadata, and never copies
+the active model's capabilities to an inactive GPU profile. No new endpoint
+is required. Existing custom GGUF profiles can use ggml-org's IQ4_NL checkpoint
+with the updated engine; HGN installations need no new checkpoint.
+
+### Reliability and capacity (0.18.16)
+
+Use **System → Engine updates** to update installed profiles. 0.18.16 fixes
+kept replies being mixed when conversations move in the KV pool and turns off
+0.18.15's automatic reply-end keeps after reports of long stalls. Empty
+`HALOGEN_FORK_MAP` is off again; an explicitly configured `auto` stays on.
+The editor accepts `claude-code,auto` to enable both maps with
+`HALOGEN_FORK=1`. Existing settings, checkpoints and shared files are retained.
+The 0.18.16 NPU catalog is identical to 0.18.14, so verified files are reused.
+
+0.18.15's cancellation, truncated tool-call and `/detokenize` fixes use existing
+endpoints. No new endpoint or request format is needed. The profile editor
+exposes these additional controls (0.18.15+, except the older EOS guard):
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `HALOGEN_EOS_GUARD` | `1` | Keep quoted end-of-turn tokens in reasoning and tools from stopping a reply; available since 0.13.4. |
+| `HALOGEN_ANSWER_GUARD` | `1` | Avoid ending on unfinished code fences, headings and labels; needs the EOS guard. It can change replies that would have ended there. |
+| `HALOGEN_DV_GRAMMAR` | `1` | Accelerate structured-output checks; `0` restores the previous path. |
+| `HALOGEN_GRAMMAR_JOINT` | `1` | Accelerate grammar decoding across concurrent requests; `0` restores the previous path. |
+| `HALOGEN_OOM_SCORE_ADJ` | `500` | Prefer ending the container over the desktop when the host runs out of memory; `0` leaves its inherited score. Range 0–1000. |
+| `HALOGEN_NPU_HOST_FLOOR_GIB` | `4` | Refuse new NPU memory allocations with 503 / `host_memory` below this host-memory reserve; `0` disables the floor. |
+| `HALOGEN_NPU_SPLICE` | `1` | Interleave short NPU jobs and prioritize streaming guard checks; 0.18.14 defaulted to `0`. |
+
+If the NPU returns `host_memory`, enable fewer NPU models or reduce the KV
+pool. A speech request that cannot fit now releases idle NPU memory and retries
+once, then fails only that request if needed; other NPU models stay available.
+
+The capacity editor accepts a KV pool up to **2,097,152** positions on 0.18.15+.
+For a 128 GB host running the default official checkpoint, the optional
+upstream eight-conversation recipe is:
+
+```text
+HALOGEN_KV8=1
+HALOGEN_KV_SLOTS=8
+HALOGEN_MAX_TOK=16384
+HALOGEN_KV_POOL_POSITIONS=2097152
+```
+
+It leaves little host memory: use this recipe **without NPU models**. KV8 can
+change output and is incompatible with composable context. The pool is shared
+capacity, not a larger per-request context. The engine may lower it to fit.
+Halobridge does not enable this recipe automatically; new templates keep
+262144 context and two slots, and upgrades preserve user settings.
 
 ### Streaming during long prompts and NPU recovery (0.18.13)
 
@@ -540,5 +621,5 @@ curl --fail-with-body -sS localhost:8731/metrics \
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.14/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.14/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/CHANGELOG.md).

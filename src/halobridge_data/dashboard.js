@@ -857,6 +857,7 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_NPU_STALL_S', 'number', 'deploy_f_npu_stall'],
   ['HALOGEN_NPU_RESTARTS', 'number', 'deploy_f_npu_restarts'],
   ['HALOGEN_NPU_SPLICE', 'select:0,1', 'deploy_f_npu_splice'],
+  ['HALOGEN_NPU_HOST_FLOOR_GIB', 'number', 'deploy_f_npu_host_floor'],
   ['HALOGEN_NPU_DEC_RESUME', 'select:0,1,2', 'deploy_f_npu_dec_resume'],
   ['HALOGEN_NPU_DEC_ENTRIES', 'number', 'deploy_f_npu_dec_entries'],
   ['HALOGEN_NPU_IMAGE_EDITS', 'select:0,1', 'deploy_f_npu_image_edits'],
@@ -888,6 +889,7 @@ const ENGINE_ENV_FIELDS = [
   ['HALOGEN_ENGINE_WATCHDOG_DEFER_S', 'number', 'deploy_f_watchdog_defer'],
   ['HALOGEN_RETRY_GRACE_S', 'number', 'deploy_f_retry_grace'],
   ['HALOGEN_STRICT_TOOLS', 'select:0,1', 'deploy_f_strict_tools'],
+  ['HALOGEN_TOOL_DEFER', 'select:0,1', 'deploy_f_tool_defer'],
   ['HALOGEN_CLIENT_MARKERS', 'select:text,special', 'deploy_f_client_markers'],
   ['HALOGEN_QSA_FORCE_SEL', 'select:0,1', 'deploy_f_qsa_sel'],
   ['HALOGEN_CHAT_TEMPLATE', 'text', 'deploy_f_chat_template'],
@@ -897,12 +899,17 @@ const ENGINE_ENV_FIELDS = [
   ['HALOGEN_COMPOSABLE_CONTEXT', 'select:0,1', 'deploy_f_composable_context'],
   ['HALOGEN_GRAMMAR_DRAFT', 'select:0,1', 'deploy_f_grammar_draft'],
   ['HALOGEN_GRAMMAR_DRAFT_SAMPLED', 'select:0,1', 'deploy_f_grammar_draft_sampled'],
+  ['HALOGEN_DV_GRAMMAR', 'select:0,1', 'deploy_f_dv_grammar'],
+  ['HALOGEN_GRAMMAR_JOINT', 'select:0,1', 'deploy_f_grammar_joint'],
+  ['HALOGEN_EOS_GUARD', 'select:0,1', 'deploy_f_eos_guard'],
+  ['HALOGEN_ANSWER_GUARD', 'select:0,1', 'deploy_f_answer_guard'],
   ['HALOGEN_MTP_GATE_P', 'number', 'deploy_f_mtp_gate'],
   ['HALOGEN_SAMPLED_DEPTH', 'number', 'deploy_f_sampled_depth'],
   ['HALOGEN_SAMPLED_GATE', 'text', 'deploy_f_sampled_gate'],
   ['HALOGEN_CACHE_LEAD', 'select:0,1', 'deploy_f_cache_lead'],
   ['HALOGEN_CACHE_STAGE', 'select:0,2', 'deploy_f_cache_stage'],
   ['HALOGEN_POOL_GROW', 'select:0,1', 'deploy_f_pool_grow'],
+  ['HALOGEN_OOM_SCORE_ADJ', 'number', 'deploy_f_oom_score'],
   ['HALOGEN_SPEC_GROUP', 'select:0,1,2,3,4', 'deploy_f_spec_group'],
   ['HALOGEN_ACCESS_LOG', 'select:quiet,all,off', 'deploy_f_access_log'],
 ];
@@ -911,7 +918,7 @@ const SESSION_ENV_FIELDS = [
   ['HALOGEN_FORK_HANDLES', 'number', 'deploy_f_fork_handles'],
   ['HALOGEN_FORK_TTL_S', 'number', 'deploy_f_fork_ttl'],
   ['HALOGEN_FORK_GIB', 'number', 'deploy_f_fork_gib'],
-  ['HALOGEN_FORK_MAP', 'select:0,claude-code,auto', 'deploy_f_fork_map'],
+  ['HALOGEN_FORK_MAP', 'select:0|claude-code|auto|claude-code,auto', 'deploy_f_fork_map'],
   ['HALOGEN_FORK_AUTO_KEEPS', 'number', 'deploy_f_auto_keeps'],
 ];
 const RECORD_ENV_FIELDS = [
@@ -968,7 +975,8 @@ function renderDeployForm(profile) {
   const fieldHtml = (name, type, key, value) => {
     if (type === 'check') return `<label class="chk"><span data-i18n="${key}">${esc(t(key))}</span><input id="df_${name}" type="checkbox" ${value === true || value === '1' ? 'checked' : ''}></label>`;
     if (type.startsWith('select')) {
-      const opts = type.split(':')[1].split(',');
+      const values = type.split(':')[1];
+      const opts = values.split(values.includes('|') ? '|' : ',');
       return `<label><span data-i18n="${key}">${esc(t(key))}</span><select id="df_${name}"><option value=""></option>${opts.map(c => `<option value="${c}" ${value === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>`;
     }
     return `<label><span data-i18n="${key}">${esc(t(key))}</span><input id="df_${name}" type="${type}" ${type === 'number' ? 'step="any"' : ''} ${type === 'password' ? 'autocomplete="new-password"' : ''} value="${esc(String(value ?? ''))}"></label>`;

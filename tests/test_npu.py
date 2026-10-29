@@ -57,6 +57,17 @@ def fixture_manifest(program=b"new program"):
 
 
 class ManifestTests(unittest.TestCase):
+    def test_newer_catalogs_reuse_verified_01814_assets(self):
+        previous = bundled_manifest("0.18.14")
+        for version in ("0.18.16", "0.18.18"):
+            with self.subTest(version=version):
+                current = bundled_manifest(version)
+                self.assertEqual(current.key, "213a497dda130ffedb3f723bb3c2298906f85b2144397bb104fe1b8d197ecb0a")
+                self.assertEqual(current.text, previous.text)
+                self.assertEqual(set(current.models), set(NPU_MODELS))
+                for model in NPU_MODELS:
+                    self.assertEqual(current.select([model]), previous.select([model]))
+
     def test_01814_catalog_pins_tts_dependencies_and_refreshed_decisions(self):
         current = bundled_manifest("0.18.14")
         self.assertEqual(current.key, "213a497dda130ffedb3f723bb3c2298906f85b2144397bb104fe1b8d197ecb0a")
@@ -381,6 +392,7 @@ class HostTests(unittest.TestCase):
 class ProxyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.received = []
+        self.response_override = None
         self.hold, self.entered = asyncio.Event(), asyncio.Event()
         self.backend_entries = [{"id": "halogen-swift15"}] + [{"id": name, "task": {"classify": "moderation", "speak": "speech"}.get(task, task)} for name, task in NPU_MODELS.items()] + [{"id": "unexpected"}]
         self.headers = []
@@ -397,6 +409,9 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             payload = await request.json()
             self.received.append((request.path, payload))
             self.headers.append(dict(request.headers))
+            if self.response_override is not None:
+                body, content_type = self.response_override
+                return web.Response(body=body, content_type=content_type)
             if request.path == "/v1/audio/speech" and payload.get("voice"):
                 response = web.StreamResponse(headers={"Content-Type": "audio/pcm", "X-Speech-Test": "preserved"})
                 await response.prepare(request)
@@ -712,6 +727,41 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(models["data"][0]["type"], "model")
         self.assertIn("created_at", models["data"][0])
 
+    async def test_deferred_mcp_references_and_tool_markup_pass_through_unchanged(self):
+        text = 'Write </function> </parameter> <function=example> </tool_call> intact.\n<tool_call>example</tool_call>'
+        arguments = json.dumps({"text": text})
+        for route, reply in (
+            ("/v1/chat/completions", {"choices": [{"message": {"role": "assistant", "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "write", "arguments": arguments}}]}}]}),
+            ("/v1/responses", {"output": [{"type": "function_call", "call_id": "call_1",
+                                          "name": "write", "arguments": arguments}]}),
+            ("/v1/messages", {"content": [{"type": "tool_use", "id": "call_1", "name": "write",
+                                         "input": {"text": text}}]}),
+        ):
+            for stream in (False, True):
+                with self.subTest(route=route, stream=stream):
+                    payload = {"model": "halogen-swift15", "stream": stream, "max_tokens": 1024}
+                    if route == "/v1/messages":
+                        payload.update(tools=[{"name": "write", "defer_loading": True,
+                                               "input_schema": {"type": "object"}}], messages=[
+                            {"role": "assistant", "content": [{"type": "tool_use", "id": "search_1",
+                                "name": "tool_search", "input": {"query": "write"}}]},
+                            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "search_1",
+                                "content": [{"type": "tool_reference", "tool_name": "write"}]}]}])
+                    else:
+                        payload["input" if route == "/v1/responses" else "messages"] = text if route == "/v1/responses" else [{"role": "user", "content": text}]
+                    encoded = json.dumps(reply)
+                    body = (f"data: {encoded}\n\ndata: [DONE]\n\n" if stream else encoded).encode()
+                    self.response_override = body, "text/event-stream" if stream else "application/json"
+                    response = await self.client.post(route, json=payload)
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(await response.read(), body)
+                    expected = dict(payload)
+                    if stream and route == "/v1/chat/completions":
+                        expected["stream_options"] = {"include_usage": True}
+                    self.assertEqual(self.received[-1], (route, expected))
+        self.manager.perform_switch.assert_not_awaited()
+
     async def test_models_only_advertises_loaded_declared_auxiliary_models(self):
         response = await self.client.get("/v1/models")
         names = {entry["id"] for entry in (await response.json())["data"]}
@@ -848,17 +898,17 @@ class EngineUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.downloads, ["devices/u0.elf"])
         self.assertEqual({p: p.read_bytes() for p in self.old_files}, self.old_files)
 
-    async def test_01814_update_prepares_npu_assets_and_preserves_gpu_settings(self):
-        self.updater.latest_version = "0.18.14"
-        self.updater._fetch_latest = AsyncMock(return_value="0.18.14")
-        with patch("test_updates.NEW", "0.18.14"):
-            await self.updater.start("0.18.14")
+    async def test_01818_update_prepares_npu_assets_and_preserves_gpu_settings(self):
+        self.updater.latest_version = "0.18.18"
+        self.updater._fetch_latest = AsyncMock(return_value="0.18.18")
+        with patch("test_updates.NEW", "0.18.18"):
+            await self.updater.start("0.18.18")
             await self.updater.task
         self.assertEqual(self.updater.job["phase"], "succeeded", self.updater.job)
         self.assertEqual(self.downloads, ["devices/u0.elf"])
         for path, original in self.originals.items():
             before, after = parse_quadlet(original.decode()), parse_quadlet(path.read_text())
-            self.assertTrue(after.image.endswith(":0.18.14"))
+            self.assertTrue(after.image.endswith(":0.18.18"))
             self.assertEqual(before.env, after.env)
             self.assertEqual(before.host_port, after.host_port)
             self.assertIn(self.new.key, next(host for host, target, _ in after.volumes if target == "/models/npu"))

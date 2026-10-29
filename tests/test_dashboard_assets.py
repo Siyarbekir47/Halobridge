@@ -1,6 +1,7 @@
 """Verify the shipped dashboard assets, translations, and resource boundary."""
 from html.parser import HTMLParser
 import json
+import re
 from pathlib import Path
 import unittest
 
@@ -71,6 +72,9 @@ class AssetsTests(unittest.IsolatedAsyncioTestCase):
         en, de = [json.loads((root / f'locales/{lang}.json').read_text(encoding='utf-8')) for lang in ['en', 'de']]
         self.assertEqual(set(en), set(de))
         self.assertFalse(set(markup.keys) - set(en))
+        script = (root / 'dashboard.js').read_text(encoding='utf-8')
+        editor_labels = re.findall(r"\['HALOGEN_[^']+', '[^']+', '(deploy_f_[^']+)'\]", script)
+        self.assertFalse(set(editor_labels) - set(en))
 
 
 if __name__ == '__main__':

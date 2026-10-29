@@ -57,7 +57,13 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_NPU_STALL_S": FieldSpec("float", 0, 86400),
     "HALOGEN_NPU_RESTARTS": FieldSpec("int", 0, 65536),
     "HALOGEN_NPU_SPLICE": FieldSpec("flag"),
+    "HALOGEN_NPU_HOST_FLOOR_GIB": FieldSpec("float", 0, 4096),
     "HALOGEN_POOL_GROW": FieldSpec("flag"),
+    "HALOGEN_OOM_SCORE_ADJ": FieldSpec("int", 0, 1000),
+    "HALOGEN_EOS_GUARD": FieldSpec("flag"),
+    "HALOGEN_ANSWER_GUARD": FieldSpec("flag"),
+    "HALOGEN_DV_GRAMMAR": FieldSpec("flag"),
+    "HALOGEN_GRAMMAR_JOINT": FieldSpec("flag"),
     "HALOGEN_NPU_DEC_RESUME": FieldSpec("enum", choices=("0", "1", "2")),
     "HALOGEN_NPU_DEC_ENTRIES": FieldSpec("int", 1, 1024),
     "HALOGEN_CACHE_EVICT": FieldSpec("flag"),
@@ -83,6 +89,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_NEXT_TOKEN_S": FieldSpec("float", 0.01, 86400),
     "HALOGEN_RETRY_GRACE_S": FieldSpec("float", 0, 120),
     "HALOGEN_STRICT_TOOLS": FieldSpec("flag"),
+    "HALOGEN_TOOL_DEFER": FieldSpec("flag"),
     "HALOGEN_CLIENT_MARKERS": FieldSpec("enum", choices=("text", "special")),
     "HALOGEN_QSA_FORCE_SEL": FieldSpec("flag"),
     "HALOGEN_ENGINE_WATCHDOG_S": FieldSpec("float", 0, 86400),
@@ -91,7 +98,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_FORK_HANDLES": FieldSpec("int", 1, 65536),
     "HALOGEN_FORK_TTL_S": FieldSpec("float", 0.01, 86400),
     "HALOGEN_FORK_GIB": FieldSpec("float", 0.01, 4096),
-    "HALOGEN_FORK_MAP": FieldSpec("enum", choices=("0", "claude-code", "auto")),
+    "HALOGEN_FORK_MAP": FieldSpec("enum", choices=("0", "claude-code", "auto", "claude-code,auto")),
     "HALOGEN_CHAT_TEMPLATE": FieldSpec("path"),
     "HALOGEN_TEMPLATE_CHECK": FieldSpec("enum", choices=("warn", "off")),
     "HALOGEN_GPU_DEVICE": FieldSpec("int", 0, 63),
@@ -139,7 +146,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_GRAMMAR": FieldSpec("flag"),
     "HALOGEN_VISION_MAX_PIXELS": FieldSpec("int", 65_536, 16_777_216),
     "HALOGEN_KV_SLOTS": FieldSpec("int", 1, 64),
-    "HALOGEN_KV_POOL_POSITIONS": FieldSpec("int", 1024, 1_048_576),
+    "HALOGEN_KV_POOL_POSITIONS": FieldSpec("int", 1024, 2_097_152),
     "HALOGEN_KV_POOL_FIT": FieldSpec("flag"),
     "HALOGEN_CTX": FieldSpec("int", 1024, 1_048_576),
     "HALOGEN_ADMIT_CHUNK": FieldSpec("int", -1, 1_048_576),
@@ -158,6 +165,8 @@ ENV_FIELDS: dict[str, FieldSpec] = {
 }
 
 FEATURE_MIN_VERSION = {
+    "HALOGEN_TOOL_DEFER": (0, 18, 18),
+    "HALOGEN_EOS_GUARD": (0, 13, 4),
     **{key: (0, 17, 3) for key in ENV_FIELDS if key.startswith("HALOGEN_RECORD_")},
     "HALOGEN_API_KEY": (0, 17, 4), "HALOGEN_API_KEY_FILE": (0, 17, 4),
     "HALOGEN_NEXT_TOKEN_S": (0, 17, 5),
@@ -172,6 +181,9 @@ FEATURE_MIN_VERSION = {
     **{key: (0, 18, 12) for key in ("HALOGEN_ADMIT_SPLICE_MS", "HALOGEN_ADMIT_SPLICE_FOR", "HALOGEN_CACHE_STAGE")},
     **{key: (0, 18, 13) for key in ("HALOGEN_ADMIT_NEST", "HALOGEN_ADMIT_NEST_MAX", "HALOGEN_NPU_RESTARTS")},
     **{key: (0, 18, 14) for key in ("HALOGEN_NPU_SPLICE", "HALOGEN_POOL_GROW")},
+    **{key: (0, 18, 15) for key in ("HALOGEN_ANSWER_GUARD", "HALOGEN_DV_GRAMMAR",
+                                  "HALOGEN_GRAMMAR_JOINT", "HALOGEN_OOM_SCORE_ADJ",
+                                  "HALOGEN_NPU_HOST_FLOOR_GIB")},
     **{key: (0, 18, 2) for key in ("HALOGEN_NPU_DEC_RESUME", "HALOGEN_NPU_DEC_ENTRIES",
                                   "HALOGEN_STRICT_TOOLS", "HALOGEN_CLIENT_MARKERS")},
 }
@@ -238,7 +250,7 @@ def validate_profile(profile: Profile) -> list[str]:
         spec = ENV_FIELDS.get(key)
         if spec is None:
             errors.append(f"env: variable is not on the allowlist: {key}")
-        elif spec.kind not in {"models", "keys", "record_text", "probabilities"} and not SAFE_VALUE_RE.fullmatch(value):
+        elif spec.kind not in {"models", "keys", "record_text", "probabilities", "enum"} and not SAFE_VALUE_RE.fullmatch(value):
             errors.append(f"env {key}: invalid characters")
         else:
             error = _validate_value(value, spec)
@@ -250,10 +262,18 @@ def validate_profile(profile: Profile) -> list[str]:
             errors.append(f"env {key}: requires Halogen {'.'.join(map(str, minimum))} or newer")
     if profile.env.get("HALOGEN_API_KEY") and profile.env.get("HALOGEN_API_KEY_FILE"):
         errors.append("env: set API_KEY or API_KEY_FILE, not both")
-    if profile.env.get("HALOGEN_FORK_MAP") in {"claude-code", "auto"} and profile.env.get("HALOGEN_FORK") != "1":
+    maps = profile.env.get("HALOGEN_FORK_MAP", "").split(",")
+    if any(name in {"claude-code", "auto"} for name in maps) and profile.env.get("HALOGEN_FORK") != "1":
         errors.append("env HALOGEN_FORK_MAP: requires HALOGEN_FORK=1")
-    if profile.env.get("HALOGEN_FORK_MAP") == "auto" and (version_tuple(profile.image.rsplit(":", 1)[-1]) or ()) < (0, 18, 3):
+    if "auto" in maps and (version_tuple(profile.image.rsplit(":", 1)[-1]) or ()) < (0, 18, 3):
         errors.append("env HALOGEN_FORK_MAP=auto: requires Halogen 0.18.3 or newer")
+    pool = profile.env.get("HALOGEN_KV_POOL_POSITIONS", "")
+    try:
+        oversized_pool = int(pool) > 1_048_576
+    except ValueError:
+        oversized_pool = False  # The field validation reports non-integer values.
+    if oversized_pool and (version_tuple(profile.image.rsplit(":", 1)[-1]) or ()) < (0, 18, 15):
+        errors.append("env HALOGEN_KV_POOL_POSITIONS above 1048576: requires Halogen 0.18.15 or newer")
     if profile.env.get("HALOGEN_KV8") == "1" and profile.env.get("HALOGEN_COMPOSABLE_CONTEXT") == "1":
         errors.append("env HALOGEN_KV8: cannot combine with HALOGEN_COMPOSABLE_CONTEXT=1")
     for key in ("HALOGEN_RECORD_DIR", "HALOGEN_API_KEY_FILE", "HALOGEN_CHAT_TEMPLATE"):
@@ -457,7 +477,7 @@ def profile_to_dict(profile: Profile) -> dict:
 
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
-DEFAULT_ENGINE_VERSION = "0.18.14"
+DEFAULT_ENGINE_VERSION = "0.18.18"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"
