@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.38 supports Halogen 0.18.18. Install the Halobridge update, then
+Halobridge 0.1.39 supports Halogen 0.18.18. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -541,6 +541,19 @@ is required. Existing custom GGUF profiles can use ggml-org's IQ4_NL checkpoint
 with the updated engine; HGN installations need no new checkpoint.
 
 ### Reliability and capacity (0.18.16)
+
+After saving changes in **Models**, click **Restart backend** next to the running
+profile. It restarts that profile with its saved settings after draining active
+requests and releasing GPU memory, then waits for the expected model to be ready.
+The job panel shows progress, logs, errors and cancellation. Start failures use
+the existing switch recovery; saved profile files are not rewritten or reverted.
+Use the profile rollback action if the saved configuration itself is broken.
+
+The dashboard uses `POST /dashboard/api/deploy/{profile_id}/restart`, which
+returns HTTP 202 and the shared job kind `restart-backend`. Read progress at
+`GET /dashboard/api/deploy/job`. It requires deployment to be enabled, normal
+dashboard authentication and the same-origin `X-Halogen-Action: deploy` guard.
+A stopped profile uses the existing Start action instead.
 
 The profile editor exposes `HALOGEN_CACHE_BRANCHES` (Halogen 0.13.3+).
 Empty inherits the engine default `2`: one conversation and one side turn.

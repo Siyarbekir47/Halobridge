@@ -194,8 +194,26 @@ def create_preview():
     async def hf(request):
         return web.json_response({'installed': True, 'default_repo': 'demo/model', 'default_file': 'model.gguf'})
     swift_job = None
+    restart_started = None
     async def job(request):
+        if (swift_job and swift_job.get('kind') == 'restart-backend' and swift_job['state'] == 'running'
+                and restart_started is not None and time.monotonic() - restart_started > 3):
+            swift_job.update(state='done', step=3, elapsed=3,
+                             lines=['Waiting for active requests.', 'Backend restarted and ready (UI fixture).'])
         return web.json_response(swift_job or {'active': False})
+    async def restart_backend(request):
+        nonlocal swift_job, restart_started
+        assert request.headers.get('X-Halogen-Action') == 'deploy'
+        restart_started = time.monotonic()
+        swift_job = {'active': True, 'kind': 'restart-backend', 'state': 'running', 'profile_id': 'official',
+                     'step': 1, 'total_steps': 3, 'elapsed': 0, 'lines': ['Waiting for active requests (UI fixture).']}
+        return web.json_response({'ok': True, 'kind': 'restart-backend'}, status=202)
+    async def save_profile(request):
+        nonlocal profile
+        profile = await request.json()
+        return web.json_response({'ok': True, 'restart_required': True})
+    async def reload_profiles(request):
+        return web.json_response({'ok': True})
     async def swift_plan(request):
         variant = request.query.get('variant', 'swift15')
         info = variant_info(variant)
@@ -249,6 +267,9 @@ def create_preview():
     app.router.add_get('/dashboard/api/deploy/template/{kind}', template)
     app.router.add_get('/dashboard/api/deploy/hf', hf)
     app.router.add_get('/dashboard/api/deploy/job', job)
+    app.router.add_post('/dashboard/api/deploy/official/restart', restart_backend)
+    app.router.add_post('/dashboard/api/deploy/apply', save_profile)
+    app.router.add_post('/dashboard/api/deploy/reload', reload_profiles)
     app.router.add_get('/dashboard/api/deploy/quick/swift/plan', swift_plan)
     app.router.add_post('/dashboard/api/deploy/quick/swift', swift_install)
     app.router.add_get('/dashboard/api/deploy/quick/model/plan', swift_plan)

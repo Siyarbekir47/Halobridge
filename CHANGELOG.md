@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.39
+
+- Add backend restarts with request draining and readiness checks.
+- Apply saved profile settings from the dashboard.
+
 ## 0.1.38
 
 - Expose cached conversation branches in the profile editor.
