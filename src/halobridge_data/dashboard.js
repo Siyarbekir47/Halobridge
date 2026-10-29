@@ -1233,11 +1233,13 @@ function renderDeploy() {
     const badge = p.service_active ? `<span class="badge ok">${esc(t('deploy_running'))}</span>` : `<span class="badge">${esc(t('deploy_stopped'))}</span>`;
     const btns = [`<button type="button" data-act="edit" data-id="${esc(p.profile_id)}">${esc(t('deploy_edit'))}</button>`];
     if (!p.service_active) btns.push(`<button type="button" data-act="start" data-id="${esc(p.profile_id)}">${esc(t('deploy_start'))}</button>`);
+    else btns.push(`<button type="button" data-act="restart" data-id="${esc(p.profile_id)}" title="${esc(t('deploy_restart_hint'))}">${esc(t('deploy_restart'))}</button>`);
     if (p.has_backup) btns.push(`<button type="button" data-act="rollback" data-id="${esc(p.profile_id)}">${esc(t('deploy_rollback'))}</button>`);
     if (!p.service_active) btns.push(`<button type="button" data-act="delete" data-id="${esc(p.profile_id)}">${esc(t('deploy_delete'))}</button>`);
     return `<div class="deploy-row"><div class="profile-info"><div class="profile-title"><strong>${esc(p.profile_id)}</strong>${badge}</div><span>${esc(p.model_id)} · ${esc(String(p.image).split(':').pop())}</span></div><div class="deploy-row-actions">${btns.join(' ')}</div></div>`;
   }).join('');
   $('deployList').innerHTML = rows || `<p class="muted">${esc(t('deploy_none'))}</p>`;
+  for (const button of $('deployList').querySelectorAll('button')) button.disabled = deployBusy;
   $('deployEnvKeys').innerHTML = (deployData.env_keys || []).map(k => `<option value="${k}"></option>`).join('');
   if (swiftPlanData) renderSwiftPlan();
 }
@@ -1265,6 +1267,7 @@ $('deployList').addEventListener('click', event => {
     if (p && !p.error) openDeployEditor(p, false);
     return;
   }
+  if (act === 'restart') { startModelJob(`/dashboard/api/deploy/${encodeURIComponent(id)}/restart`); return; }
   if (act === 'rollback' || act === 'delete') { armDeploy(btn, () => runDeployAction(id, act)); return; }
   runDeployAction(id, act);
 });
@@ -1371,6 +1374,7 @@ async function pollJob() {
   jobBusy = true;
   try {
     const job = await deployRequest('/dashboard/api/deploy/job');
+    if (job.kind === 'restart-backend') setDeployBusy(job.state === 'running');
     npuJobRunning = job.kind?.startsWith('quick-npu') && job.state === 'running';
     renderNpuPlan();
     if (!job.active) { $('jobBox').hidden = true; return; }
@@ -1390,12 +1394,16 @@ async function pollJob() {
       jobTimer = setTimeout(pollJob, 2000);
     } else if (job.kind === 'hf-install') {
       await refreshHf();
-    } else if (job.kind.startsWith('quick-')) {
+    } else if (job.kind.startsWith('quick-') || job.kind === 'restart-backend') {
       if (job.kind === 'quick-npu') { npuDirty = false; npuPlanData = null; $('npuPlan').hidden = true; }
       await refreshDeploy();
       if (job.kind === 'quick-npu-download') await previewNpuSelection();
       await refreshSwiftPlan();
       refreshLive();
+      if (job.kind === 'restart-backend' && job.state === 'done') {
+        $('deployNotice').hidden = false;
+        $('deployNotice').textContent = t('deploy_restarted', {profile: job.profile_id});
+      }
     }
   } catch { jobTimer = setTimeout(pollJob, 5000); }
   finally { jobBusy = false; }
@@ -1412,14 +1420,16 @@ async function startModelJob(path, payload) {
   if (deployBusy) return;
   setDeployBusy(true);
   $('deployError').hidden = true;
+  let restartQueued = false;
   try {
     await deployRequest(path, {
       method: 'POST', headers: {'Content-Type': 'application/json', 'X-Halogen-Action': 'deploy'},
       body: JSON.stringify(payload || {}),
     });
+    restartQueued = path.endsWith('/restart');
     startJobPoll();
   } catch (err) { showDeployError(err.message); }
-  finally { setDeployBusy(false); }
+  finally { if (!restartQueued) setDeployBusy(false); }
 }
 $('hfInstallBtn').addEventListener('click', () => startModelJob('/dashboard/api/deploy/hf/install'));
 $('hfDownloadBtn').addEventListener('click', async () => {

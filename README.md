@@ -702,6 +702,13 @@ it empty for the engine default `2`; `3` covers a parent and two child branches.
 More branches cost host RAM and raise the derived cache-entry count unless
 `HALOGEN_CACHE_ENTRIES` is explicitly set. This does not change concurrent slots.
 
+After saving profile changes, use **Models → Restart backend** beside the running
+profile. The background job waits for active requests, reloads the saved Quadlet,
+releases GPU memory, starts the same backend and waits for it to become ready.
+Progress, service logs, errors and cancellation use the existing job panel.
+Stopped profiles still offer **Start**. Restart uses saved settings; save and
+apply edits first. Other deployment and update actions are blocked while it runs.
+
 ### Automatic disk-space protection
 
 Halobridge checks free space every **60 seconds**. At **15% free or less**, it

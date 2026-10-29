@@ -365,6 +365,81 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
         self._audit("deploy_start", profile, None)
         return {"ok": True, "service": profile.service_name}
 
+    async def restart(self, profile_id: str) -> dict:
+        """Restart a running managed backend using the saved profile as a job."""
+        self._swift_available()
+        if not PROFILE_SLUG_RE.fullmatch(profile_id):
+            raise DeployError("Invalid profile ID")
+        target = self.quadlet_dir / f"halogen-{profile_id}.container"
+        if target.is_symlink() or not target.is_file():
+            raise DeployError(f"No managed Quadlet for profile {profile_id}")
+        content = target.read_bytes()
+        profile = parse_quadlet(content.decode("utf-8"), target)
+        if profile.profile_id != profile_id:
+            raise DeployError("Profile ID does not match its Quadlet filename")
+        errors = validate_profile(profile) + self._validate_host_paths(profile) + self._validate_conflicts(profile)
+        if errors:
+            raise DeployError("; ".join(errors))
+        if not await self._service_is_active(profile.service_name):
+            raise DeployError("Backend is stopped; use Start instead")
+        if await self._any_other_service_active(profile_id):
+            raise DeployError("Another backend is already active; restart the active profile")
+        # Service probes yield; recheck before claiming the shared job slot.
+        self._swift_available()
+        result = self._start_pipeline_job("restart-backend", 3)
+        self.job["profile_id"] = profile_id
+        self._job_task = asyncio.create_task(self._run_restart(profile, content))
+        return {**result, "service": profile.service_name}
+
+    async def _run_restart(self, profile: Profile, content: bytes) -> None:
+        try:
+            async with self.deploy_lock:
+                if (self.recovery_required or self.manager.switching or self.manager.maintenance
+                        or (self.updater and (self.updater.running or self.updater.recovery_required))):
+                    raise DeployError("Deployment, model switch, update or recovery is in progress")
+                self.reload_discovery()
+                if self.manager.models.get(profile.model_id) != profile.service_name:
+                    raise DeployError("Model discovery does not match the saved profile service")
+                current_service = self.manager.models.get(self.manager.current_model)
+                if current_service is not None and current_service != profile.service_name:
+                    raise DeployError("The active backend changed; refresh the profiles before restarting")
+                if self.manager.current_model not in self.manager.models:
+                    # Applying a new model ID removes the old discovery key, but
+                    # the same verified service still needs to be stopped.
+                    self.manager.current_model = profile.model_id
+
+                async def before_stop():
+                    target = profile.quadlet_path
+                    if target.is_symlink() or target.read_bytes() != content:
+                        raise DeployError("Profile changed during restart; try again with the saved profile")
+                    if not await self._service_is_active(profile.service_name):
+                        raise DeployError("Backend is stopped; use Start instead")
+                    services = set(self.manager.models.values()) - {profile.service_name}
+                    for service in services:
+                        if await self.manager.service_is_active(service):
+                            raise DeployError("Another backend is already active; restart the active profile")
+                    await self._daemon_reload()
+                    await self._verify_unit(profile)
+                    self.job["step"] = 2
+                    self._append_job_line(f"Restarting {profile.service_name}; waiting for GPU release and readiness.")
+
+                self.job["step"] = 1
+                self._append_job_line(f"Waiting for active requests before restarting {profile.service_name}.")
+                await self._switch_with_heartbeat(profile.model_id, "restarting backend",
+                                                  start_timeout=self.manager.start_timeout,
+                                                  before_stop=before_stop)
+                self.job["step"] = 3
+                self._append_job_line(f"{profile.service_name} is ready with the saved profile settings.")
+                self._audit("deploy_restart", profile, None)
+                self.job["state"] = "done"
+        except asyncio.CancelledError:
+            self.job["state"] = "cancelled"
+            self._append_job_line("Backend restart cancelled.")
+            raise
+        except Exception as exc:
+            self.job["state"] = "error"
+            self.job["error"] = str(exc)
+
     # -------------------------------------------------- live rediscovery
 
     def reload_discovery(self) -> dict:
@@ -420,6 +495,7 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             "elapsed": round(time.time() - self.job["started"], 1),
             "step": self.job.get("step"),
             "total_steps": self.job.get("total_steps"),
+            "profile_id": self.job.get("profile_id"),
         }
 
     def hf_install(self) -> dict:
@@ -1316,7 +1392,8 @@ class DeployRoutes:
     def _guard(self, request: web.Request) -> None:
         job = self.manager.job or {}
         if (self.manager.recovery_required or
-                (job.get("state") == "running" and job.get("kind", "").startswith(("quick-swift", "quick-npu")))):
+                (job.get("state") == "running" and (job.get("kind") == "restart-backend"
+                 or job.get("kind", "").startswith(("quick-swift", "quick-npu"))))):
             if request.path != "/dashboard/api/deploy/job/cancel":
                 raise DeployError("Model installation or recovery is in progress")
         expected = f"http://{request.headers.get('Host', '')}"
@@ -1419,6 +1496,15 @@ class DeployRoutes:
             return web.json_response(
                 await self.manager.start(request.match_info["profile_id"])
             )
+        except DeployError as exc:
+            return self._error(exc, 400)
+        except Exception as exc:
+            return self._error(exc, 500)
+
+    async def api_restart(self, request: web.Request) -> web.Response:
+        try:
+            self._guard(request)
+            return web.json_response(await self.manager.restart(request.match_info["profile_id"]), status=202)
         except DeployError as exc:
             return self._error(exc, 400)
         except Exception as exc:
@@ -1567,6 +1653,7 @@ class DeployRoutes:
             "/dashboard/api/deploy/{profile_id}/rollback", self.api_rollback
         )
         app.router.add_post("/dashboard/api/deploy/{profile_id}/start", self.api_start)
+        app.router.add_post("/dashboard/api/deploy/{profile_id}/restart", self.api_restart)
         app.router.add_post("/dashboard/api/deploy/reload", self.api_reload)
         app.router.add_get("/dashboard/api/deploy/job", self.api_job)
         app.router.add_post("/dashboard/api/deploy/job/cancel", self.api_cancel_job)
