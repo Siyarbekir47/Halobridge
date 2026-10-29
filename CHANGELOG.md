@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.38
+
+- Expose cached conversation branches in the profile editor.
+
 ## 0.1.37
 
 - Support Halogen 0.18.18 and reuse verified NPU assets.

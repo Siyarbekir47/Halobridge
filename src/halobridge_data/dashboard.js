@@ -869,6 +869,7 @@ const NPU_ENV_FIELDS = [
 ];
 const ENGINE_ENV_FIELDS = [
   ['HALOGEN_CACHE_EVICT', 'select:0,1', 'deploy_f_cache_evict'],
+  ['HALOGEN_CACHE_BRANCHES', 'number', 'deploy_f_cache_branches'],
   ['HALOGEN_MTP', 'select:0,1', 'deploy_f_mtp'],
   ['HALOGEN_PREFILL_CANCEL', 'select:0,1', 'deploy_f_prefill_cancel'],
   ['HALOGEN_ADMISSION_RESERVE', 'number', 'deploy_f_admission_reserve'],

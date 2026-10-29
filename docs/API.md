@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.37 supports Halogen 0.18.18. Install the Halobridge update, then
+Halobridge 0.1.38 supports Halogen 0.18.18. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -541,6 +541,14 @@ is required. Existing custom GGUF profiles can use ggml-org's IQ4_NL checkpoint
 with the updated engine; HGN installations need no new checkpoint.
 
 ### Reliability and capacity (0.18.16)
+
+The profile editor exposes `HALOGEN_CACHE_BRANCHES` (Halogen 0.13.3+).
+Empty inherits the engine default `2`: one conversation and one side turn.
+`3` retains resume points for a parent and two children, avoiding another
+prefill when the parent continues after both children. More branches increase
+host memory use and the derived `HALOGEN_CACHE_ENTRIES` default. An explicit
+`HALOGEN_CACHE_ENTRIES` overrides that automatic entry count. Branches are cache
+resume points, not concurrent slots; changing them does not change `HALOGEN_KV_SLOTS`.
 
 Use **System → Engine updates** to update installed profiles. 0.18.16 fixes
 kept replies being mixed when conversations move in the KV pool and turns off

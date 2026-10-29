@@ -153,6 +153,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_MAX_TOK": FieldSpec("int", 512, 65536),
     "HALOGEN_HOST_RESERVE_GIB": FieldSpec("int", 0, 4096),
     "HALOGEN_CACHE_ENTRIES": FieldSpec("int", 1, 1024),
+    "HALOGEN_CACHE_BRANCHES": FieldSpec("int", 1),
     "HALOGEN_CACHE_SNAP3": FieldSpec("flag"),
     "HALOGEN_CACHE_FULL": FieldSpec("flag"),
     "HALOGEN_CACHE_INPLACE": FieldSpec("flag"),
@@ -165,6 +166,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
 }
 
 FEATURE_MIN_VERSION = {
+    "HALOGEN_CACHE_BRANCHES": (0, 13, 3),
     "HALOGEN_TOOL_DEFER": (0, 18, 18),
     "HALOGEN_EOS_GUARD": (0, 13, 4),
     **{key: (0, 17, 3) for key in ENV_FIELDS if key.startswith("HALOGEN_RECORD_")},

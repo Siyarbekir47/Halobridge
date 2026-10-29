@@ -697,6 +697,11 @@ sampled drafting, template selection/checks, automatic session mapping and acces
 logging. Empty fields use upstream defaults. KV8 is opt-in and cannot be combined
 with composable context. New defaults retain the large context and two slots.
 
+`HALOGEN_CACHE_BRANCHES` controls cached resume points per conversation. Leave
+it empty for the engine default `2`; `3` covers a parent and two child branches.
+More branches cost host RAM and raise the derived cache-entry count unless
+`HALOGEN_CACHE_ENTRIES` is explicitly set. This does not change concurrent slots.
+
 ### Automatic disk-space protection
 
 Halobridge checks free space every **60 seconds**. At **15% free or less**, it
