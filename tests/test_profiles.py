@@ -169,6 +169,25 @@ class RenderImportTests(unittest.TestCase):
 
 
 class TemplateTests(unittest.TestCase):
+    def test_cache_branches_preserves_user_values_and_leaves_default_unset(self):
+        profile = official_template("0.18.18", Path("/host/models"), Path("/host/cache"))
+        self.assertNotIn("HALOGEN_CACHE_BRANCHES", profile.env)
+        original = dict(profile.env)
+        for value in ("1", "2", "3", "8"):
+            profile.env["HALOGEN_CACHE_BRANCHES"] = value
+            self.assertEqual(validate_profile(profile), [])
+            imported = parse_quadlet(render_quadlet(profile))
+            self.assertEqual(imported.env["HALOGEN_CACHE_BRANCHES"], value)
+            self.assertEqual({key: val for key, val in imported.env.items() if key != "HALOGEN_CACHE_BRANCHES"}, original)
+        for value in ("0", "-1", "2.5", "NaN", "3;evil"):
+            profile.env["HALOGEN_CACHE_BRANCHES"] = value
+            self.assertTrue(any("HALOGEN_CACHE_BRANCHES" in e for e in validate_profile(profile)), value)
+        profile.env["HALOGEN_CACHE_BRANCHES"] = "3"
+        profile.image = profile.image.replace(":0.18.18", ":0.13.2")
+        self.assertTrue(any("HALOGEN_CACHE_BRANCHES: requires Halogen 0.13.3" in e for e in validate_profile(profile)))
+        profile.image = profile.image.replace(":0.13.2", ":0.13.3")
+        self.assertEqual(validate_profile(profile), [])
+
     def test_deferred_tool_loading_is_optional_versioned_and_round_trips(self):
         profile = official_template("0.18.18", Path("/host/models"), Path("/host/cache"))
         self.assertNotIn("HALOGEN_TOOL_DEFER", profile.env)

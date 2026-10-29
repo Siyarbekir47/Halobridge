@@ -108,6 +108,7 @@
   "deploy_f_dv_grammar": "Prüfung strukturierter Ausgaben beschleunigen (ab 0.18.15; Standard: 1)",
   "deploy_f_grammar_joint": "Gemeinsames Grammar-Decoding (ab 0.18.15; Standard: 1)",
   "deploy_f_tool_defer": "Claude-Code-Tools bei Bedarf nachladen (ab 0.18.18; Standard: 1)",
+  "deploy_f_cache_branches": "Cache-Zweige pro Gespräch (Standard: 2; mehr Zweige benötigen mehr RAM)",
   "deploy_f_pool_grow": "Antwortspeicher aus ungenutztem Cache vergrößern (ab 0.18.14; Standard: 1)",
   "npu_model_qwen3-tts-0.6b-customvoice": "Text zu Sprache · 9 Stimmen · etwa 4 GB Speicher · ab 0.18.14",
   "npu_model_qwen3-tts-1.7b-customvoice": "Text zu Sprache mit Sprechstil · 9 Stimmen · etwa 5 GB Speicher · ab 0.18.14",

@@ -108,6 +108,7 @@
   "deploy_f_dv_grammar": "Accelerate structured-output checks (0.18.15+; default: 1)",
   "deploy_f_grammar_joint": "Joint grammar decoding (0.18.15+; default: 1)",
   "deploy_f_tool_defer": "Load deferred Claude Code tools on demand (0.18.18+; default: 1)",
+  "deploy_f_cache_branches": "Cached branches per conversation (default: 2; more branches use more RAM)",
   "deploy_f_pool_grow": "Grow answer room from idle cache (0.18.14+; default: 1)",
   "npu_model_qwen3-tts-0.6b-customvoice": "Text to speech · 9 voices · about 4 GB memory · 0.18.14+",
   "npu_model_qwen3-tts-1.7b-customvoice": "Text to speech with speaking styles · 9 voices · about 5 GB memory · 0.18.14+",
