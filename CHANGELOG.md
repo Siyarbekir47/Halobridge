@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.37
+
+- Support Halogen 0.18.18 and reuse verified NPU assets.
+- Expose deferred Claude Code tool loading.
+- Verify vision discovery and complete tool payload forwarding.
+
 ## 0.1.36
 
 - Support Halogen 0.18.16 and reuse verified NPU assets.

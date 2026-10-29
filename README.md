@@ -387,7 +387,7 @@ config, processor files, conversion manifest and license live in
 plus the installer's 5 GiB free-space reserve. Repeated setup reuses verified
 files and preserves runtime changes.
 
-New CYBER-FROST templates use **Halogen 0.18.16** (minimum 0.17.5), **262144 context/KV pool**,
+New CYBER-FROST templates use **Halogen 0.18.18** (minimum 0.17.5), **262144 context/KV pool**,
 **two slots**, and the same generation defaults as Swift Abliterated. Its model
 card only exercised 32768 context and one slot; the larger configuration still
 needs a smoke test on the target host. No NPU models are enabled by default.
@@ -631,22 +631,29 @@ storage. Requests use the normal router and history; selecting another GPU profi
 can trigger a model switch. NPU models must first be installed and activated in
 **Models**. See [endpoint examples and prerequisites](docs/API.md).
 
-## Halogen 0.18.16 support
+## Halogen 0.18.18 support
 
-New templates use Halogen 0.18.16. Existing profiles keep their settings until
+New templates use Halogen 0.18.18. Existing profiles keep their settings until
 you update their engine in **System → Engine updates**. Flash checkpoints,
 context limits and slot counts are unchanged. NPU file updates use the selected
-image's verified catalog; shared files are reused. The 0.18.16 catalog was
-verified byte-for-byte against 0.18.14, so upgrading reuses those NPU files.
+image's verified catalog; shared files are reused. The 0.18.18 catalog was
+verified byte-for-byte against 0.18.14 and 0.18.16, so upgrading reuses those NPU files.
 For other catalog changes, Halobridge downloads and verifies the selected
 models before restarting, retaining the previous files for rollback.
 
-Update directly to 0.18.16: it fixes kept conversation state being mixed after
-KV-pool compaction and disables 0.18.15's automatic reply-end keeps by default
-after reports of long stalls. Explicit session mapping remains configured as
-before; `claude-code,auto` is also available in the editor. Abandoned queued
-requests no longer waste a prefill, structured outputs run faster, and the
-answer guard prevents unfinished code blocks and headings from ending a reply.
+Update directly to 0.18.18. Since 0.18.16, further fixes protect kept
+conversations when the KV pool is full, remove long waits on automatic keeps
+and keep short requests responsive during long prompts even while metrics are
+scraped or another reply is paused. Automatic reply-end keeps remain off by
+default; explicit `claude-code,auto` mapping is preserved.
+
+Claude Code's MCP tool search now works without rejecting tool references or
+invalidating the previous prompt cache when tools load. The profile editor
+exposes `HALOGEN_TOOL_DEFER` (default `1`); `0` loads declared tools up front.
+Tool arguments containing tool-call markup arrive whole, streamed or not.
+`/v1/models` forwards `architecture.input_modalities` and `output_modalities`
+from the active backend, including whether its vision tower is loaded.
+The official ggml-org IQ4_NL GGUF also loads; existing HGN checkpoints stay selected.
 
 New editor controls include `HALOGEN_ANSWER_GUARD`, `HALOGEN_EOS_GUARD`,
 `HALOGEN_DV_GRAMMAR`, `HALOGEN_GRAMMAR_JOINT`, `HALOGEN_OOM_SCORE_ADJ` and
@@ -741,8 +748,8 @@ The profile editor also exposes session limits, request records, backend API key
 
 Halobridge supports the new NPU image and System One routes, priority admission,
 and the engine's new cache, schema and decode settings. Update Halobridge, then
-use **System → Engine updates** to update the backend profiles to **0.18.16**.
-New Official, Orca, Swift and CYBER-FROST templates use 0.18.16; existing settings and engine versions are preserved during model repair.
+use **System → Engine updates** to update the backend profiles to **0.18.18**.
+New Official, Orca, Swift and CYBER-FROST templates use 0.18.18; existing settings and engine versions are preserved during model repair.
 
 The GPU checkpoints are unchanged from 0.16.2. The engine update brings faster
 decode and long-prompt processing, speculative decoding for two conversations,
@@ -753,11 +760,11 @@ Leave `HALOGEN_MTP_DEPTH` empty for the engine's adaptive depth; an explicit
 value continues to fix the depth.
 
 See the [endpoint guide](docs/API.md) for use cases, prerequisites and runnable
-examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.16/CHANGELOG.md)
+examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/CHANGELOG.md)
 for the engine changes. The upstream Compose recipe is an alternative deployment;
 Halobridge's managed setup continues to use Podman Quadlets.
 
-## NPU models with Halogen 0.18.16
+## NPU models with Halogen 0.18.18
 
 The GPU model and the selected NPU models run together behind Halobridge's
 existing port. Requests select an NPU model by its `model` ID; they do not
@@ -780,9 +787,9 @@ loaded by the currently active backend.
 
 ### Host preparation
 
-1. Update the selected backend profiles to **Halogen 0.18.16** using
+1. Update the selected backend profiles to **Halogen 0.18.18** using
    the dashboard's engine updater. Your GPU checkpoint remains selected.
-2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.16/docs/NPU.md#host)
+2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md#host)
    for the Linux `amdxdna` driver, firmware, XRT and its NPU plugin. The service
    user needs access to `/dev/accel/accel0`. Enable IOMMU; `amd_iommu=off` and
    `iommu=off` are incompatible, while `iommu=pt` is supported.
@@ -912,7 +919,7 @@ moderation accept up to 4096. The decision limit is 4096 on earlier engines. `qw
 option without sampling. Moderation reports labels and probabilities rather
 than meaningful OpenAI category scores. NPU and GPU work share the chip's
 memory bandwidth and power budget. See the
-[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.16/docs/NPU.md)
+[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md)
 for supported request options.
 
 ### Own NPU fine-tunes and advanced flags

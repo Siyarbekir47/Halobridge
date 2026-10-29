@@ -169,6 +169,19 @@ class RenderImportTests(unittest.TestCase):
 
 
 class TemplateTests(unittest.TestCase):
+    def test_deferred_tool_loading_is_optional_versioned_and_round_trips(self):
+        profile = official_template("0.18.18", Path("/host/models"), Path("/host/cache"))
+        self.assertNotIn("HALOGEN_TOOL_DEFER", profile.env)
+        for value in ("0", "1"):
+            profile.env["HALOGEN_TOOL_DEFER"] = value
+            self.assertEqual(validate_profile(profile), [])
+            self.assertEqual(parse_quadlet(render_quadlet(profile)).env["HALOGEN_TOOL_DEFER"], value)
+        profile.env["HALOGEN_TOOL_DEFER"] = "2"
+        self.assertTrue(any("HALOGEN_TOOL_DEFER" in e for e in validate_profile(profile)))
+        profile.env["HALOGEN_TOOL_DEFER"] = "1"
+        profile.image = profile.image.replace(":0.18.18", ":0.18.17")
+        self.assertTrue(any("HALOGEN_TOOL_DEFER: requires Halogen 0.18.18" in e for e in validate_profile(profile)))
+
     def test_01815_controls_validate_values_versions_and_round_trip(self):
         for name, valid, invalid in (
             ("HALOGEN_ANSWER_GUARD", ("0", "1"), ("2", "-1")),
@@ -221,7 +234,7 @@ class TemplateTests(unittest.TestCase):
             self.assertTrue(any("HALOGEN_FORK_MAP" in e for e in validate_profile(profile)))
 
     def test_new_engine_templates_preserve_capacity_and_leave_new_options_unset(self):
-        self.assertEqual(DEFAULT_ENGINE_VERSION, "0.18.16")
+        self.assertEqual(DEFAULT_ENGINE_VERSION, "0.18.18")
         profiles = [factory(DEFAULT_ENGINE_VERSION, Path("/host/models"), Path("/host/cache"))
                     for factory in (official_template, uncensored_template, custom_template)]
         from shared_assets import SharedAssets
@@ -235,7 +248,7 @@ class TemplateTests(unittest.TestCase):
                 self.assertEqual(profile.env["HALOGEN_KV_SLOTS"], "2")
                 self.assertIn(profile.env["HALOGEN_KV_POOL_POSITIONS"], ("262144", "524288"))
                 for name in ("HALOGEN_FORK_MAP", "HALOGEN_NPU_SPLICE", "HALOGEN_ANSWER_GUARD",
-                             "HALOGEN_NPU_HOST_FLOOR_GIB", "HALOGEN_OOM_SCORE_ADJ"):
+                             "HALOGEN_NPU_HOST_FLOOR_GIB", "HALOGEN_OOM_SCORE_ADJ", "HALOGEN_TOOL_DEFER"):
                     self.assertNotIn(name, profile.env)
 
     def test_01814_npu_splicing_and_pool_growth_are_versioned_flags(self):

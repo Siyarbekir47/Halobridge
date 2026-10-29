@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.36 supports Halogen 0.18.16. Install the Halobridge update, then
+Halobridge 0.1.37 supports Halogen 0.18.18. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -35,7 +35,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.18.16 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.18.18 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## Test in the dashboard
@@ -138,7 +138,7 @@ request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.18.16 and select **one** ASR model in
+Update the target GPU profiles to 0.18.18 and select **one** ASR model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -224,7 +224,7 @@ curl --fail-with-body -sS localhost:8731/v1/embeddings \
 
 EmbeddingGemma image inputs use `image_url` parts with inline base64, and audio
 inputs use `input_audio` parts with `data` and `format:"wav"`; see the
-[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.16/docs/NPU.md).
+[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md).
 
 ### Image edits and variations
 
@@ -503,7 +503,42 @@ speculate together automatically. Faster decode and prompt processing, improved
 disk-prefix cache reuse, streamed tool-call cleanup and schema/tool fixes work
 without a new endpoint. Late system/developer turns in Chat Completions are
 treated as user text at their position; images in those late turns are refused.
-GPU checkpoints remain unchanged from 0.16.2 through 0.18.16. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
+GPU checkpoints remain unchanged from 0.16.2 through 0.18.18. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
+
+### Tool compatibility and vision discovery (0.18.18)
+
+Update profiles directly to 0.18.18 in **System → Engine updates**. The
+0.18.17/0.18.18 fixes use the existing endpoints: kept conversations remain
+isolated in a full KV pool, automatic keeps no longer wait on themselves, and
+short prompts stay responsive beside long ones despite metrics reads or paused
+replies. Flash checkpoints, context and slot settings are unchanged. The
+0.18.18 NPU catalog matches 0.18.14/0.18.16; verified assets are reused.
+
+On `/v1/messages`, Claude Code's `tool_reference` blocks and `defer_loading`
+fields pass through unchanged. Newly loaded tools no longer invalidate the
+conversation's prompt cache. The editor exposes `HALOGEN_TOOL_DEFER` (0.18.18+):
+leave it empty for the engine default `1`, or set `0` to load tools up front.
+The `ENABLE_TOOL_SEARCH=false` client workaround is no longer needed. Tool-call
+arguments containing literal tool markup are preserved on Chat Completions,
+Responses and Messages, streamed or not.
+
+`GET /v1/models` now carries the active backend's vision capability in
+OpenRouter's format:
+
+```json
+{
+  "architecture": {
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"]
+  }
+}
+```
+
+Without its vision tower the inputs are `["text"]`. Halobridge preserves the
+advertised values, including each NPU model's own metadata, and never copies
+the active model's capabilities to an inactive GPU profile. No new endpoint
+is required. Existing custom GGUF profiles can use ggml-org's IQ4_NL checkpoint
+with the updated engine; HGN installations need no new checkpoint.
 
 ### Reliability and capacity (0.18.16)
 
@@ -586,5 +621,5 @@ curl --fail-with-body -sS localhost:8731/metrics \
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.16/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.16/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/CHANGELOG.md).

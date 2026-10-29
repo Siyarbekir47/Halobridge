@@ -889,6 +889,7 @@ const ENGINE_ENV_FIELDS = [
   ['HALOGEN_ENGINE_WATCHDOG_DEFER_S', 'number', 'deploy_f_watchdog_defer'],
   ['HALOGEN_RETRY_GRACE_S', 'number', 'deploy_f_retry_grace'],
   ['HALOGEN_STRICT_TOOLS', 'select:0,1', 'deploy_f_strict_tools'],
+  ['HALOGEN_TOOL_DEFER', 'select:0,1', 'deploy_f_tool_defer'],
   ['HALOGEN_CLIENT_MARKERS', 'select:text,special', 'deploy_f_client_markers'],
   ['HALOGEN_QSA_FORCE_SEL', 'select:0,1', 'deploy_f_qsa_sel'],
   ['HALOGEN_CHAT_TEMPLATE', 'text', 'deploy_f_chat_template'],
