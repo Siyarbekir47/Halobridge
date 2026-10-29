@@ -89,6 +89,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_NEXT_TOKEN_S": FieldSpec("float", 0.01, 86400),
     "HALOGEN_RETRY_GRACE_S": FieldSpec("float", 0, 120),
     "HALOGEN_STRICT_TOOLS": FieldSpec("flag"),
+    "HALOGEN_TOOL_DEFER": FieldSpec("flag"),
     "HALOGEN_CLIENT_MARKERS": FieldSpec("enum", choices=("text", "special")),
     "HALOGEN_QSA_FORCE_SEL": FieldSpec("flag"),
     "HALOGEN_ENGINE_WATCHDOG_S": FieldSpec("float", 0, 86400),
@@ -164,6 +165,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
 }
 
 FEATURE_MIN_VERSION = {
+    "HALOGEN_TOOL_DEFER": (0, 18, 18),
     "HALOGEN_EOS_GUARD": (0, 13, 4),
     **{key: (0, 17, 3) for key in ENV_FIELDS if key.startswith("HALOGEN_RECORD_")},
     "HALOGEN_API_KEY": (0, 17, 4), "HALOGEN_API_KEY_FILE": (0, 17, 4),
@@ -475,7 +477,7 @@ def profile_to_dict(profile: Profile) -> dict:
 
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
-DEFAULT_ENGINE_VERSION = "0.18.16"
+DEFAULT_ENGINE_VERSION = "0.18.18"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"
