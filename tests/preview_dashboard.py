@@ -29,6 +29,12 @@ def create_preview():
                status=200 if i % 9 else 499, duration_ms=3200+i*50)
     insert(dashboard, request_id='preview-missing', completed_at=time.time() - 600,
            input_tokens=None, output_tokens=None, cached_tokens=None, reasoning_tokens=None)
+    for i in range(13):
+        dashboard._store_engine_line({
+            'MESSAGE': 'serve_api: mtp 163 tok in 4.64s = 35.13 t/s | 92 rounds, commit 1.77/round | prompt 37219, prefill 23.43s = 1589 t/s | pool 673280/786432 86% | think on',
+            '_SYSTEMD_USER_UNIT': 'halogen-official.service', '__CURSOR': f'preview-engine-{i}',
+            '__REALTIME_TIMESTAMP': str(int((time.time() - 20 - i * 2) * 1_000_000)),
+        })
     async def snapshot():
         return {'generated_at': time.time(), 'app': {'version': app_updates['current_version']},
                 'api': {'active_model': 'qwen3.8-flash', 'status': 'ok'},

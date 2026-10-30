@@ -774,6 +774,21 @@ class Dashboard:
         """, (start, end, page_size, (page - 1) * page_size)).fetchall()
         return {"items": [dict(row) for row in rows], "page": page, "page_size": page_size, "pages": pages, "total": total}
 
+    def _engine_history(self, start: float, end: float, page: int = 1, page_size: int = 10) -> dict[str, Any]:
+        """Completed engine log records, independent of routed API requests."""
+        assert self.db is not None
+        page_size = max(1, min(page_size, 100))
+        total = self.db.execute("SELECT COUNT(*) FROM engine_requests WHERE completed_at >= ? AND completed_at <= ?",
+                                (start, end)).fetchone()[0]
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = min(max(1, page), pages)
+        rows = self.db.execute("""
+            SELECT * FROM engine_requests WHERE completed_at >= ? AND completed_at <= ?
+            ORDER BY completed_at DESC, cursor DESC LIMIT ? OFFSET ?
+        """, (start, end, page_size, (page - 1) * page_size)).fetchall()
+        return {"items": [dict(row) for row in rows], "page": page, "page_size": page_size,
+                "pages": pages, "total": total, "source": "systemd_journal"}
+
     def _resolve_range(self, request: web.Request) -> tuple[str, float, float]:
         now = time.time()
         earliest = now - self.retention_days * 86400
@@ -816,11 +831,16 @@ class Dashboard:
             page = max(1, int(request.query.get("page", "1")))
         except ValueError:
             page = 1
+        try:
+            engine_page = max(1, int(request.query.get("engine_page", "1")))
+        except ValueError:
+            engine_page = 1
         bucket, bucket_unit, timeline = self._timeline(start, end, period)
         return {
             "period": period, "from": start, "to": end, "generated_at": time.time(),
             "bucket_seconds": bucket, "bucket_unit": bucket_unit, "summary": self._summary(start, end), "timeline": timeline,
             "engine": self._engine_summary(start, end), "history": self._history(start, end, page),
+            "engine_history": self._engine_history(start, end, engine_page),
             "by_client": self._breakdown(start, end, "client"), "by_model": self._breakdown(start, end, "model"),
         }
 

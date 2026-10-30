@@ -300,6 +300,15 @@ The **Requests** workspace shows completed requests with client/model, reported
 input and output tokens, duration and status. Individual rows can be expanded for
 more detail without storing prompt or response contents.
 
+**Engine completion logs** below the API history show each backend completion's
+logged input/output count, generation time and tokens per second. Expand a row
+for cache, prefill, KV-pool and thinking details. The existing journal reader
+collects these automatically from the configured systemd user services. These
+records are independent: the completion log has no shared API request ID, and
+parallel requests cannot safely be matched by timestamps. No router-measured
+generation rates are calculated or displayed. Existing observed rates from
+0.1.41 are ignored. API history retains only API-reported timing values.
+
 <p align="center">
 <img width="1907" height="905" alt="1_2" src="https://github.com/user-attachments/assets/aaa5e3cc-d4b6-4fb3-a8fb-ba112d23a89d" />
 </p>
@@ -900,6 +909,12 @@ claude
 
 Use the real backend key if authentication is enabled, and your forwarded port
 if using a tunnel. See [Messages and token counting](docs/API.md#anthropic-messages-and-token-counting).
+
+Claude Desktop builds that require Anthropic-shaped model IDs can keep the
+working `claude-sonnet-4-5` entry and label it `Qwen 3.8 Flash (Halogen)`.
+Keep the 1M option off for a 262,144-token backend. The client alias does not
+change the backend model or supply timing fields missing from its Messages
+stream; engine generation values are shown in **Requests → Engine completion logs**.
 
 ### API examples
 

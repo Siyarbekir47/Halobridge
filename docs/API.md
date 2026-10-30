@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.40 supports Halogen 0.18.18. Install the Halobridge update, then
+Halobridge 0.1.42 supports Halogen 0.18.18. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -516,6 +516,32 @@ Use your forwarded port (for example `18731`) when accessing the router through
 a local tunnel. The backend's private port does not need to be exposed. The
 output-token setting leaves room below Halogen's default cap, as recommended
 in the [upstream Claude Code guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/claude-code.md).
+
+Claude Desktop builds that require Anthropic-shaped IDs can retain the working
+`claude-sonnet-4-5` entry with a Qwen display label. Keep the 1M option off for a
+262,144-token backend. Its client model mapping does not alter the backend.
+
+Messages streams can omit engine timings and separate reasoning-token counts.
+Halobridge leaves those fields unknown in API request history. It does not
+measure generation speed from stream events or estimate reasoning tokens.
+**Requests → Engine completion logs** instead displays values from the backend's
+`serve_api: ... tok in ...s = ... t/s` journal records. These have their own
+pagination and the same reporting-period filter as API requests. Cache, prefill,
+pool and thinking information appear in row details when present in the log.
+`GET /dashboard/api/analytics` includes `engine_history`; `engine_page` selects
+its page independently from the API history's `page` parameter. Existing
+0.1.41 observation columns are left untouched in SQLite but are no longer read
+or displayed. The journal reader deduplicates records by journal cursor and
+ignores progress lines and HTTP access logs.
+
+The completion lines have no shared API request ID, so Halobridge does not
+attach them to individual API rows using timestamps, token counts or completion
+order. Parallel calls and direct backend requests remain independent. To inspect
+the source on the AI host:
+
+```bash
+journalctl --user -u 'halogen-*.service' -n 0 -f -o short-precise
+```
 
 ## Changes that work after an engine update
 
