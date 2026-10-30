@@ -29,14 +29,6 @@ def create_preview():
                status=200 if i % 9 else 499, duration_ms=3200+i*50)
     insert(dashboard, request_id='preview-missing', completed_at=time.time() - 600,
            input_tokens=None, output_tokens=None, cached_tokens=None, reasoning_tokens=None)
-    insert(dashboard, request_id='preview-messages-observed', completed_at=time.time() - 20,
-           client='claude-cli/2.1.309', endpoint='/v1/messages', duration_ms=3000,
-           first_output_ms=1000, output_stream_ms=2000, observed_tps=50,
-           tps=None, reasoning_tokens=None, reasoning_effort='xhigh')
-    insert(dashboard, request_id='preview-messages-reported', completed_at=time.time() - 40,
-           client='claude-cli/2.1.309', endpoint='/v1/messages', duration_ms=3000,
-           first_output_ms=1000, output_stream_ms=2000, observed_tps=50,
-           tps=55, reasoning_tokens=20, reasoning_effort='xhigh')
     async def snapshot():
         return {'generated_at': time.time(), 'app': {'version': app_updates['current_version']},
                 'api': {'active_model': 'qwen3.8-flash', 'status': 'ok'},

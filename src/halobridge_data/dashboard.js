@@ -216,24 +216,16 @@ function renderHistory(history) {
     const legacy = r.telemetry_version < 2;
     const count = n => `${integer(n)}${legacy && valid(n) ? '*' : ''}`;
     const open = expanded.has(r.request_id);
-    const observed = !legacy && !valid(r.tps) && valid(r.observed_tps);
     const details = [
-      [t('detail_cache'), count(r.cached_tokens)], [t('detail_reasoning'), count(r.reasoning_tokens),
-        !valid(r.reasoning_tokens) && r.endpoint === '/v1/messages' ? t('detail_reasoning_unreported') : ''],
-      [t('detail_ttfb'), seconds(r.ttfb_ms)],
-      [t(observed ? 'detail_generation_observed' : 'detail_generation'), legacy ? '–' : rate(observed ? r.observed_tps : r.tps),
-        observed ? t('detail_generation_observed_hint') : ''],
-      ...(r.endpoint === '/v1/messages' && r.stream ? [
-        [t('detail_first_output'), seconds(r.first_output_ms)],
-        [t('detail_output_stream'), seconds(r.output_stream_ms)],
-      ] : []),
+      [t('detail_cache'), count(r.cached_tokens)], [t('detail_reasoning'), count(r.reasoning_tokens)],
+      [t('detail_ttfb'), seconds(r.ttfb_ms)], [t('detail_generation'), legacy ? '–' : rate(r.tps)],
       [t('detail_reasoning_requested'), r.reasoning_effort], [t('detail_response_format'), r.stream ? 'Streaming' : 'JSON'],
       [t('detail_endpoint'), r.endpoint], [t('detail_capture'), legacy ? t('capture_legacy') : t('capture_api')],
     ];
     return `<tr><td><button class="row-toggle" data-request="${esc(r.request_id)}" aria-expanded="${open}" aria-controls="detail-${i}"><span aria-hidden="true">${open ? '−' : '+'}</span>${esc(dateTime(r.completed_at))}</button></td>
       <td>${esc(clientLabel(r.client))}<span class="cell-sub">${esc(r.model)}</span></td><td class="number ${legacy ? 'legacy' : ''}">${count(r.input_tokens)}</td><td class="number ${legacy ? 'legacy' : ''}">${count(r.output_tokens)}</td>
       <td class="number">${seconds(r.duration_ms)}</td><td class="number ${r.status >= 400 ? 'failure' : 'success'}">${integer(r.status)}<span class="cell-sub">${r.status === 499 ? t('status_aborted') : r.status >= 400 ? t('status_error') : t('status_ok')}</span></td></tr>
-      <tr class="request-detail" id="detail-${i}" ${open ? '' : 'hidden'}><td colspan="6"><dl class="detail-grid">${details.map(([key, value, hint]) => `<div${hint ? ` title="${esc(hint)}"` : ''}><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${observed ? `<small class="muted">${esc(t('detail_generation_observed_hint'))}</small>` : ''}${r.error ? `<p class="failure">${esc(r.error)}</p>` : ''}${legacy ? `<small class="legacy">${esc(t('legacy_note'))}</small>` : ''}</td></tr>`;
+      <tr class="request-detail" id="detail-${i}" ${open ? '' : 'hidden'}><td colspan="6"><dl class="detail-grid">${details.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${r.error ? `<p class="failure">${esc(r.error)}</p>` : ''}${legacy ? `<small class="legacy">${esc(t('legacy_note'))}</small>` : ''}</td></tr>`;
   }).join('') : `<tr><td colspan="6" class="empty">${esc(t('history_empty'))}</td></tr>`;
 }
 

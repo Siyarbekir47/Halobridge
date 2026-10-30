@@ -1,11 +1,5 @@
 # Changelog
 
-## 0.1.41
-
-- Measure Messages stream speed when engine timings are missing.
-- Show first-output latency and distinguish measured generation rates.
-- Document Claude Desktop aliases and missing reasoning counters.
-
 ## 0.1.40
 
 - Forward Claude Code model names to the active backend.

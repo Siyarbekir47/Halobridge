@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.41 supports Halogen 0.18.18. Install the Halobridge update, then
+Halobridge 0.1.40 supports Halogen 0.18.18. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -516,30 +516,6 @@ Use your forwarded port (for example `18731`) when accessing the router through
 a local tunnel. The backend's private port does not need to be exposed. The
 output-token setting leaves room below Halogen's default cap, as recommended
 in the [upstream Claude Code guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/claude-code.md).
-
-Claude Desktop/Cowork builds that require Anthropic-shaped IDs can keep
-`claude-sonnet-4-5` in their Gateway model list and give it a Qwen display name.
-Use the same base URL and keep the 1M option off for a 262,144-token backend.
-The client's Claude mapping determines its controls and assumed context window;
-the server still runs the active Halogen model. The terminal settings file is
-not a verified way to configure the Desktop context window.
-
-Halogen's Messages stream reports total output tokens but may omit engine
-timings and a separate reasoning-token count. For new requests, the dashboard
-then shows **Generation · measured**: final reported output tokens divided by
-the time between the first recognizable thinking/text/tool output event and
-`message_stop`. **First output** is the delay from router admission to that
-event; **TTFB** remains the first response byte, which can precede generation.
-**Output stream** is the measured interval. Pauses and delivery are included;
-this is not an engine-only benchmark. Engine-reported speed takes precedence.
-
-Measured speed requires a successful complete stream, final positive output
-usage and output events observed at least 10 ms apart. Missing, aborted or
-buffered streams have no measured rate. Historical rows remain unchanged.
-Reported and observed rates are stored separately in request history; engine
-aggregate charts continue to use engine telemetry. Reasoning token counts are
-never inferred from streamed text or SSE event counts. Request and response
-bodies are forwarded unchanged, including `thinking` signatures and tool events.
 
 ## Changes that work after an engine update
 
