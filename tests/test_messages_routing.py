@@ -41,6 +41,14 @@ class MessagesRoutingTests(unittest.IsolatedAsyncioTestCase):
             if payload.get("fail"):
                 return web.Response(status=400, body=b'{"type":"error","error":{"type":"invalid_request_error","message":"backend validation"}}',
                                     content_type="application/json", headers={"X-Backend-Error": "preserved"})
+            if payload.get("timed"):
+                response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+                await response.prepare(request)
+                for chunk in self.timed_chunks:
+                    await response.write(chunk)
+                    await asyncio.sleep(0.03)
+                await response.write_eof()
+                return response
             if request.path.endswith("/count_tokens"):
                 return web.json_response({"input_tokens": 58})
             return web.Response(body=EVENTS if payload.get("stream") else REPLY,
@@ -165,4 +173,23 @@ class MessagesRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 400)
         self.assertEqual(response.headers["X-Backend-Error"], "preserved")
         self.assertEqual((await response.json())["error"]["message"], "backend validation")
+        self.assertEqual(self.manager.active_requests, 0)
+
+    async def test_real_stream_records_observed_speed_without_modifying_wire_or_engine_counters(self):
+        self.timed_chunks = [
+            b'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"Think"}}\n\n',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"OK"}}\n\n',
+            b'data: {"type":"message_delta","usage":{"input_tokens":58,"output_tokens":29}}\n\ndata: {"type":"message_stop"}\n\n',
+        ]
+        payload = {"model": "claude-sonnet-4-5", "stream": True, "timed": True}
+        response = await self.client.post("/v1/messages", json=payload)
+        self.assertEqual(await response.read(), b"".join(self.timed_chunks))
+        self.assertEqual(self.received[-1][1], json.dumps(payload).encode())
+        row = self.dashboard.db.execute("SELECT * FROM requests").fetchone()
+        self.assertGreater(row["observed_tps"], 0)
+        self.assertGreaterEqual(row["output_stream_ms"], 10)
+        self.assertGreaterEqual(row["first_output_ms"], row["ttft_ms"])
+        self.assertEqual((row["model"], row["input_tokens"], row["output_tokens"]), (OFFICIAL, 58, 29))
+        self.assertIsNone(row["tps"])
+        self.assertIsNone(row["reasoning_tokens"])
         self.assertEqual(self.manager.active_requests, 0)
