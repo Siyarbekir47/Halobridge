@@ -198,15 +198,6 @@ class Trace:
         self.reasoning_tokens: Optional[int] = None
         self.tps: Optional[float] = None
         self.prompt_tps: Optional[float] = None
-        self.first_output_ms: Optional[float] = None
-        self.output_stream_ms: Optional[float] = None
-        self.observed_tps: Optional[float] = None
-        self._chunk_mono: Optional[float] = None
-        self._first_output_mono: Optional[float] = None
-        self._last_output_mono: Optional[float] = None
-        self._message_stop_mono: Optional[float] = None
-        self._final_output_tokens: Optional[int] = None
-        self._message_error = False
         self._json_buffer = bytearray()
         self._line_buffer = bytearray()
         self._event_data: list[bytes] = []
@@ -218,8 +209,6 @@ class Trace:
     def _extract(self, data: Any) -> None:
         if not isinstance(data, dict):
             return
-        if self.endpoint == "/v1/messages" and self.stream:
-            self._observe_message_output(data)
         # Responses streams wrap final usage in response.completed/incomplete.
         response = data.get("response")
         if isinstance(response, dict):
@@ -273,40 +262,6 @@ class Trace:
             # prompt_n may count only uncached prefill tokens. It must never
             # overwrite usage.prompt_tokens (the full logical input).
 
-    def _observe_message_output(self, data: dict) -> None:
-        kind = data.get("type")
-        if kind == "error":
-            self._message_error = True
-        elif kind == "message_stop":
-            self._message_stop_mono = self._chunk_mono
-        elif kind == "message_delta":
-            usage = data.get("usage")
-            if isinstance(usage, dict):
-                self._final_output_tokens = _int(usage.get("output_tokens"))
-        output = False
-        if kind == "content_block_delta":
-            delta = data.get("delta")
-            if isinstance(delta, dict):
-                delta_type = delta.get("type")
-                field = {"text_delta": "text", "thinking_delta": "thinking",
-                         "input_json_delta": "partial_json"}.get(delta_type) if isinstance(delta_type, str) else None
-                output = bool(field and isinstance(delta.get(field), str) and delta[field])
-                if output and field == "thinking":
-                    self.thinking = "on"
-        elif kind == "content_block_start":
-            block = data.get("content_block")
-            if isinstance(block, dict):
-                block_type = block.get("type")
-                field = {"text": "text", "thinking": "thinking", "tool_use": "name"}.get(block_type) if isinstance(block_type, str) else None
-                output = bool(field and isinstance(block.get(field), str) and block[field])
-                if output and field == "thinking":
-                    self.thinking = "on"
-        if output and self._chunk_mono is not None and self._message_stop_mono is None:
-            if self._first_output_mono is None:
-                self._first_output_mono = self._chunk_mono
-                self.first_output_ms = max(0.0, (self._chunk_mono - self.started_mono) * 1000)
-            self._last_output_mono = self._chunk_mono
-
     def _parse_json(self, raw: bytes) -> None:
         if not raw or raw.strip() == b"[DONE]":
             return
@@ -338,9 +293,8 @@ class Trace:
                 self._event_data.append(raw)
 
     def observe(self, chunk: bytes, content_type: str) -> None:
-        self._chunk_mono = time.monotonic()
         if self.first_byte_mono is None and chunk:
-            self.first_byte_mono = self._chunk_mono
+            self.first_byte_mono = time.monotonic()
         self.response_bytes += len(chunk)
         if self.endpoint in {"/v1/images/generations", "/v1/images/edits", "/v1/images/variations",
                              "/v1/audio/transcriptions", "/v1/audio/speech"}:
@@ -377,18 +331,6 @@ class Trace:
             self.output_tokens is None or self.reasoning_tokens > self.output_tokens
         ):
             self.reasoning_tokens = None
-        # Keep router observations separate from engine-reported throughput.
-        # Chunk counts are not token counts. A complete stream and its final
-        # usage are required; one buffered packet cannot yield a useful rate.
-        if (not self._message_error and self._first_output_mono is not None
-                and self._last_output_mono is not None and self._message_stop_mono is not None
-                and self._final_output_tokens is not None and self._final_output_tokens > 0
-                and self._final_output_tokens == self.output_tokens
-                and self._last_output_mono - self._first_output_mono >= 0.01):
-            elapsed = self._message_stop_mono - self._first_output_mono
-            if elapsed > 0:
-                self.output_stream_ms = elapsed * 1000
-                self.observed_tps = self.output_tokens / elapsed
 
 
 class Dashboard:
@@ -461,9 +403,6 @@ class Dashboard:
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(requests)")}
         if "telemetry_version" not in columns:
             self.db.execute("ALTER TABLE requests ADD COLUMN telemetry_version INTEGER NOT NULL DEFAULT 0")
-        for name in ("first_output_ms", "output_stream_ms", "observed_tps"):
-            if name not in columns:
-                self.db.execute(f"ALTER TABLE requests ADD COLUMN {name} REAL")
         self.db.commit()
 
     async def initialize(self) -> None:
@@ -517,8 +456,8 @@ class Dashboard:
                 endpoint, status, duration_ms, ttft_ms, stream, thinking,
                 reasoning_effort, max_tokens, input_tokens, output_tokens,
                 cached_tokens, reasoning_tokens, tps, prompt_tps, response_bytes,
-                error, telemetry_version, first_output_ms, output_stream_ms, observed_tps
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                error, telemetry_version
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             trace.request_id, trace.started_epoch, time.time(), trace.client,
             trace.client_ip, trace.model, trace.endpoint, int(status), duration_ms,
@@ -526,8 +465,7 @@ class Dashboard:
             trace.max_tokens, trace.input_tokens, trace.output_tokens,
             trace.cached_tokens, trace.reasoning_tokens, trace.tps, trace.prompt_tps,
             trace.response_bytes, _safe_label(error, 100) if error else None,
-            TELEMETRY_VERSION, trace.first_output_ms, trace.output_stream_ms,
-            trace.observed_tps if 200 <= status < 300 else None,
+            TELEMETRY_VERSION,
         ))
         self.db.commit()
         self.write_count += 1
@@ -830,12 +768,26 @@ class Dashboard:
             SELECT request_id, started_at, completed_at, client, model, endpoint,
                 status, duration_ms, ttft_ms AS ttfb_ms, stream, thinking,
                 reasoning_effort, input_tokens, output_tokens, cached_tokens,
-                reasoning_tokens, tps, prompt_tps, error, telemetry_version,
-                first_output_ms, output_stream_ms, observed_tps
+                reasoning_tokens, tps, prompt_tps, error, telemetry_version
             FROM requests WHERE completed_at >= ? AND completed_at <= ? AND {HISTORY_SCOPE}
             ORDER BY completed_at DESC, id DESC LIMIT ? OFFSET ?
         """, (start, end, page_size, (page - 1) * page_size)).fetchall()
         return {"items": [dict(row) for row in rows], "page": page, "page_size": page_size, "pages": pages, "total": total}
+
+    def _engine_history(self, start: float, end: float, page: int = 1, page_size: int = 10) -> dict[str, Any]:
+        """Completed engine log records, independent of routed API requests."""
+        assert self.db is not None
+        page_size = max(1, min(page_size, 100))
+        total = self.db.execute("SELECT COUNT(*) FROM engine_requests WHERE completed_at >= ? AND completed_at <= ?",
+                                (start, end)).fetchone()[0]
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = min(max(1, page), pages)
+        rows = self.db.execute("""
+            SELECT * FROM engine_requests WHERE completed_at >= ? AND completed_at <= ?
+            ORDER BY completed_at DESC, cursor DESC LIMIT ? OFFSET ?
+        """, (start, end, page_size, (page - 1) * page_size)).fetchall()
+        return {"items": [dict(row) for row in rows], "page": page, "page_size": page_size,
+                "pages": pages, "total": total, "source": "systemd_journal"}
 
     def _resolve_range(self, request: web.Request) -> tuple[str, float, float]:
         now = time.time()
@@ -879,11 +831,16 @@ class Dashboard:
             page = max(1, int(request.query.get("page", "1")))
         except ValueError:
             page = 1
+        try:
+            engine_page = max(1, int(request.query.get("engine_page", "1")))
+        except ValueError:
+            engine_page = 1
         bucket, bucket_unit, timeline = self._timeline(start, end, period)
         return {
             "period": period, "from": start, "to": end, "generated_at": time.time(),
             "bucket_seconds": bucket, "bucket_unit": bucket_unit, "summary": self._summary(start, end), "timeline": timeline,
             "engine": self._engine_summary(start, end), "history": self._history(start, end, page),
+            "engine_history": self._engine_history(start, end, engine_page),
             "by_client": self._breakdown(start, end, "client"), "by_model": self._breakdown(start, end, "model"),
         }
 

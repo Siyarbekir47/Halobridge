@@ -300,14 +300,14 @@ The **Requests** workspace shows completed requests with client/model, reported
 input and output tokens, duration and status. Individual rows can be expanded for
 more detail without storing prompt or response contents.
 
-Messages streams also show **First output**, **Output stream** duration and
-**Generation · measured** when the backend does not report generation speed.
-The router divides the final reported output count by the interval from the
-first thinking, text or tool output event to stream completion. This includes
-delivery delays and pauses; it is separate from engine throughput. Engine-reported
-speed takes precedence. Aborted streams, missing final usage and output received
-in one buffered packet have no measured speed. Historical requests are not filled
-with estimates. Separate reasoning-token counts remain unknown when unreported.
+**Engine completion logs** below the API history show each backend completion's
+logged input/output count, generation time and tokens per second. Expand a row
+for cache, prefill, KV-pool and thinking details. The existing journal reader
+collects these automatically from the configured systemd user services. These
+records are independent: the completion log has no shared API request ID, and
+parallel requests cannot safely be matched by timestamps. No router-measured
+generation rates are calculated or displayed. Existing observed rates from
+0.1.41 are ignored. API history retains only API-reported timing values.
 
 <p align="center">
 <img width="1907" height="905" alt="1_2" src="https://github.com/user-attachments/assets/aaa5e3cc-d4b6-4fb3-a8fb-ba112d23a89d" />
@@ -910,14 +910,11 @@ claude
 Use the real backend key if authentication is enabled, and your forwarded port
 if using a tunnel. See [Messages and token counting](docs/API.md#anthropic-messages-and-token-counting).
 
-For **Claude Desktop / Cowork**, use Gateway mode with that same base URL.
-Desktop builds that reject non-Anthropic model IDs can use `claude-sonnet-4-5`
-with a display label such as `Qwen 3.8 Flash (Halogen)`. Halobridge forwards this
-client name to the active backend and records the actual model in history. Keep
-the 1M option off for a 262,144-token backend. A Sonnet client mapping supplies
-Claude's controls and assumed limits; it does not change Halogen's actual
-context capacity. Terminal CLI settings do not establish Desktop's context
-window. See the [Desktop gateway guide](https://claude.com/docs/third-party/claude-desktop/gateway#context-window-and-compaction).
+Claude Desktop builds that require Anthropic-shaped model IDs can keep the
+working `claude-sonnet-4-5` entry and label it `Qwen 3.8 Flash (Halogen)`.
+Keep the 1M option off for a 262,144-token backend. The client alias does not
+change the backend model or supply timing fields missing from its Messages
+stream; engine generation values are shown in **Requests → Engine completion logs**.
 
 ### API examples
 

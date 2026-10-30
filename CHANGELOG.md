@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.42
+
+- Show backend generation timings and speed from engine logs.
+- Remove router-measured generation rates.
+- Keep engine completions separate from API request history.
+
 ## 0.1.41
 
 - Measure Messages stream speed when engine timings are missing.

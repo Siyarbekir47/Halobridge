@@ -13,7 +13,7 @@ const integer = n => valid(n) ? n.toLocaleString(NUM) : '–';
 const decimal = (n, digits = 1) => valid(n) ? n.toLocaleString(NUM, {minimumFractionDigits: digits, maximumFractionDigits: digits}) : '–';
 const percent = n => valid(n) ? `${decimal(n * 100)} %` : '–';
 const seconds = n => valid(n) ? `${decimal(n / 1000, 2)} s` : '–';
-const rate = n => valid(n) ? `${decimal(n)} ${t('tokens_per_second')}` : '–';
+const rate = (n, digits = 1) => valid(n) ? `${decimal(n, digits)} ${t('tokens_per_second')}` : '–';
 const esc = s => String(s ?? '–').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 const dateTime = n => new Date(n * 1000).toLocaleString(NUM, {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
 const compact = n => n.toLocaleString(NUM, {notation:'compact', maximumFractionDigits:1});
@@ -24,7 +24,8 @@ function bytes(n) {
   while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
   return `${decimal(n, 1)} ${units[i]}`;
 }
-const state = {period:'24h', from:null, to:null, page:1, pages:1, range:null, pinned:null};
+const state = {period:'24h', from:null, to:null, page:1, pages:1, enginePage:1, enginePages:1, range:null, pinned:null};
+const engineExpanded = new Set();
 let analyticsController, analyticsSequence = 0, liveBusy = false, liveTimer, analyticsTimer, currentAnalytics;
 let updatesData, updatesTimer, updatesBusy = false, updateActionBusy = false, updateSequence = 0;
 let appUpdatesData, appUpdatesTimer, appUpdatesBusy = false, appUpdateActionBusy = false, appUpdateSequence = 0, appUpdatePending = false;
@@ -216,29 +217,47 @@ function renderHistory(history) {
     const legacy = r.telemetry_version < 2;
     const count = n => `${integer(n)}${legacy && valid(n) ? '*' : ''}`;
     const open = expanded.has(r.request_id);
-    const observed = !legacy && !valid(r.tps) && valid(r.observed_tps);
     const details = [
-      [t('detail_cache'), count(r.cached_tokens)], [t('detail_reasoning'), count(r.reasoning_tokens),
-        !valid(r.reasoning_tokens) && r.endpoint === '/v1/messages' ? t('detail_reasoning_unreported') : ''],
-      [t('detail_ttfb'), seconds(r.ttfb_ms)],
-      [t(observed ? 'detail_generation_observed' : 'detail_generation'), legacy ? '–' : rate(observed ? r.observed_tps : r.tps),
-        observed ? t('detail_generation_observed_hint') : ''],
-      ...(r.endpoint === '/v1/messages' && r.stream ? [
-        [t('detail_first_output'), seconds(r.first_output_ms)],
-        [t('detail_output_stream'), seconds(r.output_stream_ms)],
-      ] : []),
+      [t('detail_cache'), count(r.cached_tokens)], [t('detail_reasoning'), count(r.reasoning_tokens)],
+      [t('detail_ttfb'), seconds(r.ttfb_ms)], [t('detail_generation'), legacy ? '–' : rate(r.tps)],
       [t('detail_reasoning_requested'), r.reasoning_effort], [t('detail_response_format'), r.stream ? 'Streaming' : 'JSON'],
       [t('detail_endpoint'), r.endpoint], [t('detail_capture'), legacy ? t('capture_legacy') : t('capture_api')],
     ];
     return `<tr><td><button class="row-toggle" data-request="${esc(r.request_id)}" aria-expanded="${open}" aria-controls="detail-${i}"><span aria-hidden="true">${open ? '−' : '+'}</span>${esc(dateTime(r.completed_at))}</button></td>
       <td>${esc(clientLabel(r.client))}<span class="cell-sub">${esc(r.model)}</span></td><td class="number ${legacy ? 'legacy' : ''}">${count(r.input_tokens)}</td><td class="number ${legacy ? 'legacy' : ''}">${count(r.output_tokens)}</td>
       <td class="number">${seconds(r.duration_ms)}</td><td class="number ${r.status >= 400 ? 'failure' : 'success'}">${integer(r.status)}<span class="cell-sub">${r.status === 499 ? t('status_aborted') : r.status >= 400 ? t('status_error') : t('status_ok')}</span></td></tr>
-      <tr class="request-detail" id="detail-${i}" ${open ? '' : 'hidden'}><td colspan="6"><dl class="detail-grid">${details.map(([key, value, hint]) => `<div${hint ? ` title="${esc(hint)}"` : ''}><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${observed ? `<small class="muted">${esc(t('detail_generation_observed_hint'))}</small>` : ''}${r.error ? `<p class="failure">${esc(r.error)}</p>` : ''}${legacy ? `<small class="legacy">${esc(t('legacy_note'))}</small>` : ''}</td></tr>`;
+      <tr class="request-detail" id="detail-${i}" ${open ? '' : 'hidden'}><td colspan="6"><dl class="detail-grid">${details.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${r.error ? `<p class="failure">${esc(r.error)}</p>` : ''}${legacy ? `<small class="legacy">${esc(t('legacy_note'))}</small>` : ''}</td></tr>`;
   }).join('') : `<tr><td colspan="6" class="empty">${esc(t('history_empty'))}</td></tr>`;
 }
 
 function renderBreakdown(id, rows) {
   $(id).innerHTML = rows.length ? rows.map(r => `<div class="breakdown-row"><span>${esc(id === 'clients' ? clientLabel(r.name) : r.name)}</span><span>${integer(r.requests)} / ${integer(r.output_tokens)}${r.output_reported < r.requests ? esc(t('partial_suffix')) : ''}</span></div>`).join('') : `<p class="muted">${esc(t('no_requests'))}</p>`;
+}
+
+function renderEngineHistory(history) {
+  if (!history) return;
+  state.enginePage = history.page;
+  state.enginePages = history.pages;
+  $('engineHistoryCount').textContent = t('history_count', {total: integer(history.total)});
+  $('enginePageInfo').textContent = t('page_of', {page: history.page, pages: history.pages}) + (state.pinned ? t('pinned_suffix') : '');
+  $('prevEnginePage').disabled = state.enginePage <= 1;
+  $('nextEnginePage').disabled = state.enginePage >= state.enginePages;
+  $('engineRows').innerHTML = history.items.length ? history.items.map((r, i) => {
+    const open = engineExpanded.has(r.cursor);
+    const details = [
+      [t('detail_cache'), integer(r.cached_tokens)],
+      [t('engine_history_new_input'), integer(r.new_tokens)],
+      [t('engine_history_prefill'), valid(r.prefill_s) ? seconds(r.prefill_s * 1000) : '–'],
+      [t('engine_history_pool'), valid(r.pool_used) && valid(r.pool_total) ? `${integer(r.pool_used)} / ${integer(r.pool_total)}` : '–'],
+      [t('engine_history_thinking'), r.thinking ?? '–'],
+      [t('engine_history_closed'), r.closed_reason ?? '–'],
+      [t('label_mtp'), decimal(r.commit_per_round, 2)],
+      [t('label_pld'), decimal(r.pld_accept_per_round, 2)],
+    ];
+    const timestamp = new Date(r.completed_at * 1000).toLocaleString(NUM, {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', fractionalSecondDigits:3});
+    return `<tr><td><button class="row-toggle" data-engine="${esc(r.cursor)}" aria-expanded="${open}" aria-controls="engine-detail-${i}"><span aria-hidden="true">${open ? '−' : '+'}</span>${esc(timestamp)}</button></td><td>${esc(r.model)}<span class="cell-sub">${esc(r.mode)}</span></td><td class="number">${integer(r.prompt_tokens)}</td><td class="number">${integer(r.output_tokens)}</td><td class="number">${valid(r.generation_s) ? seconds(r.generation_s * 1000) : '–'}</td><td class="number">${rate(r.tps, 2)}</td></tr>
+      <tr id="engine-detail-${i}" class="request-detail" ${open ? '' : 'hidden'}><td colspan="6"><dl class="detail-grid">${details.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl></td></tr>`;
+  }).join('') : `<tr><td colspan="6" class="empty">${esc(t('engine_history_empty'))}</td></tr>`;
 }
 
 function renderAnalytics(data) {
@@ -262,6 +281,7 @@ function renderAnalytics(data) {
   $('coverageText').textContent = messages.join(' ');
   renderChart(data);
   renderHistory(data.history);
+  renderEngineHistory(data.engine_history);
   renderBreakdown('clients', data.by_client);
   renderBreakdown('models', data.by_model);
   $('engineCaption').textContent = t('engine_caption', {count: integer(e.requests)});
@@ -273,7 +293,7 @@ function renderAnalytics(data) {
 
 function analyticsUrl() {
   const range = state.pinned || (state.period === 'custom' ? {from:state.from, to:state.to} : null);
-  const params = new URLSearchParams({period:range ? 'custom' : state.period, page:String(state.page)});
+  const params = new URLSearchParams({period:range ? 'custom' : state.period, page:String(state.page), engine_page:String(state.enginePage)});
   if (range) { params.set('from', range.from); params.set('to', range.to); }
   return `/dashboard/api/analytics?${params}`;
 }
@@ -308,6 +328,7 @@ async function refreshAnalytics(clear = false) {
   const timeout = setTimeout(() => controller.abort(), 15000);
   $('analytics').setAttribute('aria-busy', 'true');
   $('prevPage').disabled = $('nextPage').disabled = true;
+  $('prevEnginePage').disabled = $('nextEnginePage').disabled = true;
   if (clear) {
     currentAnalytics = null;
     for (const id of ['requestCount', 'inputTokens', 'outputTokens', 'cacheRatio']) $(id).textContent = '–';
@@ -334,9 +355,12 @@ async function refreshAnalytics(clear = false) {
     if (clear) {
       $('chartEmpty').textContent = t('analytics_unavailable');
       $('rows').innerHTML = `<tr><td colspan="6" class="empty">${esc(t('requests_failed'))}</td></tr>`;
+      $('engineRows').innerHTML = `<tr><td colspan="6" class="empty">${esc(t('requests_failed'))}</td></tr>`;
     }
     $('prevPage').disabled = state.page <= 1;
     $('nextPage').disabled = state.page >= state.pages;
+    $('prevEnginePage').disabled = state.enginePage <= 1;
+    $('nextEnginePage').disabled = state.enginePage >= state.enginePages;
   } finally {
     clearTimeout(timeout);
     if (sequence === analyticsSequence) {
@@ -347,8 +371,9 @@ async function refreshAnalytics(clear = false) {
 }
 
 function changeRange(period, from = null, to = null) {
-  Object.assign(state, {period, from, to, page:1, pages:1, pinned:null});
+  Object.assign(state, {period, from, to, page:1, pages:1, enginePage:1, enginePages:1, pinned:null});
   expanded.clear();
+  engineExpanded.clear();
   refreshAnalytics(true);
 }
 $('dismissCoverage').addEventListener('click', () => {
@@ -382,12 +407,28 @@ $('customRange').addEventListener('submit', event => {
 function changePage(delta) {
   if (!state.range) return;
   state.page = Math.max(1, Math.min(state.pages, state.page + delta));
-  state.pinned = state.page > 1 ? state.pinned || {...state.range} : null;
+  state.pinned = state.page > 1 || state.enginePage > 1 ? state.pinned || {...state.range} : null;
   expanded.clear();
   refreshAnalytics();
 }
 $('prevPage').addEventListener('click', () => changePage(-1));
 $('nextPage').addEventListener('click', () => changePage(1));
+function changeEnginePage(delta) {
+  if (!state.range) return;
+  state.enginePage = Math.max(1, Math.min(state.enginePages, state.enginePage + delta));
+  state.pinned = state.page > 1 || state.enginePage > 1 ? state.pinned || {...state.range} : null;
+  engineExpanded.clear();
+  refreshAnalytics();
+}
+$('prevEnginePage').addEventListener('click', () => changeEnginePage(-1));
+$('nextEnginePage').addEventListener('click', () => changeEnginePage(1));
+$('engineRows').addEventListener('click', event => {
+  const button = event.target.closest('button[data-engine]');
+  if (!button) return;
+  const id = button.dataset.engine;
+  engineExpanded.has(id) ? engineExpanded.delete(id) : engineExpanded.add(id);
+  if (currentAnalytics) renderEngineHistory(currentAnalytics.engine_history);
+});
 $('rows').addEventListener('click', event => {
   const button = event.target.closest('button[data-request]');
   if (!button) return;

@@ -29,14 +29,12 @@ def create_preview():
                status=200 if i % 9 else 499, duration_ms=3200+i*50)
     insert(dashboard, request_id='preview-missing', completed_at=time.time() - 600,
            input_tokens=None, output_tokens=None, cached_tokens=None, reasoning_tokens=None)
-    insert(dashboard, request_id='preview-messages-observed', completed_at=time.time() - 20,
-           client='claude-cli/2.1.309', endpoint='/v1/messages', duration_ms=3000,
-           first_output_ms=1000, output_stream_ms=2000, observed_tps=50,
-           tps=None, reasoning_tokens=None, reasoning_effort='xhigh')
-    insert(dashboard, request_id='preview-messages-reported', completed_at=time.time() - 40,
-           client='claude-cli/2.1.309', endpoint='/v1/messages', duration_ms=3000,
-           first_output_ms=1000, output_stream_ms=2000, observed_tps=50,
-           tps=55, reasoning_tokens=20, reasoning_effort='xhigh')
+    for i in range(13):
+        dashboard._store_engine_line({
+            'MESSAGE': 'serve_api: mtp 163 tok in 4.64s = 35.13 t/s | 92 rounds, commit 1.77/round | prompt 37219, prefill 23.43s = 1589 t/s | pool 673280/786432 86% | think on',
+            '_SYSTEMD_USER_UNIT': 'halogen-official.service', '__CURSOR': f'preview-engine-{i}',
+            '__REALTIME_TIMESTAMP': str(int((time.time() - 20 - i * 2) * 1_000_000)),
+        })
     async def snapshot():
         return {'generated_at': time.time(), 'app': {'version': app_updates['current_version']},
                 'api': {'active_model': 'qwen3.8-flash', 'status': 'ok'},

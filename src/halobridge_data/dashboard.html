@@ -23,7 +23,7 @@
   <div class="sidebar-bottom">
     <div class="sidebar-preference"><label for="themeSelect" data-i18n="theme_label">Appearance</label><select id="themeSelect" aria-label="Appearance" data-i18n-attr="aria-label:theme_label"><option value="system" data-i18n="theme_system">System</option><option value="light" data-i18n="theme_light">Light</option><option value="dark" data-i18n="theme_dark">Dark</option></select></div>
     <div class="sidebar-preference"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect" aria-label="Language" data-i18n-attr="aria-label:lang_label"><option value="en">English</option><option value="de">Deutsch</option></select></div>
-    <small>Halobridge <span id="appVersion">v0.1.41</span></small>
+    <small>Halobridge <span id="appVersion">v0.1.42</span></small>
   </div>
 </aside>
 <main class="shell" id="mainContent" tabindex="-1">
@@ -88,6 +88,14 @@
       <tbody id="rows"><tr><td colspan="6" class="empty" data-i18n="requests_loading">Loading requests …</td></tr></tbody></table>
     </div>
     <div class="pager"><span id="pageInfo">Page 1 of 1</span><button id="prevPage" disabled data-i18n="btn_prev">← Back</button><button id="nextPage" disabled data-i18n="btn_next">Next →</button></div>
+  </section>
+  <section class="activity" aria-labelledby="engineHistoryTitle">
+    <div class="section-head"><h2 id="engineHistoryTitle" data-i18n="engine_history_title">Engine completion logs</h2><small id="engineHistoryCount">–</small></div>
+    <p class="explanation" data-i18n="engine_history_note">Values from the backend service journal, including generation time and speed. These logs have no shared API request ID; entries are not matched to requests by time and may include direct backend calls.</p>
+    <div class="table-wrap" tabindex="0" role="region" data-i18n-attr="aria-label:engine_history_title">
+      <table><thead><tr><th scope="col" data-i18n="th_time">Time / Details</th><th scope="col" data-i18n="engine_history_model">Model / Mode</th><th scope="col" class="number" data-i18n="th_input">Input</th><th scope="col" class="number" data-i18n="th_output">Output</th><th scope="col" class="number" data-i18n="engine_history_generation">Generation · logged</th><th scope="col" class="number" data-i18n="engine_history_speed">Speed · logged</th></tr></thead><tbody id="engineRows"><tr><td colspan="6" class="empty" data-i18n="engine_history_empty">No engine completion logs in this period.</td></tr></tbody></table>
+    </div>
+    <div class="pager"><span id="enginePageInfo">Page 1 of 1</span><button id="prevEnginePage" disabled data-i18n="btn_prev">← Back</button><button id="nextEnginePage" disabled data-i18n="btn_next">Next →</button></div>
   </section>
 
 </div><div id="view-playground" class="view" hidden>
