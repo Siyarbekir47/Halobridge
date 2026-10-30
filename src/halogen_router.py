@@ -612,12 +612,13 @@ class ModelManager:
         self,
         requested_model: Optional[str],
         *, auxiliary: bool = False, auxiliary_task: Optional[str] = None,
+        current_backend: bool = False,
     ) -> str:
         self._check_maintenance()
         auxiliary = auxiliary or auxiliary_task is not None
         target_model = self.current_model if auxiliary else requested_model or self.current_model
 
-        if target_model not in self.models:
+        if not current_backend and target_model not in self.models:
             raise web.HTTPNotFound(
                 text=json.dumps(
                     {
@@ -639,6 +640,17 @@ class ModelManager:
                 while self.switching:
                     await self.condition.wait()
                     self._check_maintenance()
+
+                if current_backend:
+                    # Messages accepts client model names (e.g. Claude Code's).
+                    # Resolve after waiting so an alias never switches back to
+                    # the backend that was active before a pending switch.
+                    target_model = self.current_model
+                    if target_model not in self.models:
+                        raise web.HTTPServiceUnavailable(text=json.dumps({
+                            "type": "error", "error": {"type": "api_error",
+                                "message": "No active Halogen backend is available"}}),
+                            content_type="application/json", headers={"Retry-After": "5"})
 
                 if auxiliary:
                     target_model = self.current_model
@@ -838,6 +850,11 @@ async def proxy_request(request: web.Request) -> web.StreamResponse:
         reserved_model = await manager.reserve_request(admission_model, auxiliary_task=auxiliary_task)
     elif auxiliary:
         reserved_model = await manager.reserve_request(requested_model, auxiliary=True)
+    elif (request.path in {"/v1/messages", "/v1/messages/count_tokens"}
+          and requested_model and requested_model not in manager.models):
+        # Halogen interprets the original model name and validates the payload.
+        # Only admission uses the active GPU profile; preserve all wire bytes.
+        reserved_model = await manager.reserve_request(requested_model, current_backend=True)
     else:
         reserved_model = await manager.reserve_request(requested_model)
     track_usage = request.method == "POST" and request.path in INFERENCE_ENDPOINTS

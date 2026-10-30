@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.40
+
+- Forward Claude Code model names to the active backend.
+- Preserve Messages streaming, token counting and request contents.
+
 ## 0.1.39
 
 - Add backend restarts with request draining and readiness checks.
