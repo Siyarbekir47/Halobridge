@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.39 supports Halogen 0.18.18. Install the Halobridge update, then
+Halobridge 0.1.40 supports Halogen 0.18.18. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -476,7 +476,12 @@ is 0. Halobridge passes the priority header through unchanged.
 
 These upstream endpoints existed before 0.17.0; Halobridge now tracks their
 streamed and non-streamed usage, including cached input, and supplies Anthropic
-model-list fields. Use your installed GPU model ID, not a hosted Claude ID:
+model-list fields. An installed GPU model ID selects that profile. On these two
+Messages endpoints, other client model names, including Claude Code's
+`claude-sonnet-4-5`, use the active backend, matching Halogen's behavior. The
+original request body and response pass through unchanged; the request history
+records the actual backend profile. No Claude model is downloaded or served.
+Other endpoints still require a known GPU or NPU model ID.
 
 ```bash
 curl --fail-with-body -sS localhost:8731/v1/messages \
@@ -491,9 +496,26 @@ curl --fail-with-body -sS localhost:8731/v1/messages/count_tokens \
 ```
 
 For the Anthropic SDK, set the base URL to `http://127.0.0.1:8731`, provide any
-API-key string the SDK requires, and select a Halobridge GPU model ID. Thinking,
-tools, streaming and images use the upstream Messages shapes; images require
-the vision tower. Token counting does not generate an answer.
+API-key string the SDK requires, and select an installed GPU ID or keep the
+client's Claude model name to use the active backend. If backend authentication
+is enabled, provide its real key. Thinking, tools, streaming and images use the
+upstream Messages shapes; images require the vision tower. Token counting does
+not generate an answer. Model switching, request draining and maintenance gates
+also apply to requests that use client model names.
+
+For Claude Code, keep the `/v1` suffix out of the base URL:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8731
+export ANTHROPIC_API_KEY=anything
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
+claude
+```
+
+Use your forwarded port (for example `18731`) when accessing the router through
+a local tunnel. The backend's private port does not need to be exposed. The
+output-token setting leaves room below Halogen's default cap, as recommended
+in the [upstream Claude Code guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/claude-code.md).
 
 ## Changes that work after an engine update
 

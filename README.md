@@ -883,6 +883,24 @@ System One requests stay outside text-generation token coverage. Anthropic
 Messages enters the usage charts with its full input, including cached tokens;
 generated image bodies are streamed through without buffering them for telemetry.
 
+### Claude Code
+
+Point Claude Code at Halobridge's router port. Its default Claude model names
+work on `/v1/messages` and `/v1/messages/count_tokens`: names that are not installed
+profiles or declared NPU models use the active GPU backend. Halobridge forwards
+the original body, headers and response; the dashboard records the actual profile.
+An installed GPU model ID still selects its profile.
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8731
+export ANTHROPIC_API_KEY=anything
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
+claude
+```
+
+Use the real backend key if authentication is enabled, and your forwarded port
+if using a tunnel. See [Messages and token counting](docs/API.md#anthropic-messages-and-token-counting).
+
 ### API examples
 
 These examples use the default local router address. Add your normal bearer
