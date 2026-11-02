@@ -294,14 +294,14 @@ def validate_profile(profile: Profile) -> list[str]:
     if default and cap and int(default) > int(cap):
         errors.append("env: MAX_TOKENS_DEFAULT must not exceed MAX_TOKENS_CAP")
     if profile.env.get("HALOGEN_NPU_MODELS"):
-        from npu import parse_models, MODEL_MIN_VERSION
+        from npu import parse_models, MODEL_MIN_VERSION, model_name
         try:
             models = parse_models(profile.env["HALOGEN_NPU_MODELS"])
-            if profile.model_id in [name.rsplit("/", 1)[-1] for name in models]:
+            if profile.model_id in [model_name(name) for name in models]:
                 errors.append("env: NPU model IDs must differ from the backend model ID")
             version = version_tuple(profile.image.rsplit(":", 1)[-1])
             for model in models:
-                minimum = MODEL_MIN_VERSION.get(model)
+                minimum = (0, 18, 21) if model.endswith(":fast") else MODEL_MIN_VERSION.get(model)
                 if minimum and version and version < minimum:
                     errors.append(f"env: NPU model {model} requires Halogen {'.'.join(map(str, minimum))} or newer")
         except ValueError:
@@ -479,7 +479,7 @@ def profile_to_dict(profile: Profile) -> dict:
 
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
-DEFAULT_ENGINE_VERSION = "0.18.18"
+DEFAULT_ENGINE_VERSION = "0.18.22"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"

@@ -6,6 +6,7 @@
   const ENDPOINTS = [
     entry('chat', '/v1/chat/completions'),
     entry('vision', '/v1/chat/completions', {file: 'vision'}),
+    entry('vision_structured', '/v1/chat/completions', {file: 'vision'}),
     entry('tools', '/v1/chat/completions'),
     entry('structured', '/v1/chat/completions'),
     entry('guard', '/v1/chat/completions'),
@@ -16,6 +17,11 @@
     entry('decision', '/v1/chat/completions', {group: 'npu', models: ['decider-4b', 'decider-0.8b']}),
     entry('systemone', '/v1/systemone', {group: 'npu', models: ['d3-lite', 'd3-nano', 'decider-4b', 'decider-0.8b']}),
     entry('systemone_image', '/v1/systemone', {group: 'npu', models: ['d3-lite', 'd3-nano'], file: 'systemone_image'}),
+    entry('systemone_d1', '/v1/systemone', {group: 'npu', models: ['d1-2B']}),
+    entry('systemone_d1_image', '/v1/systemone', {group: 'npu', models: ['d1-2B'], file: 'd1_image'}),
+    entry('systemone_d1_video', '/v1/systemone', {group: 'npu', models: ['d1-2B'], file: 'd1_video'}),
+    entry('npu_lfm3', '/v1/chat/completions', {group: 'npu', models: ['LFM3-1.7B', 'LFM3-1.7B-fast']}),
+    entry('npu_lfm3_base', '/v1/completions', {group: 'npu', models: ['LFM3-1.7B-Base']}),
     entry('embedding', '/v1/embeddings', {group: 'npu', models: ['qwen3-embedding-0.6b', 'qwen3-embedding-4b', 'embeddinggemma-2', 'wemm-embedding-4b']}),
     entry('embedding_image', '/v1/embeddings', {group: 'npu', models: ['embeddinggemma-2', 'wemm-embedding-4b'], file: 'embedding_image'}),
     entry('embedding_audio', '/v1/embeddings', {group: 'npu', models: ['embeddinggemma-2'], file: 'embedding_audio'}),
@@ -35,12 +41,13 @@
     entry('detokenize', '/detokenize', {group: 'inspect', models: []}),
     entry('release', '/halogen/handles/', {method: 'DELETE', group: 'inspect', models: []}),
   ];
-  const STREAM_IDS = new Set(['chat', 'tools', 'structured', 'guard', 'responses', 'completions', 'messages', 'npu_text', 'speech']);
+  const STREAM_IDS = new Set(['chat', 'tools', 'structured', 'vision_structured', 'guard', 'responses', 'completions', 'messages', 'npu_text', 'npu_lfm3', 'npu_lfm3_base', 'speech']);
   function sample(e, model) {
     const chat = {model, messages: [{role: 'user', content: 'Explain why the sky is blue in three sentences.'}], max_tokens: 512, enable_thinking: false};
     const img = {model, prompt: 'A small red cabin beside a lake, watercolor illustration', size: '512x512', n: 1, response_format: 'b64_json'};
     switch (e.id) {
       case 'vision': return {...chat, messages: [{role: 'user', content: 'Describe this image.'}]};
+      case 'vision_structured': return {...chat, messages: [{role: 'user', content: 'Describe this image in one sentence.'}], response_format: {type:'json_schema', json_schema:{name:'image_description', strict:true, schema:{type:'object', properties:{description:{type:'string'}}, required:['description'], additionalProperties:false}}}};
       case 'tools': return {...chat, messages: [{role: 'user', content: 'What is the weather in Berlin?'}], tools: [{type: 'function', function: {name: 'get_weather', description: 'Look up the weather for a city', strict: true, parameters: {type: 'object', properties: {city: {type: 'string'}}, required: ['city'], additionalProperties: false}}}], parallel_tool_calls: false};
       case 'structured': return {...chat, messages: [{role: 'user', content: 'Classify this review: The product arrived quickly and works well.'}], response_format: {type: 'json_schema', json_schema: {name: 'sentiment', strict: true, schema: {type: 'object', properties: {sentiment: {type: 'string', enum: ['positive', 'negative', 'neutral']}}, required: ['sentiment'], additionalProperties: false}}}};
       case 'guard': return {...chat, guard: true, stream: true};
@@ -51,6 +58,11 @@
       case 'decision': return {model, messages: [{role: 'user', content: 'WIN a FREE iPhone! Click here NOW to claim your prize!'}], response_format: {type: 'json_schema', json_schema: {name: 'spam', description: 'Is this message spam?', schema: {enum: ['no', 'yes']}}}, logprobs: true, top_logprobs: 2};
       case 'systemone': return {model, state: 'The customer was charged twice and asks for a refund.', questions: {team: {type: 'choice', instructions: 'Which team should handle this?', criteria: {billing: 'Payment problems', technical: 'Software problems', other: null}}}};
       case 'systemone_image': return {model, state: 'Look at the supplied image.', questions: {scene: {type: 'choice', instructions: 'Where was this picture taken?', criteria: {indoors: 'Inside a building', outdoors: 'Outside a building', uncertain: null}}}};
+      case 'systemone_d1': return {model, state:'The customer was charged twice and asks for a refund.', questions:{team:{type:'choice', instructions:'Which team should handle this?', criteria:{billing:'Payment problems', technical:'Software problems', other:null}}}};
+      case 'systemone_d1_image': return {model, state:null, media:[], questions:{objects:{type:'boxes', instructions:'Locate every cat.', max:4}}};
+      case 'systemone_d1_video': return {model, state:'Describe the scene shown by these frames.', media:[{type:'video', frames:[], fps:2}], questions:{scene:{type:'choice', instructions:'Where does this happen?', criteria:{indoors:'Inside a building', outdoors:'Outside a building', uncertain:null}}}};
+      case 'npu_lfm3': return {...chat, messages:[{role:'user', content:'What is the weather in Lisbon?'}], tools:[{type:'function', function:{name:'get_weather', description:'Read the current weather', parameters:{type:'object', properties:{city:{type:'string'}}, required:['city']}}}]};
+      case 'npu_lfm3_base': return {model, prompt:'Three uses for a local AI server:\n1.', max_tokens:128};
       case 'embedding': return {model, input: ['How do I enable the NPU?'], encoding_format: 'float'};
       case 'embedding_image': case 'embedding_audio': return {model, input: []};
       case 'rerank': return {model, query: 'How do I enable the NPU?', documents: ['Install the NPU driver and XRT plugin.', 'The weather is sunny today.'], top_n: 2};
@@ -136,7 +148,7 @@
   }
   async function preparePayload(e, b, files, dataURL) {
     if (e.file) {
-      if (!files.length || files.length > (e.file === 'edits' ? 4 : 1)) throw new Error('pg_file_count');
+      if (!files.length || files.length > (['edits','d1_video'].includes(e.file) ? 4 : 1)) throw new Error('pg_file_count');
       for (const file of files) {
         if (file.size > 25 * 1024 * 1024) throw new Error('pg_file_size');
         if ((e.file.includes('audio') || e.file === 'audio') && !/\.wav$/i.test(file.name)) throw new Error('pg_wav_hint');
@@ -152,6 +164,12 @@
     if (e.file === 'vision') {
       const text = textValue(e, b); b.messages[0].content = [{type: 'text', text}, {type: 'image_url', image_url: {url: await dataURL(files[0])}}];
       } else if (e.file === 'systemone_image') b.image = {url: await dataURL(files[0])};
+      else if (e.file === 'd1_image') b.media = [await dataURL(files[0])];
+      else if (e.file === 'd1_video') {
+        const frames = [];
+        for (const file of files) frames.push(await dataURL(file));
+        b.media = [{type:'video', frames, fps:b.media?.[0]?.fps ?? 2}];
+      }
       else if (e.file === 'embedding_image') b.input = [{type: 'image_url', image_url: {url: await dataURL(files[0])}}];
     else if (e.file === 'embedding_audio') b.input = [{type: 'input_audio', input_audio: {data: (await dataURL(files[0])).split(',')[1], format: 'wav'}}];
     return b ? JSON.stringify(b) : undefined;
@@ -167,6 +185,9 @@
       let key = selected.group === 'npu' ? 'pg_need_npu' : selected.group === 'gpu' ? 'pg_need_gpu' : 'pg_need_inspect';
       if (selected.id === 'guard') key = 'pg_need_guard';
       if (selected.id === 'speech') key = 'pg_need_speech';
+      if (selected.id.startsWith('systemone_d1')) key = 'pg_need_d1';
+      if (selected.id.startsWith('npu_lfm3')) key = 'pg_need_lfm3';
+      if (selected.id === 'vision_structured') key = 'pg_need_vision_structured';
       $('pgRequirement').textContent = t(key);
     }
     function translate() {
@@ -181,7 +202,7 @@
       $('pgPurpose').textContent = t('pg_example_' + selected.id);
       requirement(); renderStatus();
       $('pgFileLabel').textContent = t(selected.file?.includes('audio') ? 'pg_audio_file' : 'pg_image_files');
-      $('pgFileHint').textContent = t(selected.file === 'edits' ? 'pg_edit_files' : selected.file === 'audio' ? 'pg_wav_hint' : selected.file === 'embedding_audio' ? 'pg_embed_audio_hint' : 'pg_image_hint');
+      $('pgFileHint').textContent = t(selected.file === 'd1_video' ? 'pg_d1_frames' : selected.file === 'edits' ? 'pg_edit_files' : selected.file === 'audio' ? 'pg_wav_hint' : selected.file === 'embedding_audio' ? 'pg_embed_audio_hint' : 'pg_image_hint');
       if (loaded) modelStatus();
     }
     function modelStatus() { $('pgModelStatus').textContent = models.length ? t('pg_models_loaded', {n: models.length}) : t('pg_models_empty'); }
@@ -199,7 +220,7 @@
       $('pgInput').value = textValue(selected, b);
       $('pgInputField').hidden = !b || ['variations', 'transcriptions', 'embedding_image', 'embedding_audio'].includes(selected.id);
       $('pgBodyField').hidden = !b; $('pgFiles').value = ''; $('pgConfirm').checked = false;
-      $('pgFileField').hidden = !selected.file; $('pgFiles').multiple = selected.file === 'edits';
+      $('pgFileField').hidden = !selected.file; $('pgFiles').multiple = ['edits','d1_video'].includes(selected.file);
       $('pgFiles').accept = selected.file?.includes('audio') || selected.file === 'audio' ? '.wav,audio/wav,audio/x-wav' : 'image/png,image/jpeg,image/webp,image/gif,image/bmp';
       $('pgSpeechFields').hidden = selected.id !== 'speech'; $('pgVoice').value = 'ryan'; $('pgLanguage').value = 'auto'; $('pgInstructions').value = '';
       $('pgSizeField').hidden = !selected.image; $('pgSize').value = '512x512';

@@ -87,6 +87,27 @@ test('vision uploads preserve the prompt and other chat parameters', async () =>
   assert.equal(result.max_tokens, 512);
 });
 
+test('structured vision keeps the schema and d1 media retains frame order and fps', async () => {
+  const picture = {name:'frame.png', size:5};
+  const read = async file => 'data:image/png;base64,' + file.name;
+  const vision = endpoint('vision_structured');
+  const result = JSON.parse(await p.preparePayload(vision, p.sample(vision,'gpu'),[picture],read));
+  assert.equal(result.response_format.json_schema.strict,true);
+  assert.equal(result.messages[0].content[1].image_url.url,'data:image/png;base64,frame.png');
+  const d1 = endpoint('systemone_d1_image');
+  const boxed = JSON.parse(await p.preparePayload(d1,p.sample(d1,'d1-2B'),[picture],read));
+  assert.equal(boxed.questions.objects.type,'boxes');
+  assert.deepEqual(boxed.media,['data:image/png;base64,frame.png']);
+  const video = endpoint('systemone_d1_video');
+  const request = p.sample(video,'d1-2B'); request.media[0].fps=24;
+  const frames = [picture,{name:'second.png',size:4}];
+  const encoded = JSON.parse(await p.preparePayload(video,request,frames,read));
+  assert.deepEqual(encoded.media,[{type:'video',frames:['data:image/png;base64,frame.png','data:image/png;base64,second.png'],fps:24}]);
+  await assert.rejects(p.preparePayload(video,request,Array(5).fill(picture),read),/pg_file_count/);
+  assert.ok(p.sample(endpoint('npu_lfm3'),'LFM3').tools.length);
+  assert.ok(p.sample(endpoint('npu_lfm3_base'),'LFM3-Base').prompt);
+});
+
 test('custom headers cannot override destinations, cookies or credentials', () => {
   const h = p.extraHeaders('{"X-Halogen-Priority":"1","anthropic-version":"2023-06-01"}', 'private-test-key');
   assert.equal(h.Authorization, 'Bearer private-test-key');

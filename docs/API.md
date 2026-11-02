@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.42 supports Halogen 0.18.18. Install the Halobridge update, then
+Halobridge 0.1.43 supports Halogen 0.18.22. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -35,7 +35,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.18.18 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.18.22 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## Test in the dashboard
@@ -52,6 +52,55 @@ The advanced section accepts `X-Halogen-*` and Anthropic version/beta headers.
 Use the dedicated API-key field for backend authentication. Credentials and
 request inputs are kept in memory only. Requests pass through the usual router
 and telemetry. No inference runs on opening the tab or selecting an example.
+
+### Liquid NPU checkpoints (0.18.21/0.18.22)
+
+Use **Models → NPU models → Own checkpoints** after updating the selected GPU
+profiles. Supply complete local checkpoints under an existing `/models` mount:
+`config.json`, `model.safetensors` and `tokenizer.json`; d1-2B additionally needs
+`calibration.json`. Host setup/XRT is required to probe the architecture before
+previewing custom programs; XRT must be 2.20 or newer. Ordinary built-in model
+downloads can still be prepared before host setup.
+
+| Selection | Served ID | Use |
+|---|---|---|
+| `/models/LFM3-1.7B` | `LFM3-1.7B` | Chat, streaming and tool calls on `/v1/chat/completions` |
+| `/models/LFM3-1.7B:fast` | `LFM3-1.7B-fast` | Faster 5-bit format of the same checkpoint, with a quality tradeoff |
+| `/models/LFM3-1.7B-Base` | `LFM3-1.7B-Base` | Raw text on `/v1/completions` |
+| `/models/d1-2B` | `d1-2B` | Text/image/video decisions and boxes on `/v1/systemone` |
+
+LFM3 needs 0.18.21+, d1-2B needs 0.18.22+. Select both LFM formats by entering
+both paths, separated by a comma; they share one read-only checkpoint mount.
+Setup downloads only the required verified device/vision programs. The model
+weights remain yours, subject to their LFM license. The server converts them
+locally at each start when mounted read-only. The bare program names `lfm3-1.7b`
+and `d1-2b` are not installable models. Missing programs are repaired through NPU
+Setup, keeping automatic startup downloads off.
+
+```bash
+curl -fsS localhost:8731/v1/chat/completions -H 'Content-Type: application/json' -d '{
+  "model":"LFM3-1.7B-fast","max_tokens":128,
+  "messages":[{"role":"user","content":"Summarize three uses for local AI."}]}'
+
+curl -fsS localhost:8731/v1/systemone -H 'Content-Type: application/json' -d '{
+  "model":"d1-2B","state":"The customer was charged twice.",
+  "questions":{"team":{"type":"choice","instructions":"Which team?",
+    "criteria":{"billing":"Payment problems","technical":"Software problems"}}}}'
+```
+
+d1 accepts up to 16 questions, including `box`/`boxes` for object locations.
+`media` accepts base64/data-URL images or video objects with `frames` and `fps`;
+the backend samples two frames per second and fits them into its 2,048-token
+context. The Playground accepts 1–4 image frames for a video example; edit its
+`fps` in Request JSON to match the source. Native video-file decoding is not
+provided in the browser. The proxy preserves the upstream input and answer shapes.
+
+The built-in NPU files remain byte-identical to 0.18.14; the 0.18.21/0.18.22
+catalogs add program-only records. GPU checkpoints and existing context/slots are
+unchanged. On 0.18.20+, image requests also accept JSON schemas and strict tools;
+use the **Vision · structured JSON** Playground example. Responses SSE error
+codes and Messages context-limit errors pass through unchanged. Generation
+telemetry continues to come from the engine logs.
 
 ## Model metadata and benchmark discovery
 
@@ -138,7 +187,7 @@ request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.18.18 and select **one** ASR model in
+Update the target GPU profiles to 0.18.22 and select **one** ASR model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -224,7 +273,7 @@ curl --fail-with-body -sS localhost:8731/v1/embeddings \
 
 EmbeddingGemma image inputs use `image_url` parts with inline base64, and audio
 inputs use `input_audio` parts with `data` and `format:"wav"`; see the
-[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md).
+[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.22/docs/NPU.md).
 
 ### Image edits and variations
 
@@ -551,11 +600,11 @@ speculate together automatically. Faster decode and prompt processing, improved
 disk-prefix cache reuse, streamed tool-call cleanup and schema/tool fixes work
 without a new endpoint. Late system/developer turns in Chat Completions are
 treated as user text at their position; images in those late turns are refused.
-GPU checkpoints remain unchanged from 0.16.2 through 0.18.18. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
+GPU checkpoints remain unchanged from 0.16.2 through 0.18.22. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
 
 ### Tool compatibility and vision discovery (0.18.18)
 
-Update profiles directly to 0.18.18 in **System → Engine updates**. The
+Update profiles directly to 0.18.22 in **System → Engine updates**. The
 0.18.17/0.18.18 fixes use the existing endpoints: kept conversations remain
 isolated in a full KV pool, automatic keeps no longer wait on themselves, and
 short prompts stay responsive beside long ones despite metrics reads or paused
@@ -690,5 +739,5 @@ curl --fail-with-body -sS localhost:8731/metrics \
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.22/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.22/CHANGELOG.md).
