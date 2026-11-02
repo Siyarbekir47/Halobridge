@@ -886,7 +886,7 @@ class ContainerUpdater:
         await self._run("systemctl", "--user", "start", self.models[model], timeout=start_timeout)
 
     async def _prepare_npu_update(self, configurations, image):
-        from npu import CUSTOM_TASKS, check_runtime, host_status, parse_models, patch_quadlet
+        from npu import check_runtime, custom_model_path, host_status, parse_models, patch_quadlet
         from shared_assets import host_path
         enabled = [parse_quadlet(value["content"].decode("utf-8"), self._paths()[name])
                    for name, value in configurations.items() if b"HALOGEN_NPU_MODELS=" in value["content"]]
@@ -903,22 +903,27 @@ class ContainerUpdater:
         manifest = await self.npu_assets.manifest(image, self._run, refresh=True)
         wanted = list(dict.fromkeys(model for profile in enabled
                      for model in parse_models(profile.env["HALOGEN_NPU_MODELS"])))
-        bases = [m for m, info in manifest.models.items() if info["task"] in CUSTOM_TASKS] if any(m.startswith("/") for m in wanted) else []
+        mounts = [tuple(v) for v in state["xrt_mounts"]]
+        bases = []
+        for profile in enabled:
+            custom = []
+            selected = parse_models(profile.env["HALOGEN_NPU_MODELS"])
+            for model in selected:
+                if model.startswith("/"):
+                    target = custom_model_path(model)
+                    source = host_path(profile, target)
+                    if source is None or not all((source / name).is_file() for name in
+                                                 ("config.json", "model.safetensors", "tokenizer.json")):
+                        raise UpdateError(f"Incomplete NPU fine-tune: {model}")
+                    mount = (str(source), target, "ro")
+                    if mount not in custom:
+                        custom.append(mount)
+            detected = await check_runtime(self._run, image, mounts, custom, custom_models=selected)
+            bases.extend(base for base in detected if base not in bases)
         selection = self.npu_assets.selection(manifest, wanted, profiles, bases)
         self._save_job(phase="preparing_npu", message="Preparing versioned NPU files; the current backend keeps serving.")
         await selection.prepare(None, self._download_checkpoint_asset,
                                 lambda line: self._save_job(message=line))
-        mounts = [tuple(v) for v in state["xrt_mounts"]]
-        for profile in enabled:
-            custom = []
-            for model in parse_models(profile.env["HALOGEN_NPU_MODELS"]):
-                if model.startswith("/"):
-                    source = host_path(profile, model)
-                    if source is None or not all((source / name).is_file() for name in
-                                                 ("config.json", "model.safetensors", "tokenizer.json")):
-                        raise UpdateError(f"Incomplete NPU fine-tune: {model}")
-                    custom.append((str(source), model, "ro"))
-            await check_runtime(self._run, image, mounts, custom)
         return {profile.quadlet_path: patch_quadlet(configurations[profile.model_id]["content"],
                 shared_root=selection.root, mounts=mounts) for profile in enabled}
 

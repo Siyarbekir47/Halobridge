@@ -8,8 +8,8 @@ import re
 import stat
 from pathlib import Path
 
-from npu import (CUSTOM_TASKS, DOC_URL, MODEL_MIN_VERSION, NPU_MODELS, TASK_ROUTES, check_runtime, host_setup, host_status,
-                 parse_models, patch_quadlet)
+from npu import (DOC_URL, MODEL_MIN_VERSION, NPU_MODELS, TASK_ROUTES, check_runtime, host_setup, host_status,
+                 custom_model_path, model_name, parse_models, patch_quadlet)
 from profiles import parse_quadlet, validate_profile
 from semver import normalize_version, version_tuple
 from shared_assets import AssetError, atomic_json, host_path
@@ -40,7 +40,7 @@ class NpuInstallMixin:
     async def npu_plan(self, value: str, requested=None):
         models = parse_models(value) if value else []
         profiles = self._npu_profiles(requested)
-        if {m.rsplit("/", 1)[-1] for m in models} & set(self.manager.models):
+        if {model_name(m) for m in models} & set(self.manager.models):
             raise AssetError("NPU model IDs must not conflict with backend profile model IDs")
         result = {"models": models, "profiles": [p.profile_id for p in profiles],
                   "host": host_status(), "documentation": DOC_URL, "plans": []}
@@ -53,14 +53,14 @@ class NpuInstallMixin:
             if version < (0, 16, 2):
                 raise AssetError("Update all selected profiles to Halogen 0.16.2 or newer before NPU Setup")
             for model in models:
-                minimum = MODEL_MIN_VERSION.get(model, (0, 16, 2))
+                minimum = (0, 18, 21) if model.endswith(":fast") else MODEL_MIN_VERSION.get(model, (0, 16, 2))
                 if version < minimum:
                     raise AssetError(f"NPU model {model} requires Halogen {'.'.join(map(str, minimum))} or newer")
             manifest = await self.npu_assets.manifest(image, self._run)
             if manifest.key in manifests:
                 manifests[manifest.key]["images"].append(image)
                 continue
-            bases = [m for m, info in manifest.models.items() if info["task"] in CUSTOM_TASKS] if any(m.startswith("/") for m in models) else []
+            bases = await self._npu_custom_bases(image, models, profiles)
             selection = self.npu_assets.selection(manifest, models, profiles, bases)
             plan = selection.plan()
             plan["image"] = image
@@ -98,18 +98,36 @@ class NpuInstallMixin:
     async def _npu_runtime_check(self, image, mounts, custom_mounts=()):
         return await check_runtime(self._run, image, mounts, custom_mounts)
 
+    async def _npu_custom_bases(self, image, models, profiles):
+        if not any(model.startswith("/") for model in models):
+            return []
+        state = host_status()
+        if not state["ready"]:
+            raise AssetError("Custom NPU checkpoints need host setup before their architecture can be probed; run halobridge npu-check")
+        bases = []
+        for profile in profiles:
+            if profile.image != image:
+                continue
+            detected = await check_runtime(self._run, image, [tuple(v) for v in state["xrt_mounts"]],
+                                           self._npu_custom_mounts(profile, models), custom_models=models)
+            bases.extend(base for base in detected if base not in bases)
+        return bases
+
     def _npu_custom_mounts(self, profile, models):
         mounts = []
         for model in models:
             if not model.startswith("/"):
                 continue
-            source = host_path(profile, model)
+            target = custom_model_path(model)
+            source = host_path(profile, target)
             if source is None:
                 raise AssetError(f"Custom NPU model is not mounted: {model}")
             source = self._validate_host_path(str(source))
             if not all((source / name).is_file() for name in ("config.json", "model.safetensors", "tokenizer.json")):
                 raise AssetError(f"Incomplete NPU fine-tune: {source}; need config.json, model.safetensors and tokenizer.json")
-            mounts.append((str(source), model, "ro,z"))
+            mount = (str(source), target, "ro,z")
+            if mount not in mounts:
+                mounts.append(mount)
         return mounts
 
     async def _run_quick_npu(self, value, requested, *, download_only=False):
@@ -132,7 +150,7 @@ class NpuInstallMixin:
                         if await self.updater._inspect_image(image) != await self.updater._container_image(active_profile.model_id):
                             raise AssetError("The pulled image differs from the running image; use the engine update first")
                     manifest = await self.npu_assets.manifest(image, self._run, refresh=not download_only)
-                    bases = [m for m, info in manifest.models.items() if info["task"] in CUSTOM_TASKS] if any(m.startswith("/") for m in models) else []
+                    bases = await self._npu_custom_bases(image, models, profiles)
                     selection = self.npu_assets.selection(manifest, models, profiles, bases)
                     await selection.prepare(None, self._download_asset, self._append_job_line)
                     locations[image] = selection.root
@@ -190,7 +208,7 @@ class NpuInstallMixin:
                     await self.manager.start_service(active)
                 self.job["step"] = 4
                 if any(p.model_id == active for p in profiles):
-                    await self._npu_ready(active, {m.rsplit("/", 1)[-1] for m in models},
+                    await self._npu_ready(active, {model_name(m) for m in models},
                                           next(p.image for p in profiles if p.model_id == active))
                 record["phase"] = "complete"
                 atomic_json(self.npu_journal, record)

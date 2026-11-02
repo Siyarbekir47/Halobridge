@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.1.43
+
+- Support Halogen 0.18.22 and verified NPU program catalogs.
+- Support own LFM3 checkpoints, fast format and d1-2B vision programs.
+- Add Playground examples for Liquid models and structured vision.
+- Preserve existing checkpoints, capacity and engine log telemetry.
+
+## 0.1.42
+
+- Show backend generation timings and speed from engine logs.
+- Remove router-measured generation rates.
+- Keep engine completions separate from API request history.
+
+## 0.1.41
+
+- Measure Messages stream speed when engine timings are missing.
+- Show first-output latency and distinguish measured generation rates.
+- Document Claude Desktop aliases and missing reasoning counters.
+
+## 0.1.40
+
+- Forward Claude Code model names to the active backend.
+- Preserve Messages streaming, token counting and request contents.
+
+## 0.1.39
+
+- Add backend restarts with request draining and readiness checks.
+- Apply saved profile settings from the dashboard.
+
+## 0.1.38
+
+- Expose cached conversation branches in the profile editor.
+
 ## 0.1.37
 
 - Support Halogen 0.18.18 and reuse verified NPU assets.

@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.37 supports Halogen 0.18.18. Install the Halobridge update, then
+Halobridge 0.1.43 supports Halogen 0.18.22. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -35,7 +35,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.18.18 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.18.22 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## Test in the dashboard
@@ -52,6 +52,55 @@ The advanced section accepts `X-Halogen-*` and Anthropic version/beta headers.
 Use the dedicated API-key field for backend authentication. Credentials and
 request inputs are kept in memory only. Requests pass through the usual router
 and telemetry. No inference runs on opening the tab or selecting an example.
+
+### Liquid NPU checkpoints (0.18.21/0.18.22)
+
+Use **Models → NPU models → Own checkpoints** after updating the selected GPU
+profiles. Supply complete local checkpoints under an existing `/models` mount:
+`config.json`, `model.safetensors` and `tokenizer.json`; d1-2B additionally needs
+`calibration.json`. Host setup/XRT is required to probe the architecture before
+previewing custom programs; XRT must be 2.20 or newer. Ordinary built-in model
+downloads can still be prepared before host setup.
+
+| Selection | Served ID | Use |
+|---|---|---|
+| `/models/LFM3-1.7B` | `LFM3-1.7B` | Chat, streaming and tool calls on `/v1/chat/completions` |
+| `/models/LFM3-1.7B:fast` | `LFM3-1.7B-fast` | Faster 5-bit format of the same checkpoint, with a quality tradeoff |
+| `/models/LFM3-1.7B-Base` | `LFM3-1.7B-Base` | Raw text on `/v1/completions` |
+| `/models/d1-2B` | `d1-2B` | Text/image/video decisions and boxes on `/v1/systemone` |
+
+LFM3 needs 0.18.21+, d1-2B needs 0.18.22+. Select both LFM formats by entering
+both paths, separated by a comma; they share one read-only checkpoint mount.
+Setup downloads only the required verified device/vision programs. The model
+weights remain yours, subject to their LFM license. The server converts them
+locally at each start when mounted read-only. The bare program names `lfm3-1.7b`
+and `d1-2b` are not installable models. Missing programs are repaired through NPU
+Setup, keeping automatic startup downloads off.
+
+```bash
+curl -fsS localhost:8731/v1/chat/completions -H 'Content-Type: application/json' -d '{
+  "model":"LFM3-1.7B-fast","max_tokens":128,
+  "messages":[{"role":"user","content":"Summarize three uses for local AI."}]}'
+
+curl -fsS localhost:8731/v1/systemone -H 'Content-Type: application/json' -d '{
+  "model":"d1-2B","state":"The customer was charged twice.",
+  "questions":{"team":{"type":"choice","instructions":"Which team?",
+    "criteria":{"billing":"Payment problems","technical":"Software problems"}}}}'
+```
+
+d1 accepts up to 16 questions, including `box`/`boxes` for object locations.
+`media` accepts base64/data-URL images or video objects with `frames` and `fps`;
+the backend samples two frames per second and fits them into its 2,048-token
+context. The Playground accepts 1–4 image frames for a video example; edit its
+`fps` in Request JSON to match the source. Native video-file decoding is not
+provided in the browser. The proxy preserves the upstream input and answer shapes.
+
+The built-in NPU files remain byte-identical to 0.18.14; the 0.18.21/0.18.22
+catalogs add program-only records. GPU checkpoints and existing context/slots are
+unchanged. On 0.18.20+, image requests also accept JSON schemas and strict tools;
+use the **Vision · structured JSON** Playground example. Responses SSE error
+codes and Messages context-limit errors pass through unchanged. Generation
+telemetry continues to come from the engine logs.
 
 ## Model metadata and benchmark discovery
 
@@ -138,7 +187,7 @@ request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.18.18 and select **one** ASR model in
+Update the target GPU profiles to 0.18.22 and select **one** ASR model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -224,7 +273,7 @@ curl --fail-with-body -sS localhost:8731/v1/embeddings \
 
 EmbeddingGemma image inputs use `image_url` parts with inline base64, and audio
 inputs use `input_audio` parts with `data` and `format:"wav"`; see the
-[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md).
+[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.22/docs/NPU.md).
 
 ### Image edits and variations
 
@@ -476,7 +525,12 @@ is 0. Halobridge passes the priority header through unchanged.
 
 These upstream endpoints existed before 0.17.0; Halobridge now tracks their
 streamed and non-streamed usage, including cached input, and supplies Anthropic
-model-list fields. Use your installed GPU model ID, not a hosted Claude ID:
+model-list fields. An installed GPU model ID selects that profile. On these two
+Messages endpoints, other client model names, including Claude Code's
+`claude-sonnet-4-5`, use the active backend, matching Halogen's behavior. The
+original request body and response pass through unchanged; the request history
+records the actual backend profile. No Claude model is downloaded or served.
+Other endpoints still require a known GPU or NPU model ID.
 
 ```bash
 curl --fail-with-body -sS localhost:8731/v1/messages \
@@ -491,9 +545,52 @@ curl --fail-with-body -sS localhost:8731/v1/messages/count_tokens \
 ```
 
 For the Anthropic SDK, set the base URL to `http://127.0.0.1:8731`, provide any
-API-key string the SDK requires, and select a Halobridge GPU model ID. Thinking,
-tools, streaming and images use the upstream Messages shapes; images require
-the vision tower. Token counting does not generate an answer.
+API-key string the SDK requires, and select an installed GPU ID or keep the
+client's Claude model name to use the active backend. If backend authentication
+is enabled, provide its real key. Thinking, tools, streaming and images use the
+upstream Messages shapes; images require the vision tower. Token counting does
+not generate an answer. Model switching, request draining and maintenance gates
+also apply to requests that use client model names.
+
+For Claude Code, keep the `/v1` suffix out of the base URL:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8731
+export ANTHROPIC_API_KEY=anything
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
+claude
+```
+
+Use your forwarded port (for example `18731`) when accessing the router through
+a local tunnel. The backend's private port does not need to be exposed. The
+output-token setting leaves room below Halogen's default cap, as recommended
+in the [upstream Claude Code guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/claude-code.md).
+
+Claude Desktop builds that require Anthropic-shaped IDs can retain the working
+`claude-sonnet-4-5` entry with a Qwen display label. Keep the 1M option off for a
+262,144-token backend. Its client model mapping does not alter the backend.
+
+Messages streams can omit engine timings and separate reasoning-token counts.
+Halobridge leaves those fields unknown in API request history. It does not
+measure generation speed from stream events or estimate reasoning tokens.
+**Requests → Engine completion logs** instead displays values from the backend's
+`serve_api: ... tok in ...s = ... t/s` journal records. These have their own
+pagination and the same reporting-period filter as API requests. Cache, prefill,
+pool and thinking information appear in row details when present in the log.
+`GET /dashboard/api/analytics` includes `engine_history`; `engine_page` selects
+its page independently from the API history's `page` parameter. Existing
+0.1.41 observation columns are left untouched in SQLite but are no longer read
+or displayed. The journal reader deduplicates records by journal cursor and
+ignores progress lines and HTTP access logs.
+
+The completion lines have no shared API request ID, so Halobridge does not
+attach them to individual API rows using timestamps, token counts or completion
+order. Parallel calls and direct backend requests remain independent. To inspect
+the source on the AI host:
+
+```bash
+journalctl --user -u 'halogen-*.service' -n 0 -f -o short-precise
+```
 
 ## Changes that work after an engine update
 
@@ -503,11 +600,11 @@ speculate together automatically. Faster decode and prompt processing, improved
 disk-prefix cache reuse, streamed tool-call cleanup and schema/tool fixes work
 without a new endpoint. Late system/developer turns in Chat Completions are
 treated as user text at their position; images in those late turns are refused.
-GPU checkpoints remain unchanged from 0.16.2 through 0.18.18. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
+GPU checkpoints remain unchanged from 0.16.2 through 0.18.22. Prompt-cache fixes, Flux tokenizer corrections, NPU health listing, clean container stops and the automatic GPU firmware workaround take effect after the engine update.
 
 ### Tool compatibility and vision discovery (0.18.18)
 
-Update profiles directly to 0.18.18 in **System → Engine updates**. The
+Update profiles directly to 0.18.22 in **System → Engine updates**. The
 0.18.17/0.18.18 fixes use the existing endpoints: kept conversations remain
 isolated in a full KV pool, automatic keeps no longer wait on themselves, and
 short prompts stay responsive beside long ones despite metrics reads or paused
@@ -541,6 +638,27 @@ is required. Existing custom GGUF profiles can use ggml-org's IQ4_NL checkpoint
 with the updated engine; HGN installations need no new checkpoint.
 
 ### Reliability and capacity (0.18.16)
+
+After saving changes in **Models**, click **Restart backend** next to the running
+profile. It restarts that profile with its saved settings after draining active
+requests and releasing GPU memory, then waits for the expected model to be ready.
+The job panel shows progress, logs, errors and cancellation. Start failures use
+the existing switch recovery; saved profile files are not rewritten or reverted.
+Use the profile rollback action if the saved configuration itself is broken.
+
+The dashboard uses `POST /dashboard/api/deploy/{profile_id}/restart`, which
+returns HTTP 202 and the shared job kind `restart-backend`. Read progress at
+`GET /dashboard/api/deploy/job`. It requires deployment to be enabled, normal
+dashboard authentication and the same-origin `X-Halogen-Action: deploy` guard.
+A stopped profile uses the existing Start action instead.
+
+The profile editor exposes `HALOGEN_CACHE_BRANCHES` (Halogen 0.13.3+).
+Empty inherits the engine default `2`: one conversation and one side turn.
+`3` retains resume points for a parent and two children, avoiding another
+prefill when the parent continues after both children. More branches increase
+host memory use and the derived `HALOGEN_CACHE_ENTRIES` default. An explicit
+`HALOGEN_CACHE_ENTRIES` overrides that automatic entry count. Branches are cache
+resume points, not concurrent slots; changing them does not change `HALOGEN_KV_SLOTS`.
 
 Use **System → Engine updates** to update installed profiles. 0.18.16 fixes
 kept replies being mixed when conversations move in the KV pool and turns off
@@ -621,5 +739,5 @@ curl --fail-with-body -sS localhost:8731/metrics \
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.22/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.22/CHANGELOG.md).

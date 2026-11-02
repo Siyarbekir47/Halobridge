@@ -59,7 +59,7 @@ def fixture_manifest(program=b"new program"):
 class ManifestTests(unittest.TestCase):
     def test_newer_catalogs_reuse_verified_01814_assets(self):
         previous = bundled_manifest("0.18.14")
-        for version in ("0.18.16", "0.18.18"):
+        for version in ("0.18.16", "0.18.18", "0.18.19", "0.18.20"):
             with self.subTest(version=version):
                 current = bundled_manifest(version)
                 self.assertEqual(current.key, "213a497dda130ffedb3f723bb3c2298906f85b2144397bb104fe1b8d197ecb0a")
@@ -601,6 +601,26 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.current_model, "halogen-swift15")
         self.assertEqual(self.manager.active_requests, 0)
 
+    async def test_liquid_models_discover_and_route_without_gpu_switch_or_body_rewrite(self):
+        self.manager.npu_names = lambda _: {"d1-2B", "LFM3-1.7B", "LFM3-1.7B-fast"}
+        self.backend_entries = [{"id":"halogen-swift15"}, {"id":"d1-2B", "task":"sets"},
+                                {"id":"LFM3-1.7B", "task":"generate"},
+                                {"id":"LFM3-1.7B-fast", "task":"generate"}]
+        for route, payload in (
+            ('/v1/systemone', {'model':'d1-2B', 'state':None,
+                'media':[{'type':'video','frames':['data:image/png;base64,YQ==','data:image/png;base64,Yg=='],'fps':24}],
+                'questions':{'cats':{'type':'boxes','instructions':'Every cat','max':4}}}),
+            ('/v1/chat/completions', {'model':'LFM3-1.7B-fast', 'messages':[{'role':'user','content':'Hello'}],
+                'tools':[{'type':'function','function':{'name':'weather','parameters':{'type':'object'}}}]}),
+            ('/v1/completions', {'model':'LFM3-1.7B','prompt':'Once upon a time','max_tokens':128}),
+        ):
+            response = await self.client.post(route, json=payload)
+            self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(self.received[-1], (route, payload))
+        self.manager.perform_switch.assert_not_awaited()
+        response = await self.client.get('/v1/models')
+        self.assertEqual((await response.json())['data'][1]['task'], 'sets')
+
     async def test_classifier_history_keeps_gpu_model_loaded(self):
         self.manager.npu_names = lambda _: {"my-classifier"}
         self.backend_entries = [{"id": "halogen-swift15"}, {"id": "my-classifier", "task": "classifier"}]
@@ -898,17 +918,17 @@ class EngineUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.downloads, ["devices/u0.elf"])
         self.assertEqual({p: p.read_bytes() for p in self.old_files}, self.old_files)
 
-    async def test_01818_update_prepares_npu_assets_and_preserves_gpu_settings(self):
-        self.updater.latest_version = "0.18.18"
-        self.updater._fetch_latest = AsyncMock(return_value="0.18.18")
-        with patch("test_updates.NEW", "0.18.18"):
-            await self.updater.start("0.18.18")
+    async def test_01822_update_prepares_npu_assets_and_preserves_gpu_settings(self):
+        self.updater.latest_version = "0.18.22"
+        self.updater._fetch_latest = AsyncMock(return_value="0.18.22")
+        with patch("test_updates.NEW", "0.18.22"):
+            await self.updater.start("0.18.22")
             await self.updater.task
         self.assertEqual(self.updater.job["phase"], "succeeded", self.updater.job)
         self.assertEqual(self.downloads, ["devices/u0.elf"])
         for path, original in self.originals.items():
             before, after = parse_quadlet(original.decode()), parse_quadlet(path.read_text())
-            self.assertTrue(after.image.endswith(":0.18.18"))
+            self.assertTrue(after.image.endswith(":0.18.22"))
             self.assertEqual(before.env, after.env)
             self.assertEqual(before.host_port, after.host_port)
             self.assertIn(self.new.key, next(host for host, target, _ in after.volumes if target == "/models/npu"))

@@ -38,6 +38,7 @@ NPU_MODELS = {
     "qwen3-tts-1.7b-customvoice": "speak",
 }
 CUSTOM_TASKS = {"decision", "embedding", "score", "classify", "classifier"}
+CUSTOM_PROGRAMS = {"lfm3-1.7b": (0, 18, 21), "lfm3-1.7b-fast": (0, 18, 21), "d1-2b": (0, 18, 22)}
 MODEL_MIN_VERSION = {"flux2-klein-4b": (0, 17, 0),
                      "decider-4b": (0, 17, 4), "qwen3-embedding-4b": (0, 17, 4),
                      "qwen3-reranker-4b": (0, 17, 4),
@@ -50,10 +51,12 @@ MODEL_MIN_VERSION = {"flux2-klein-4b": (0, 17, 0),
 # Image catalogs verified byte-for-byte: 0.18.1 against 0.18.0, and
 # 0.18.16 / 0.18.18 against 0.18.14. The 0.18.18 catalog layer is
 # sha256:479d77a83f26a0ef9096e955ebaace278acc8ccff2f825211e74117903dcf54b.
+# 0.18.19/20 also match 0.18.14. Verified program-only additions in 0.18.21/22
+# use separate bundles (SHA-256 51a5a669... / 97557b92..., tested in full).
 # Only explicitly verified versions share a bundle; later images are read locally.
 # The 0.18.12 and 0.18.13 bundles are distinct models.txt files from their GHCR images.
-BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0", "0.18.16": "0.18.14", "0.18.18": "0.18.14"}
-BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13", "0.18.14"} | set(BUNDLED_CATALOG_ALIASES)
+BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0", "0.18.16": "0.18.14", "0.18.18": "0.18.14", "0.18.19": "0.18.14", "0.18.20": "0.18.14"}
+BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13", "0.18.14", "0.18.21", "0.18.22"} | set(BUNDLED_CATALOG_ALIASES)
 TASK_ROUTES = {
     "decision": "/v1/chat/completions", "generate": "/v1/chat/completions",
     "embedding": "/v1/embeddings", "score": "/v1/rerank",
@@ -68,7 +71,21 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 PATH_RE = re.compile(r"^/models/[A-Za-z0-9_./-]+$")
 REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 XRT_LIBS = ("libxrt_coreutil.so.2", "libxrt_core.so.2", "libxrt_driver_xdna.so.2")
-DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.18/docs/NPU.md"
+DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.22/docs/NPU.md"
+
+
+def custom_model_path(value: str) -> str:
+    return value.removesuffix(":fast")
+
+
+def model_name(value: str) -> str:
+    return PurePosixPath(custom_model_path(value)).name + ("-fast" if value.endswith(":fast") else "")
+
+
+def custom_base_supported(model, info):
+    if model in CUSTOM_PROGRAMS:
+        return info["task"] in ({"decision", "sets"} if model == "d1-2b" else {"generate"})
+    return info["task"] in CUSTOM_TASKS
 
 
 def parse_models(value: str) -> list[str]:
@@ -77,14 +94,17 @@ def parse_models(value: str) -> list[str]:
         raise ValueError("NPU models: select 1 to 32 model names or /models directories")
     names, result = set(), []
     for item in values:
+        path = custom_model_path(item)
         if item in NPU_MODELS:
             name = item
-        elif (PATH_RE.fullmatch(item) and ".." not in PurePosixPath(item).parts
-              and not item.endswith("/") and MODEL_RE.fullmatch(PurePosixPath(item).name)
-              and not item.startswith("/models/npu/") and item != "/models/npu"):
-            name = PurePosixPath(item).name
-            if name in NPU_MODELS:
+        elif (PATH_RE.fullmatch(path) and ".." not in PurePosixPath(path).parts
+              and not path.endswith("/") and MODEL_RE.fullmatch(PurePosixPath(path).name)
+              and not path.startswith("/models/npu/") and path != "/models/npu"):
+            name = model_name(item)
+            if name in NPU_MODELS or PurePosixPath(path).name in NPU_MODELS or name in CUSTOM_PROGRAMS or PurePosixPath(path).name in CUSTOM_PROGRAMS:
                 raise ValueError("NPU custom directory name conflicts with a built-in model")
+            if not MODEL_RE.fullmatch(name):
+                raise ValueError("NPU custom model ID is too long")
         else:
             raise ValueError(f"NPU models: unsupported name or unsafe path: {item}")
         if name in names:
@@ -100,7 +120,7 @@ def parse_models(value: str) -> list[str]:
 
 def profile_model_names(profile) -> set[str]:
     value = profile.env.get("HALOGEN_NPU_MODELS", "")
-    return {PurePosixPath(item).name for item in parse_models(value)} if value else set()
+    return {model_name(item) for item in parse_models(value)} if value else set()
 
 
 @dataclass(frozen=True)
@@ -163,10 +183,15 @@ class NpuManifest:
             own = info.get("devices", model)
             paths = {asset.name for asset in self.assets if asset.model == model}
             programs = {asset.name for asset in self.assets if asset.model == own}
+            custom = model in CUSTOM_PROGRAMS
+            # Some older images reserve an unpublished program-only model.
+            if custom and not paths and not info.get("repo") and not info.get("revision"):
+                continue
             if (own not in self.models or not info.get("repo") or not info.get("revision")
-                    or f"{model}.hnpw" not in paths
-                    or "tokenizer/tokenizer.json" not in paths
+                    or (not custom and (f"{model}.hnpw" not in paths or "tokenizer/tokenizer.json" not in paths))
                     or "devices/devices.hnpm" not in programs
+                    or (model == "d1-2b" and ("vis/devices.hnpm" not in programs
+                        or not any(p.startswith("vis/") and p.endswith(".elf") for p in programs)))
                     or (info["task"] == "image" and "devices/taef2.safetensors" not in programs)
                     or (info["task"] == "transcribe" and (
                         not {"enc/weights.hnpw", "enc/devices.hnpm"}.issubset(paths)
@@ -189,14 +214,18 @@ class NpuManifest:
                 continue
             if model not in self.models:
                 raise AssetError(f"This image does not provide NPU model {model}")
+            if model in CUSTOM_PROGRAMS:
+                raise AssetError(f"{model} provides programs only; select your checkpoint's /models directory")
             wanted.add(model)
             devices.add(self.models[model].get("devices", model))
         for base in custom_bases:
-            if base not in self.models or self.models[base]["task"] not in CUSTOM_TASKS:
+            if base not in self.models or not custom_base_supported(base, self.models[base]):
                 raise AssetError("Unsupported custom NPU base model")
+            if not self.models[base].get("repo"):
+                raise AssetError(f"This image has no published programs for {base}; update the engine")
             devices.add(self.models[base].get("devices", base))
         return [asset for asset in self.assets if asset.model in wanted
-                or (asset.model in devices and asset.name.startswith("devices/"))]
+                or (asset.model in devices and asset.name.startswith(("devices/", "vis/")))]
 
 
 def bundled_manifest(version="0.18.0") -> NpuManifest:
@@ -206,7 +235,7 @@ def bundled_manifest(version="0.18.0") -> NpuManifest:
     return NpuManifest(files("halobridge_data").joinpath(f"npu/models-{catalog_version}.txt").read_text(encoding="utf-8"))
 
 
-async def check_runtime(run, image, mounts, custom_mounts=()):
+async def check_runtime(run, image, mounts, custom_mounts=(), *, custom_models=()):
     """Load the actual image against host XRT before interrupting requests."""
     argv = ["podman", "run", "--rm", "--network=none", "--entrypoint", "/bin/sh"]
     for host, target, mode in mounts:
@@ -215,16 +244,36 @@ async def check_runtime(run, image, mounts, custom_mounts=()):
     output = await run(*argv, timeout=120)
     if "usage: halogen-npu" not in output:
         raise AssetError("The NPU engine cannot load with this host's XRT libraries")
-    bases = []
+    bases, detected = [], {}
     for host, target, mode in custom_mounts:
         output = await run("podman", "run", "--rm", "--network=none", "--entrypoint",
                            "/usr/local/bin/halogen-npu",
                            *(arg for h, t, m in (*mounts, (host, target, mode))
                              for arg in ("--volume", f"{h}:{t}:{m}")), image, "probe", target, timeout=120)
         info = dict(part.split("=", 1) for part in output.split() if "=" in part)
-        if info.get("base") not in NPU_MODELS or info.get("task") not in CUSTOM_TASKS:
+        base = info.get("base")
+        if (base not in NPU_MODELS and base not in CUSTOM_PROGRAMS
+                or not custom_base_supported(base, {"task": info.get("task")})):
             raise AssetError(f"Unsupported NPU fine-tune: {target}")
-        bases.append(info["base"])
+        from semver import version_tuple
+        if base in CUSTOM_PROGRAMS and (version_tuple(image.rsplit(":", 1)[-1]) or (0, 0, 0)) < CUSTOM_PROGRAMS[base]:
+            raise AssetError(f"{base} requires a newer engine")
+        if base == "d1-2b" and not (Path(host) / "calibration.json").is_file():
+            raise AssetError(f"{target} needs calibration.json")
+        bases.append(base)
+        detected[target] = base
+    if custom_models:
+        bases = []
+        for model in custom_models:
+            if not model.startswith("/"):
+                continue
+            base = detected[custom_model_path(model)]
+            if model.endswith(":fast"):
+                if base != "lfm3-1.7b":
+                    raise AssetError(":fast is supported only for LFM3-1.7B checkpoints")
+                base += "-fast"
+            if base not in bases:
+                bases.append(base)
     return bases
 
 
@@ -473,13 +522,16 @@ class NpuAssets:
             raise AssetError("Invalid NPU shared manifest; repair with NPU Setup") from exc
         else:
             legacy = False
-        bases = [model for model, info in manifest.models.items() if info["task"] in CUSTOM_TASKS] if any(m.startswith("/") for m in models) else []
+        bases = [model for model, info in manifest.models.items() if custom_base_supported(model, info)
+                 and (root / info.get("devices", model) / "devices/devices.hnpm").is_file()] if any(m.startswith("/") for m in models) else []
         for model in models:
             if model.startswith("/"):
-                source = host_path(profile, model)
+                source = host_path(profile, custom_model_path(model))
                 if source is None or not all((source / name).is_file() for name in
                                              ("config.json", "model.safetensors", "tokenizer.json")):
                     raise AssetError(f"NPU fine-tune missing or incomplete: {model}; repair with NPU Setup")
+        if any(m.startswith("/") for m in models) and not bases:
+            raise AssetError("NPU fine-tune device programs missing; repair with NPU Setup")
         if legacy and bases:
             bases = [base for base in bases if (root / manifest.models[base].get("devices", base)
                                                / "devices/devices.hnpm").is_file()]
