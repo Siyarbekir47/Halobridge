@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.43
+
+- Support Halogen 0.18.22 and verified NPU program catalogs.
+- Support own LFM3 checkpoints, fast format and d1-2B vision programs.
+- Add Playground examples for Liquid models and structured vision.
+- Preserve existing checkpoints, capacity and engine log telemetry.
+
 ## 0.1.42
 
 - Show backend generation timings and speed from engine logs.

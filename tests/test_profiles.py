@@ -253,7 +253,7 @@ class TemplateTests(unittest.TestCase):
             self.assertTrue(any("HALOGEN_FORK_MAP" in e for e in validate_profile(profile)))
 
     def test_new_engine_templates_preserve_capacity_and_leave_new_options_unset(self):
-        self.assertEqual(DEFAULT_ENGINE_VERSION, "0.18.18")
+        self.assertEqual(DEFAULT_ENGINE_VERSION, "0.18.22")
         profiles = [factory(DEFAULT_ENGINE_VERSION, Path("/host/models"), Path("/host/cache"))
                     for factory in (official_template, uncensored_template, custom_template)]
         from shared_assets import SharedAssets
