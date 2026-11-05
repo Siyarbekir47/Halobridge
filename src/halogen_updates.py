@@ -867,7 +867,8 @@ class ContainerUpdater:
                         raise UpdateError("The started container uses an unexpected image ID.")
                     from npu import profile_model_names
                     content = self._paths()[model].read_text(encoding="utf-8")
-                    expected = profile_model_names(parse_quadlet(content)) if "HALOGEN_NPU_MODELS=" in content else set()
+                    expected = profile_model_names(parse_quadlet(content)) if (
+                        "HALOGEN_NPU_MODELS=" in content or "HALOGEN_AGENT_GUARD=" in content) else set()
                     if expected and not expected.issubset({entry["id"] for entry in await self.manager.backend_model_entries()}):
                         await asyncio.sleep(2)
                         continue
@@ -886,10 +887,12 @@ class ContainerUpdater:
         await self._run("systemctl", "--user", "start", self.models[model], timeout=start_timeout)
 
     async def _prepare_npu_update(self, configurations, image):
-        from npu import check_runtime, custom_model_path, host_status, parse_models, patch_quadlet
+        from npu import check_runtime, custom_model_path, host_status, profile_models, patch_quadlet
         from shared_assets import host_path
         enabled = [parse_quadlet(value["content"].decode("utf-8"), self._paths()[name])
-                   for name, value in configurations.items() if b"HALOGEN_NPU_MODELS=" in value["content"]]
+                   for name, value in configurations.items() if b"HALOGEN_NPU_MODELS=" in value["content"]
+                   or b"HALOGEN_AGENT_GUARD=" in value["content"]]
+        enabled = [profile for profile in enabled if profile_models(profile)]
         profiles = enabled
         if not enabled:
             return {}
@@ -902,12 +905,12 @@ class ContainerUpdater:
             await self.npu_assets.manifest(previous, self._run, refresh=True)
         manifest = await self.npu_assets.manifest(image, self._run, refresh=True)
         wanted = list(dict.fromkeys(model for profile in enabled
-                     for model in parse_models(profile.env["HALOGEN_NPU_MODELS"])))
+                     for model in profile_models(profile)))
         mounts = [tuple(v) for v in state["xrt_mounts"]]
         bases = []
         for profile in enabled:
             custom = []
-            selected = parse_models(profile.env["HALOGEN_NPU_MODELS"])
+            selected = profile_models(profile)
             for model in selected:
                 if model.startswith("/"):
                     target = custom_model_path(model)
