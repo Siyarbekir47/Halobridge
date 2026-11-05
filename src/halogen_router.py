@@ -662,7 +662,15 @@ class ModelManager:
                             value = entry.get("task", NPU_MODELS.get(entry["id"]))
                             # Runtime API task names differ from the model download catalog.
                             return {"moderation": "classify", "speech": "speak", "sets": "decision"}.get(value, value)
-                        candidates = [entry["id"] for entry in entries if task(entry) == auxiliary_task]
+                        def supports(entry):
+                            if task(entry) == auxiliary_task:
+                                return True
+                            # Liquid Audio/Omni retain task=generate for all their routes.
+                            architecture = entry.get("architecture") or {}
+                            return (task(entry) == "generate" and isinstance(architecture, dict) and
+                                    ((auxiliary_task == "transcribe" and "audio" in (architecture.get("input_modalities") or [])) or
+                                     (auxiliary_task == "speak" and "audio" in (architecture.get("output_modalities") or []))))
+                        candidates = [entry["id"] for entry in entries if supports(entry)]
                         if requested_model not in candidates:
                             if len(candidates) > 1:
                                 raise web.HTTPUnprocessableEntity(text=json.dumps({"error": {
@@ -1232,7 +1240,7 @@ async def create_application(config: Optional[settings.Config] = None) -> web.Ap
             manager.backend_headers(model)  # Check mounted credentials before activation.
             await deploy_manager.assets.validate_start(model)
             for profile in deploy_manager.npu_assets.profiles():
-                if profile.model_id == model and profile.env.get("HALOGEN_NPU_MODELS"):
+                if profile.model_id == model and profile_model_names(profile):
                     await deploy_manager.npu_assets.validate_profile_start(profile)
         manager.asset_validator = validate_assets
         from npu import profile_model_names

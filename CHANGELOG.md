@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.44
+
+- Support Halogen 0.19.0 and verified NPU catalogs.
+- Add optional agent guard setup with shared model dependencies.
+- Support LFM3 vision, video, audio and voice endpoints.
+- Add multimodal Playground examples and audio playback.
+
 ## 0.1.43
 
 - Support Halogen 0.18.22 and verified NPU program catalogs.
