@@ -50,6 +50,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_MTP_HEAD": FieldSpec("path"),
     "HALOGEN_DOWNLOAD": FieldSpec("repo"),
     "HALOGEN_NPU_MODELS": FieldSpec("models"),
+    "HALOGEN_AGENT_GUARD": FieldSpec("enum", choices=("off", "watch", "hold")),
     "HALOGEN_NPU_QUEUE": FieldSpec("int", 1, 65536),
     "HALOGEN_NPU_EMB_BATCH": FieldSpec("flag"),
     "HALOGEN_NPU_VERIFY": FieldSpec("flag"),
@@ -166,6 +167,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
 }
 
 FEATURE_MIN_VERSION = {
+    "HALOGEN_AGENT_GUARD": (0, 19, 0),
     "HALOGEN_CACHE_BRANCHES": (0, 13, 3),
     "HALOGEN_TOOL_DEFER": (0, 18, 18),
     "HALOGEN_EOS_GUARD": (0, 13, 4),
@@ -293,10 +295,10 @@ def validate_profile(profile: Profile) -> list[str]:
     cap = profile.env.get("HALOGEN_MAX_TOKENS_CAP")
     if default and cap and int(default) > int(cap):
         errors.append("env: MAX_TOKENS_DEFAULT must not exceed MAX_TOKENS_CAP")
-    if profile.env.get("HALOGEN_NPU_MODELS"):
-        from npu import parse_models, MODEL_MIN_VERSION, model_name
+    if profile.env.get("HALOGEN_NPU_MODELS") or profile.env.get("HALOGEN_AGENT_GUARD") in {"watch", "hold"}:
+        from npu import profile_models, MODEL_MIN_VERSION, model_name
         try:
-            models = parse_models(profile.env["HALOGEN_NPU_MODELS"])
+            models = profile_models(profile)
             if profile.model_id in [model_name(name) for name in models]:
                 errors.append("env: NPU model IDs must differ from the backend model ID")
             version = version_tuple(profile.image.rsplit(":", 1)[-1])
@@ -387,7 +389,7 @@ def render_quadlet(profile: Profile) -> str:
         "AddDevice=/dev/dri",
         f"PublishPort=127.0.0.1:{profile.host_port}:{CONTAINER_API_PORT}",
     ]
-    if profile.env.get("HALOGEN_NPU_MODELS"):
+    if profile.env.get("HALOGEN_NPU_MODELS") or profile.env.get("HALOGEN_AGENT_GUARD") in {"watch", "hold"}:
         lines.append("AddDevice=/dev/accel/accel0")
     for key in sorted(profile.env):
         lines.append(f"Environment={key}={profile.env[key]}")
@@ -479,7 +481,7 @@ def profile_to_dict(profile: Profile) -> dict:
 
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
-DEFAULT_ENGINE_VERSION = "0.18.22"
+DEFAULT_ENGINE_VERSION = "0.20.0"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"

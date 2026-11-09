@@ -899,6 +899,7 @@ const DEPLOY_ENV_FIELDS = [
 const DEPLOY_ENV_NAMES = new Set(DEPLOY_ENV_FIELDS.map(f => f[0]));
 const NPU_ENV_FIELDS = [
   ['HALOGEN_NPU_MODELS', 'text', 'deploy_f_npu_models'],
+  ['HALOGEN_AGENT_GUARD', 'select:off,watch,hold', 'deploy_f_agent_guard'],
   ['HALOGEN_NPU_QUEUE', 'number', 'deploy_f_npu_queue'],
   ['HALOGEN_NPU_PORT', 'number', 'deploy_f_npu_port'],
   ['HALOGEN_NPU_EMB_BATCH', 'select:0,1', 'deploy_f_npu_batch'],
@@ -1115,7 +1116,8 @@ function invalidateDeployPreview() { deployRevision++; deployPreviewOk = false; 
 function npuSelection() {
   const names = [...$('npuModelChoices').querySelectorAll('input:checked')].map(el => el.value);
   const custom = $('npuCustom').value.split(',').map(value => value.trim()).filter(Boolean);
-  return {models: [...names, ...custom].join(','), profiles: $('npuProfiles').value ? [$('npuProfiles').value] : null};
+  return {models: [...names, ...custom].join(','), profiles: $('npuProfiles').value ? [$('npuProfiles').value] : null,
+    guard: $('npuAgentGuard').value || null};
 }
 function invalidateNpuPlan() {
   npuDirty = true; npuRevision++; npuPlanData = null;
@@ -1129,6 +1131,8 @@ async function refreshNpu() {
   try {
     npuData = await deployRequest('/dashboard/api/deploy/npu');
     const selectedProfile = $('npuProfiles').value;
+    const targetHost = (npuData.profiles || []).find(p => p.id === selectedProfile)?.host;
+    if (targetHost) Object.assign(npuData, targetHost);
     const checked = new Set([...$('npuModelChoices').querySelectorAll('input:checked')].map(el => el.value));
     if (!npuDirty) {
       checked.clear();
@@ -1136,6 +1140,8 @@ async function refreshNpu() {
         .flatMap(p => (p.models || '').split(',')).filter(Boolean);
       values.filter(name => !name.startsWith('/')).forEach(name => checked.add(name));
       $('npuCustom').value = [...new Set(values.filter(name => name.startsWith('/')))].join(',');
+      const guards = [...new Set((npuData.profiles || []).filter(p => !selectedProfile || p.id === selectedProfile).map(p => p.guard || 'off'))];
+      $('npuAgentGuard').value = guards.length === 1 && guards[0] !== 'off' ? guards[0] : '';
     }
     const errorKeys = {
       'NPU setup requires Linux': 'npu_need_linux',
@@ -1195,6 +1201,7 @@ function renderNpuPlan() {
 }
 $('npuProfiles').addEventListener('change', () => { invalidateNpuPlan(); npuDirty = false; refreshNpu(); });
 $('npuCustom').addEventListener('input', invalidateNpuPlan);
+$('npuAgentGuard').addEventListener('change', invalidateNpuPlan);
 async function previewNpuSelection() {
   if (deployBusy || npuJobRunning) return;
   const revision = npuRevision;
@@ -1204,6 +1211,7 @@ async function previewNpuSelection() {
     const selection = npuSelection();
     const query = new URLSearchParams({models: selection.models});
     if (selection.profiles) query.set('profiles', selection.profiles.join(','));
+    if (selection.guard) query.set('guard', selection.guard);
     const data = await deployRequest('/dashboard/api/deploy/npu/plan?' + query);
     if (revision === npuRevision) { npuPlanData = data; renderNpuPlan(); }
   } catch (error) { $('npuError').hidden = false; $('npuError').textContent = error.message; }

@@ -1620,7 +1620,8 @@ class DeployRoutes:
         try:
             requested = request.query.get("profiles")
             return web.json_response(await self.manager.npu_plan(request.query.get("models", ""),
-                                      requested.split(",") if requested else None))
+                                      requested.split(",") if requested else None,
+                                      request.query.get("guard") or None))
         except Exception as exc:
             return self._error(DeployError(str(exc)))
 

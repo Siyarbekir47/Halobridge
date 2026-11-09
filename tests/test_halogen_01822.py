@@ -15,15 +15,15 @@ class CatalogTests(unittest.TestCase):
             ('0.18.22', '97557b927561b822885c893076f6fbdf2f88e3576ff911e170e2cd55825dbec5')):
             manifest = bundled_manifest(version)
             self.assertEqual(manifest.key, digest)
-            self.assertEqual(set(manifest.models), set(NPU_MODELS) | set(CUSTOM_PROGRAMS))
-            for model in NPU_MODELS:
+            self.assertEqual(set(manifest.models), (set(NPU_MODELS) - {'halogen-spotter-0.6b'}) | {k for k,v in CUSTOM_PROGRAMS.items() if v <= (0,18,22)})
+            for model in set(NPU_MODELS) - {'halogen-spotter-0.6b'}:
                 self.assertEqual(manifest.select([model]), bundled_manifest('0.18.14').select([model]))
         for version in ('0.18.19', '0.18.20'):
             self.assertEqual(bundled_manifest(version).key, bundled_manifest('0.18.14').key)
 
     def test_lfm_and_d1_select_only_requested_programs_including_vision(self):
         manifest = bundled_manifest('0.18.22')
-        for base in CUSTOM_PROGRAMS:
+        for base in (k for k,v in CUSTOM_PROGRAMS.items() if v <= (0,18,22)):
             selected = manifest.select(['/models/own-model'], [base])
             self.assertTrue(selected)
             self.assertEqual({asset.model for asset in selected}, {base})

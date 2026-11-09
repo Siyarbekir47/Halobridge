@@ -64,14 +64,14 @@ class ManifestTests(unittest.TestCase):
                 current = bundled_manifest(version)
                 self.assertEqual(current.key, "213a497dda130ffedb3f723bb3c2298906f85b2144397bb104fe1b8d197ecb0a")
                 self.assertEqual(current.text, previous.text)
-                self.assertEqual(set(current.models), set(NPU_MODELS))
-                for model in NPU_MODELS:
+                self.assertEqual(set(current.models), (set(NPU_MODELS) - {'halogen-spotter-0.6b'}))
+                for model in set(NPU_MODELS) - {'halogen-spotter-0.6b'}:
                     self.assertEqual(current.select([model]), previous.select([model]))
 
     def test_01814_catalog_pins_tts_dependencies_and_refreshed_decisions(self):
         current = bundled_manifest("0.18.14")
         self.assertEqual(current.key, "213a497dda130ffedb3f723bb3c2298906f85b2144397bb104fe1b8d197ecb0a")
-        self.assertEqual(set(current.models), set(NPU_MODELS))
+        self.assertEqual(set(current.models), (set(NPU_MODELS) - {'halogen-spotter-0.6b'}))
         for model in TTS_MODELS:
             paths = {a.name for a in current.select([model])}
             self.assertIn("hf/speech_tokenizer/model.safetensors", paths)
@@ -105,7 +105,7 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(version=version):
                 current = bundled_manifest(version)
                 self.assertEqual(current.key, digest)
-                self.assertEqual(set(current.models), set(NPU_MODELS) - TTS_MODELS)
+                self.assertEqual(set(current.models), set(NPU_MODELS) - TTS_MODELS - {'halogen-spotter-0.6b'})
                 for model in current.models:
                     before = {(a.model, a.name): a.digest for a in previous.select([model])}
                     after = {(a.model, a.name): a.digest for a in current.select([model])}
@@ -115,14 +115,14 @@ class ManifestTests(unittest.TestCase):
     def test_01811_catalog_and_multimodal_decision_files(self):
         manifest = bundled_manifest("0.18.11")
         self.assertEqual(manifest.key, "aa9e38801e05da999feb46741df7d275b2ab1de3ab8851873d1dc650f6ba713b")
-        self.assertEqual(set(manifest.models), set(NPU_MODELS) - TTS_MODELS)
+        self.assertEqual(set(manifest.models), set(NPU_MODELS) - TTS_MODELS - {'halogen-spotter-0.6b'})
         for name in ("d3-lite", "d3-nano", "embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b"):
             self.assertTrue(manifest.select([name]))
         self.assertTrue(any(a.model == "decider-4b" and a.name.startswith("devices/")
                             for a in manifest.select(["wemm-embedding-4b"])))
     def test_0180_catalog_accepts_asr_and_verifies_encoder_dependencies(self):
         latest = bundled_manifest("0.18.0")
-        self.assertEqual(set(latest.models), {m for m in NPU_MODELS if m not in {"embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b", "d3-lite", "d3-nano"} | TTS_MODELS})
+        self.assertEqual(set(latest.models), {m for m in NPU_MODELS if m not in {"halogen-spotter-0.6b", "embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b", "d3-lite", "d3-nano"} | TTS_MODELS})
         for model in ("qwen3-asr-0.6b", "qwen3-asr-1.7b"):
             selected = latest.select([model])
             self.assertEqual({a.model for a in selected}, {model})
@@ -160,7 +160,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_real_image_manifest_lists_all_six_and_shares_dense_program(self):
         manifest = bundled_manifest("0.17.2")
-        self.assertEqual(set(manifest.models), {m for m in NPU_MODELS if m not in {"embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b", "d3-lite", "d3-nano", "decider-4b", "qwen3-embedding-4b", "qwen3-reranker-4b", "qwen3-asr-0.6b", "qwen3-asr-1.7b"} | TTS_MODELS})
+        self.assertEqual(set(manifest.models), {m for m in NPU_MODELS if m not in {"halogen-spotter-0.6b", "embeddinggemma-2", "wemm-embedding-4b", "qwen3guard-stream-0.6b", "d3-lite", "d3-nano", "decider-4b", "qwen3-embedding-4b", "qwen3-reranker-4b", "qwen3-asr-0.6b", "qwen3-asr-1.7b"} | TTS_MODELS})
         assets = manifest.select(["qwen3-reranker-0.6b", "qwen3guard-gen-0.6b"])
         paths = {(a.model, a.name) for a in assets}
         self.assertNotIn(("qwen3-embedding-0.6b", "qwen3-embedding-0.6b.hnpw"), paths)
@@ -372,7 +372,7 @@ class HostTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"library")
             mounts = xrt_mounts(root)
-            self.assertEqual(len(mounts), 6)
+            self.assertEqual(len(mounts), 9)
             self.assertTrue(all(mode == "ro" for _, _, mode in mounts))
             with patch("npu.xrt_mounts", return_value=mounts):
                 self.assertTrue(system_mount_allowed(*mounts[0]))
@@ -806,6 +806,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.manager.perform_switch.assert_not_awaited()
 
     async def test_moderation_openai_alias_passes_to_current_backend(self):
+        self.backend_entries = [e for e in self.backend_entries if e['id'] != 'halogen-spotter-0.6b']
         response = await self.client.post("/v1/moderations", json={"model": "omni-moderation-latest", "input": "hello"})
         self.assertEqual(response.status, 200)
         self.assertEqual(self.received[-1][1]["model"], "omni-moderation-latest")
@@ -835,6 +836,42 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(drain, 2)
         await self.manager.end_maintenance()
         self.assertEqual(self.manager.active_requests, 0)
+
+
+    async def test_liquid_generate_models_support_audio_routes_without_a_gpu_switch(self):
+        self.backend_entries += [{'id':'own-audio','task':'generate','architecture':{
+            'input_modalities':['text','audio'],'output_modalities':['text','audio']}}]
+        self.manager.npu_names = lambda _: set(NPU_MODELS) | {'own-audio'}
+        response = await self.client.post('/v1/audio/speech',json={
+            'model':'own-audio','input':'Hello','voice':'female','language':'en-GB'})
+        self.assertEqual(response.status,200,await response.text() if response.status != 200 else '')
+        self.assertEqual(await response.read(),b'\x00\xff\x80\x01\x02\x03\x04\x05')
+        form = FormData(); form.add_field('model','own-audio'); form.add_field('file',b'RIFFtest',filename='talk.wav',content_type='audio/wav')
+        response = await self.client.post('/v1/audio/transcriptions',data=form)
+        self.assertEqual(response.status,200,await response.text())
+        self.assertEqual(self.manager.current_model,'halogen-swift15')
+
+
+    async def test_ocr_protocols_and_raw_benchmark_preserve_the_original_payloads(self):
+        self.backend_entries += [{'id':'OvisOCR3','task':'generate','architecture':{
+            'input_modalities':['text','image'],'output_modalities':['text']}}]
+        self.manager.npu_names = lambda _: set(NPU_MODELS)|{'OvisOCR3'}
+        cases=[('/v1/chat/completions',{'model':'OvisOCR3','max_tokens':16384,'messages':[
+            {'role':'user','content':[{'type':'image_url','image_url':{'url':'data:image/png;base64,YQ=='}},
+                                     {'type':'text','text':'Convert this page to Markdown.'}]}]}),
+            ('/v1/messages',{'model':'OvisOCR3','max_tokens':16384,'messages':[
+                {'role':'user','content':[{'type':'image','source':{'type':'base64','media_type':'image/png','data':'YQ=='}},
+                                         {'type':'text','text':'Parse this page.'}]}]}),
+            ('/v1/responses',{'model':'OvisOCR3','max_output_tokens':16384,'input':[
+                {'role':'user','content':[{'type':'input_image','image_url':'data:image/png;base64,YQ=='},
+                                         {'type':'input_text','text':'Parse this page.'}]}]}),
+            ('/v1/completions',{'model':'halogen-swift15','prompt':'Emoji reuse boundary: \U0001f600 continuation',
+                                'max_tokens':256,'temperature':0,'ignore_eos':True})]
+        for route,body in cases:
+            response=await self.client.post(route,json=body)
+            self.assertEqual(response.status,200,await response.text())
+            self.assertEqual(self.received[-1],(route,body))
+        self.manager.perform_switch.assert_not_awaited()
 
 
 class EngineUpdateTests(unittest.IsolatedAsyncioTestCase):
@@ -892,6 +929,28 @@ class EngineUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.host.stop()
         await self.fixture.asyncTearDown()
         self.patch.stop()
+
+    async def test_guard_only_engine_update_prepares_implicit_dependencies(self):
+        self.updater.job = {"phase":"preparing_npu"}
+        configurations = {}
+        for path in self.originals:
+            profile = parse_quadlet(path.read_text())
+            profile.env.pop("HALOGEN_NPU_MODELS",None)
+            profile.env["HALOGEN_AGENT_GUARD"] = "hold"
+            profile.image = IMAGE.rsplit(":",1)[0] + ":0.19.0"
+            content = render_quadlet(profile).encode()
+            path.write_bytes(content)
+            configurations[profile.model_id] = {"content":content}
+        writes = await self.updater._prepare_npu_update(configurations, IMAGE.rsplit(":",1)[0] + ":0.19.0")
+        self.assertEqual(set(writes),set(self.originals))
+        self.assertIn("halogen-spotter-0.6b.hnpw",self.downloads)
+        self.assertIn("decider-4b.hnpw",self.downloads)
+        self.assertNotIn("qwen3-embedding-0.6b.hnpw",self.downloads)
+        for content in writes.values():
+            profile = parse_quadlet(content.decode())
+            self.assertEqual(profile.env["HALOGEN_AGENT_GUARD"],"hold")
+            self.assertNotIn("HALOGEN_DOWNLOAD",profile.env)
+        self.assertFalse(self.fixture.manager.maintenance)
 
     async def test_engine_update_prepares_new_npu_program_before_downtime(self):
         await self.fixture.execute()
@@ -1040,6 +1099,92 @@ class InstallTests(unittest.IsolatedAsyncioTestCase):
         self.manager.start_service.assert_not_awaited()
         self.assertEqual(self.path.read_bytes(), self.original)
         self.assertEqual(self.downloads, [])
+
+    async def test_guard_only_install_prepares_dependencies_reuses_and_disables(self):
+        from npu import profile_model_names
+        self.profile.image = IMAGE.rsplit(':',1)[0] + ':0.19.0'
+        self.original = render_quadlet(self.profile).encode(); self.path.write_bytes(self.original)
+        self.manager.backend_health.return_value['version'] = {'api':'0.19.0','engine':'0.19.0'}
+        async def entries():
+            return [{'id':self.profile.model_id}] + [{'id':x} for x in profile_model_names(parse_quadlet(self.path.read_text()))]
+        self.manager.backend_model_entries.side_effect = entries
+        plan = await self.deploy.npu_plan('',guard='hold')
+        self.assertEqual(set(plan['models']),{'halogen-spotter-0.6b','decider-4b'})
+        self.assertGreater(plan['download_bytes'],0)
+        self.assertEqual(self.path.read_bytes(),self.original)
+        for index, guard in enumerate(('hold','hold','off')):
+            await self.deploy.quick_npu({'models':'','guard':guard}); await self.deploy._job_task
+            self.assertEqual(self.deploy.job['state'],'done',self.deploy.job)
+            current = parse_quadlet(self.path.read_text())
+            self.assertEqual(current.env['HALOGEN_AGENT_GUARD'],guard)
+            self.assertNotIn('HALOGEN_DOWNLOAD',current.env)
+            if index == 0:
+                self.assertIn('halogen-spotter-0.6b.hnpw',self.downloads)
+                self.assertIn('decider-4b.hnpw',self.downloads)
+            else:
+                self.assertEqual(self.downloads,[])
+            self.downloads.clear()
+        self.assertEqual(self.manager.start_service.await_count,2)
+
+    async def test_guard_activation_failure_restores_original_profile(self):
+        self.profile.image = IMAGE.rsplit(':',1)[0] + ':0.19.0'
+        self.original = render_quadlet(self.profile).encode(); self.path.write_bytes(self.original)
+        self.manager.backend_health.return_value['version'] = {'api':'0.19.0','engine':'0.19.0'}
+        self.manager.backend_model_entries.side_effect = None
+        self.manager.backend_model_entries.return_value = [{'id':self.profile.model_id}]
+        await self.deploy.quick_npu({'models':'','guard':'hold'}); await self.deploy._job_task
+        self.assertEqual(self.deploy.job['state'],'error')
+        self.assertEqual(self.path.read_bytes(),self.original)
+        self.assertFalse(self.manager.maintenance)
+        self.assertEqual(self.manager.start_service.await_count,2)
+        self.assertEqual(json.loads(self.deploy.npu_journal.read_text())['phase'],'rolled_back')
+
+    async def test_guard_invalid_mode_and_old_engine_rejected_before_download(self):
+        for guard in ('hold','invalid',{},True):
+            with self.assertRaises(AssetError):
+                await self.deploy.npu_plan('',guard=guard)
+        self.assertEqual(self.downloads,[])
+        self.assertEqual(self.path.read_bytes(),self.original)
+
+    async def test_ocr_preview_probes_image_xrt_and_only_prepares_ocr_programs(self):
+        self.use_real_catalog('0.20.0')
+        checkpoint=Path(next(h for h,t,m in self.profile.volumes if t=='/models'))/'OvisOCR3'; checkpoint.mkdir(parents=True)
+        for name in ('config.json','tokenizer.json','model.safetensors'): (checkpoint/name).write_text('{}')
+        async def run(*args,**kwargs):
+            return 'task=generate base=ovisocr3' if 'probe' in args else 'usage: halogen-npu'
+        self.deploy._run=AsyncMock(side_effect=run)
+        with patch('npu_install.host_status',return_value={**READY,'xrt_mounts':[['/unselected-host-xrt','/opt/xilinx/xrt','ro']]}):
+            plan=await self.deploy.npu_plan('/models/OvisOCR3')
+        self.assertEqual(len(plan['plans'][0]['files']),20)
+        self.assertTrue(all(f['name'].startswith('ovisocr3/') for f in plan['plans'][0]['files']))
+        self.assertTrue(plan['host']['ready'])
+        self.assertNotIn('/unselected-host-xrt',str(self.deploy._run.await_args_list))
+        self.assertEqual(self.path.read_bytes(),self.original)
+        self.assertEqual(self.downloads,[])
+        self.manager.start_service.assert_not_awaited()
+
+    async def test_disabled_legacy_profile_does_not_block_guard_on_image_xrt(self):
+        from profiles import uncensored_template
+        self.profile.image=IMAGE.rsplit(':',1)[0]+':0.20.0'
+        self.profile.env['HALOGEN_AGENT_GUARD']='hold'
+        self.path.write_text(render_quadlet(self.profile))
+        legacy=uncensored_template('0.19.0',self.root/'models',self.root/'cache')
+        (self.config.models.quadlet_dir/'halogen-uncensored.container').write_text(render_quadlet(legacy))
+        def status(*args,image=None):
+            return READY if image.endswith(':0.20.0') else {**READY,'ready':False,'errors':['XRT missing']}
+        with patch('npu_install.host_status',side_effect=status):
+            self.assertTrue((await self.deploy.npu_plan(''))['host']['ready'])
+            self.assertFalse((await self.deploy.npu_plan('qwen3.5-2b'))['host']['ready'])
+
+    async def test_modern_npu_install_uses_image_xrt_instead_of_detected_host_libraries(self):
+        self.profile.image=IMAGE.rsplit(':',1)[0]+':0.20.0'
+        self.path.write_text(render_quadlet(self.profile))
+        self.manager.backend_health.return_value['version']={'api':'0.20.0','engine':'0.20.0'}
+        with patch('npu_install.host_status',return_value={**READY,'xrt_mounts':[['/unselected-host-xrt','/opt/xilinx/xrt','ro']]}):
+            await self.install()
+        self.assertEqual(self.deploy.job['state'],'done',self.deploy.job)
+        self.assertNotIn('/opt/xilinx',self.path.read_text())
+        self.assertNotIn('/unselected-host-xrt',str(self.deploy._run.await_args_list))
 
     async def test_unbundled_image_preview_reads_local_catalog_and_caches_it(self):
         self.use_real_catalog("0.99.0")  # Synthetic future version, not a published release.

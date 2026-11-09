@@ -5,6 +5,46 @@ const path = require('node:path');
 const p = require('../src/halobridge_data/playground.js');
 const endpoint = id => p.ENDPOINTS.find(e => e.id === id);
 
+test('document pages retain order and OCR capacity; benchmark uses raw ignore_eos', async () => {
+  const e=endpoint('npu_ocr'), body=p.sample(e,'OvisOCR3');
+  assert.equal(body.max_tokens,16384);
+  assert.equal(body.enable_thinking,false);
+  const pages=[{name:'page1.png',size:4},{name:'page2.png',size:4}];
+  const prepared=JSON.parse(await p.preparePayload(e,body,pages,async f=>'data:image/png;base64,'+f.name));
+  assert.equal(prepared.messages[0].content[0].image_url.url,'data:image/png;base64,page1.png');
+  assert.equal(prepared.messages[0].content[1].image_url.url,'data:image/png;base64,page2.png');
+  assert.equal(prepared.messages[0].content[2].text,'Convert this page to Markdown.');
+  await assert.rejects(p.preparePayload(e,body,[...pages,pages[0]]),/pg_file_count/);
+  await assert.rejects(p.preparePayload(e,body,[{name:'scan.pdf',size:4}]),/pg_image_hint/);
+  const benchmark=p.sample(endpoint('completions_benchmark'),'gpu');
+  assert.equal(benchmark.ignore_eos,true);
+  assert.equal(benchmark.temperature,0);
+  assert.ok(benchmark.prompt);
+  assert.ok(!('ignore_eos' in p.sample(endpoint('chat'),'gpu')));
+});
+
+test('Liquid multimodal requests retain audio, frame order, and spoken response bytes', async () => {
+  const read = async f => f.name.endsWith('.wav') ? 'data:audio/wav;base64,UklGRg==' : 'data:image/png;base64,' + f.name;
+  const wav = {name:'talk.wav',size:4};
+  const e = endpoint('npu_lfm3_voice');
+  const body = JSON.parse(await p.preparePayload(e,p.sample(e,'own-omni'),[wav],read));
+  assert.deepEqual(body.modalities,['text','audio']);
+  assert.equal(body.messages[0].content[1].input_audio.data,'UklGRg==');
+  const video = endpoint('npu_lfm3_video'), b = p.sample(video,'own-vl');
+  b.messages[0].content[1].fps = 24;
+  p.setText(video,b,'New prompt');
+  const encoded = JSON.parse(await p.preparePayload(video,b,[{name:'1.png',size:1},{name:'2.png',size:1}],read));
+  assert.equal(encoded.messages[0].content[1].fps,24);
+  assert.equal(encoded.messages[0].content[0].text,'New prompt');
+  assert.deepEqual(encoded.messages[0].content[1].frames,['data:image/png;base64,1.png','data:image/png;base64,2.png']);
+  const reply = {choices:[{message:{audio:{data:'AQIDBA==',transcript:'Hello'}}}]};
+  assert.deepEqual(p.audioChunks(reply),[new Uint8Array([1,2,3,4])]);
+  assert.equal(p.answer(reply),'Hello');
+  const delta = {choices:[{delta:{audio:{data:'BQg=',transcript:' world'}}}]};
+  assert.deepEqual(p.audioChunks(delta),[new Uint8Array([5,8])]);
+  assert.equal(p.answer(delta),' world');
+});
+
 test('presets cover all documented inference routes and stay on this router', () => {
   const routes = new Set(p.ENDPOINTS.map(e => e.method + ' ' + e.path));
   for (const route of ['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses',

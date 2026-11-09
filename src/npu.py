@@ -25,6 +25,7 @@ NPU_MODELS = {
     "qwen3-reranker-0.6b": "score",
     "qwen3-reranker-4b": "score",
     "qwen3guard-gen-0.6b": "classify",
+    "halogen-spotter-0.6b": "classify",
     "qwen3.5-2b": "generate",
     "flux2-klein-4b": "image",
     "qwen3-asr-0.6b": "transcribe",
@@ -38,8 +39,18 @@ NPU_MODELS = {
     "qwen3-tts-1.7b-customvoice": "speak",
 }
 CUSTOM_TASKS = {"decision", "embedding", "score", "classify", "classifier"}
-CUSTOM_PROGRAMS = {"lfm3-1.7b": (0, 18, 21), "lfm3-1.7b-fast": (0, 18, 21), "d1-2b": (0, 18, 22)}
-MODEL_MIN_VERSION = {"flux2-klein-4b": (0, 17, 0),
+CUSTOM_PROGRAMS = {"ovisocr3": (0, 20, 0), "lfm3-1.7b": (0, 18, 21), "lfm3-1.7b-fast": (0, 18, 21), "d1-2b": (0, 18, 22),
+                   **{name + suffix: (0, 18, 23) for name in ("lfm3-vl-2b", "lfm3-audio-2b", "lfm3-omni-2b")
+                      for suffix in ("", "-fast")}}
+AGENT_GUARD_MODELS = ("halogen-spotter-0.6b", "decider-4b")
+# These image catalogs omit revisions. Each pinned HF commit's file sizes and
+# SHA-256 values were checked against every file record for that model.
+CATALOG_REVISION_PINS = {"351ab0519d16d4d5442562246b49df34635ec656fe2970c952cd2ef30a76553d":
+                         {"halogen-spotter-0.6b": "827eb67e9631fae618ed66b1b4d1b8ba74be8fca"},
+                         "ffb92f3e407af1613b6b5e3f683e39e2a5df46608286901327128a8339bb8ffe":
+                         {"halogen-spotter-0.6b": "827eb67e9631fae618ed66b1b4d1b8ba74be8fca",
+                          "ovisocr3": "588f22c6909e7c69d440072d96bb0d646f4f1998"}}
+MODEL_MIN_VERSION = {"halogen-spotter-0.6b": (0, 19, 0), "flux2-klein-4b": (0, 17, 0),
                      "decider-4b": (0, 17, 4), "qwen3-embedding-4b": (0, 17, 4),
                      "qwen3-reranker-4b": (0, 17, 4),
                      "qwen3-asr-0.6b": (0, 18, 0), "qwen3-asr-1.7b": (0, 18, 0),
@@ -55,8 +66,8 @@ MODEL_MIN_VERSION = {"flux2-klein-4b": (0, 17, 0),
 # use separate bundles (SHA-256 51a5a669... / 97557b92..., tested in full).
 # Only explicitly verified versions share a bundle; later images are read locally.
 # The 0.18.12 and 0.18.13 bundles are distinct models.txt files from their GHCR images.
-BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0", "0.18.16": "0.18.14", "0.18.18": "0.18.14", "0.18.19": "0.18.14", "0.18.20": "0.18.14"}
-BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13", "0.18.14", "0.18.21", "0.18.22"} | set(BUNDLED_CATALOG_ALIASES)
+BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0", "0.18.16": "0.18.14", "0.18.18": "0.18.14", "0.18.19": "0.18.14", "0.18.20": "0.18.14", "0.19.1": "0.19.0"}
+BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13", "0.18.14", "0.18.21", "0.18.22", "0.18.23", "0.19.0", "0.20.0"} | set(BUNDLED_CATALOG_ALIASES)
 TASK_ROUTES = {
     "decision": "/v1/chat/completions", "generate": "/v1/chat/completions",
     "embedding": "/v1/embeddings", "score": "/v1/rerank",
@@ -71,7 +82,7 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 PATH_RE = re.compile(r"^/models/[A-Za-z0-9_./-]+$")
 REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 XRT_LIBS = ("libxrt_coreutil.so.2", "libxrt_core.so.2", "libxrt_driver_xdna.so.2")
-DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.18.22/docs/NPU.md"
+DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/NPU.md"
 
 
 def custom_model_path(value: str) -> str:
@@ -118,9 +129,17 @@ def parse_models(value: str) -> list[str]:
     return result
 
 
+def profile_models(profile, value=None, guard=None) -> list[str]:
+    value = profile.env.get("HALOGEN_NPU_MODELS", "") if value is None else value
+    models = parse_models(value) if value else []
+    guard = profile.env.get("HALOGEN_AGENT_GUARD", "off") if guard is None else guard
+    if guard in {"watch", "hold"}:
+        models = list(dict.fromkeys([*models, *AGENT_GUARD_MODELS]))
+    return models
+
+
 def profile_model_names(profile) -> set[str]:
-    value = profile.env.get("HALOGEN_NPU_MODELS", "")
-    return {model_name(item) for item in parse_models(value)} if value else set()
+    return {model_name(item) for item in profile_models(profile)}
 
 
 @dataclass(frozen=True)
@@ -149,6 +168,8 @@ class NpuManifest:
                 if bits[1] in self.models:
                     raise AssetError("Duplicate NPU manifest model")
                 info = dict(part.split("=", 1) for part in bits[2:] if "=" in part)
+                if not info.get("revision") and bits[1] in CATALOG_REVISION_PINS.get(self.key, {}):
+                    info["revision"] = CATALOG_REVISION_PINS[self.key][bits[1]]
                 if info.get("task") not in TASK_ROUTES:
                     raise AssetError("Unsupported NPU manifest task")
                 if info.get("repo") and not REPO_RE.fullmatch(info["repo"]):
@@ -185,9 +206,9 @@ class NpuManifest:
             programs = {asset.name for asset in self.assets if asset.model == own}
             custom = model in CUSTOM_PROGRAMS
             # Some older images reserve an unpublished program-only model.
-            if custom and not paths and not info.get("repo") and not info.get("revision"):
+            if custom and not paths and not info.get("repo") and not info.get("revision") and own == model:
                 continue
-            if (own not in self.models or not info.get("repo") or not info.get("revision")
+            if (own not in self.models or ((not custom or paths) and (not info.get("repo") or not info.get("revision")))
                     or (not custom and (f"{model}.hnpw" not in paths or "tokenizer/tokenizer.json" not in paths))
                     or "devices/devices.hnpm" not in programs
                     or (model == "d1-2b" and ("vis/devices.hnpm" not in programs
@@ -205,10 +226,31 @@ class NpuManifest:
                     }.issubset(paths))
                     or not any(p.startswith("devices/") and p.endswith(".elf") for p in programs)):
                 raise AssetError(f"Incomplete NPU manifest for {model}")
+            for owner, part in self.program_parts(model):
+                names = {asset.name for asset in self.assets if asset.model == owner}
+                if (owner not in self.models or f"{part}/devices.hnpm" not in names
+                        or not any(p.startswith(part + "/") and p.endswith(".elf") for p in names)):
+                    raise AssetError(f"Incomplete NPU manifest for {model}: missing {owner}/{part}")
+
+    def program_parts(self, model):
+        info = self.models[model]
+        own = info.get("devices", model)
+        parts = {(own, "devices")}
+        vision = info.get("vis")
+        if model in {"lfm3-vl-2b", "ovisocr3"}:
+            vision = model
+        if not vision:
+            vision = next((owner for owner in (model, own) if any(
+                asset.model == owner and asset.name == "vis/devices.hnpm" for asset in self.assets)), None)
+        if vision:
+            parts.add((vision, "vis"))
+        if info.get("aud"):
+            parts.add((info["aud"], "aud"))
+        return parts
 
     def select(self, models: list[str], custom_bases=()) -> list[NpuFile]:
         wanted = set()
-        devices = set()
+        programs = set()
         for model in models:
             if model.startswith("/"):
                 continue
@@ -217,15 +259,15 @@ class NpuManifest:
             if model in CUSTOM_PROGRAMS:
                 raise AssetError(f"{model} provides programs only; select your checkpoint's /models directory")
             wanted.add(model)
-            devices.add(self.models[model].get("devices", model))
+            programs.update(self.program_parts(model))
         for base in custom_bases:
             if base not in self.models or not custom_base_supported(base, self.models[base]):
                 raise AssetError("Unsupported custom NPU base model")
-            if not self.models[base].get("repo"):
+            if not self.models[base].get("repo") and self.models[base].get("devices", base) == base:
                 raise AssetError(f"This image has no published programs for {base}; update the engine")
-            devices.add(self.models[base].get("devices", base))
+            programs.update(self.program_parts(base))
         return [asset for asset in self.assets if asset.model in wanted
-                or (asset.model in devices and asset.name.startswith(("devices/", "vis/")))]
+                or any(asset.model == owner and asset.name.startswith(part + "/") for owner, part in programs)]
 
 
 def bundled_manifest(version="0.18.0") -> NpuManifest:
@@ -269,8 +311,8 @@ async def check_runtime(run, image, mounts, custom_mounts=(), *, custom_models=(
                 continue
             base = detected[custom_model_path(model)]
             if model.endswith(":fast"):
-                if base != "lfm3-1.7b":
-                    raise AssetError(":fast is supported only for LFM3-1.7B checkpoints")
+                if base + "-fast" not in CUSTOM_PROGRAMS:
+                    raise AssetError(":fast is supported only for LFM3 checkpoints")
                 base += "-fast"
             if base not in bases:
                 bases.append(base)
@@ -290,13 +332,46 @@ def xrt_mounts(root: Path = Path("/")) -> list[tuple[str, str, str]]:
             for name in XRT_LIBS:
                 source = str((lib / name).resolve())
                 result += [(source, f"/opt/xilinx/xrt/lib/{name}", "ro"),
-                           (source, "/" + str((lib / name).relative_to(root)), "ro")]
+                           (source, "/" + str((lib / name).relative_to(root)), "ro"),
+                           (source, f"/opt/xilinx/lib/x86_64-linux-gnu/{name}", "ro")]
             return result
     return []
 
 
 def system_mount_allowed(host: str, container: str, mode: str) -> bool:
     return (host, container, mode) in xrt_mounts()
+
+
+def image_has_xrt(image):
+    from semver import version_tuple
+    return bool(image and image.startswith("ghcr.io/peonist-ai/halogen-flash-server:")
+                and (version_tuple(image.rsplit(":", 1)[-1]) or ()) >= (0, 19, 1))
+
+
+def is_xrt_target(target):
+    path = PurePosixPath(target)
+    return target == "/opt/xilinx/xrt" or (path.name in XRT_LIBS and str(path.parent) in {
+        "/opt/xilinx/xrt/lib", "/opt/xilinx/lib/x86_64-linux-gnu",
+        "/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu"})
+
+
+def runtime_mounts(profile, state, image=None):
+    """Keep explicit overrides complete; new profiles use image XRT on 0.19.1+."""
+    mounts = [tuple(v) for v in profile.volumes if is_xrt_target(v[1])]
+    if not mounts:
+        return [] if image_has_xrt(image or profile.image) else [tuple(v) for v in state.get("xrt_mounts", [])]
+    whole = [v for v in mounts if v[1] == "/opt/xilinx/xrt"]
+    parts = {PurePosixPath(t).name: (h, t, m) for h, t, m in mounts
+             if str(PurePosixPath(t).parent) == "/opt/xilinx/xrt/lib"}
+    if (whole and len(whole) != len(mounts)) or (not whole and set(parts) != set(XRT_LIBS)):
+        raise AssetError("XRT override must mount all three libraries or the complete /opt/xilinx/xrt directory")
+    if any(mode != "ro" for _, _, mode in mounts):
+        raise AssetError("XRT system libraries must be mounted read-only without SELinux relabeling")
+    for name, (host, _, _) in parts.items():
+        alias = (host, f"/opt/xilinx/lib/x86_64-linux-gnu/{name}", "ro")
+        if alias not in mounts:
+            mounts.append(alias)
+    return mounts
 
 
 def fabric_devices(root: Path):
@@ -317,7 +392,7 @@ def fabric_devices(root: Path):
     return devices
 
 
-def host_status(root: Path = Path("/")) -> dict:
+def host_status(root: Path = Path("/"), *, image=None) -> dict:
     errors = []
     node = root / "dev/accel/accel0"
     if root == Path("/") and not sys.platform.startswith("linux"):
@@ -333,7 +408,7 @@ def host_status(root: Path = Path("/")) -> dict:
     if any(value in command for value in ("amd_iommu=off", "iommu=off")):
         errors.append("IOMMU is disabled; remove amd_iommu=off / iommu=off (iommu=pt is compatible)")
     mounts = xrt_mounts(root)
-    if not mounts:
+    if not mounts and not image_has_xrt(image):
         errors.append("XRT and its NPU plugin are missing; install the host's matching XRT libraries")
     clocks = []
     for device in fabric_devices(root):
@@ -348,7 +423,8 @@ def host_status(root: Path = Path("/")) -> dict:
     if not clocks or not all(clock["held"] for clock in clocks):
         errors.append("GPU fabric clock is not held; install and start halogen-fabric-clock.service before enabling NPU")
     return {"ready": not errors, "errors": errors, "device": str(node),
-            "xrt_mounts": [list(mount) for mount in mounts], "fabric_clocks": clocks, "documentation": DOC_URL}
+            "xrt_mounts": [list(mount) for mount in mounts], "xrt_source": "image" if image_has_xrt(image) else "host",
+            "fabric_clocks": clocks, "documentation": DOC_URL}
 
 
 def host_setup(state_dir: Path) -> dict:
@@ -372,18 +448,25 @@ def host_setup(state_dir: Path) -> dict:
                                             "sudo /usr/local/sbin/halogen-fabric-clock release"]}
 
 
-def patch_quadlet(content: bytes, *, models: str | None = None, shared_root: Path | None = None,
+def patch_quadlet(content: bytes, *, models: str | None = None, guard: str | None = None, shared_root: Path | None = None,
                   mounts=(), custom_mounts=()) -> bytes:
     """Change only NPU bindings, retaining the rest of an imported Quadlet."""
     newline = b"\r\n" if b"\r\n" in content else b"\n"
     lines, out, section = content.splitlines(), [], ""
     additions = []
+    if guard is not None:
+        if guard not in {"off", "watch", "hold"}:
+            raise AssetError("Agent guard must be off, watch or hold")
+        if guard != "off" or b"Environment=HALOGEN_AGENT_GUARD=" in content:
+            additions.append("Environment=HALOGEN_AGENT_GUARD=" + guard)
     if models is not None and models:
         parse_models(models)
         additions.append("Environment=HALOGEN_NPU_MODELS=" + models)
     if shared_root is not None:
         additions.append(f"Volume={shared_root}:/models/npu:ro,z")
-    enabled = bool(models) if models is not None else b"HALOGEN_NPU_MODELS=" in content
+    enabled = (bool(models) if models is not None else b"HALOGEN_NPU_MODELS=" in content) or (
+        guard in {"watch", "hold"} if guard is not None else bool(re.search(
+            rb"(?m)^Environment=HALOGEN_AGENT_GUARD=(watch|hold)\r?$", content)))
     if enabled:
         additions.append("AddDevice=/dev/accel/accel0")
         additions += [f"Volume={host}:{target}:{mode}" for host, target, mode in (*mounts, *custom_mounts)]
@@ -401,6 +484,8 @@ def patch_quadlet(content: bytes, *, models: str | None = None, shared_root: Pat
                 insert()  # Child mounts must follow an existing /models:Z mount.
             section = stripped[1:-1].decode()
         if section == "Container":
+            if stripped.startswith(b"Environment=HALOGEN_AGENT_GUARD=") and guard is not None:
+                continue
             if stripped.startswith(b"Environment=HALOGEN_NPU_MODELS=") and models is not None:
                 continue
             if stripped == b"AddDevice=/dev/accel/accel0":
@@ -409,9 +494,7 @@ def patch_quadlet(content: bytes, *, models: str | None = None, shared_root: Pat
                 parts = stripped[len(b"Volume="):].decode().rsplit(":", 2)
                 if len(parts) == 3:
                     target = PurePosixPath(parts[1])
-                    xrt = str(target) == "/opt/xilinx/xrt" or (
-                        target.name in XRT_LIBS and str(target.parent) in
-                        {"/opt/xilinx/xrt/lib", "/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu"})
+                    xrt = is_xrt_target(str(target))
                     if parts[1] in destinations or parts[1] == "/models/npu" or (xrt and (mounts or models == "")):
                         continue
         out.append(line)
@@ -501,10 +584,11 @@ class NpuAssets:
         return NpuSelection(self, manifest, models, profiles, custom_bases)
 
     async def validate_profile_start(self, profile):
-        models = parse_models(profile.env["HALOGEN_NPU_MODELS"])
-        state = host_status()
+        models = profile_models(profile)
+        state = host_status(image=profile.image)
         if not state["ready"]:
             raise AssetError("; ".join(state["errors"]))
+        runtime_mounts(profile, state)
         root = host_path(profile, "/models/npu")
         if root is None:
             raise AssetError("NPU shared mount is missing; use NPU Setup to prepare this profile")
@@ -523,7 +607,8 @@ class NpuAssets:
         else:
             legacy = False
         bases = [model for model, info in manifest.models.items() if custom_base_supported(model, info)
-                 and (root / info.get("devices", model) / "devices/devices.hnpm").is_file()] if any(m.startswith("/") for m in models) else []
+                 and all((root / owner / part / "devices.hnpm").is_file()
+                         for owner, part in manifest.program_parts(model))] if any(m.startswith("/") for m in models) else []
         for model in models:
             if model.startswith("/"):
                 source = host_path(profile, custom_model_path(model))

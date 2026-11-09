@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.45
+
+- Support Halogen 0.20.0 and verified OvisOCR3 programs.
+- Use bundled XRT on new profiles and preserve complete host overrides.
+- Add document parsing and fixed-length benchmark Playground examples.
+- Preserve existing checkpoints, context limits and slots.
+
+## 0.1.44
+
+- Support Halogen 0.19.0 and verified NPU catalogs.
+- Add optional agent guard setup with shared model dependencies.
+- Support LFM3 vision, video, audio and voice endpoints.
+- Add multimodal Playground examples and audio playback.
+
 ## 0.1.43
 
 - Support Halogen 0.18.22 and verified NPU program catalogs.

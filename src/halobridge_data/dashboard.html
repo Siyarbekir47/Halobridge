@@ -23,7 +23,7 @@
   <div class="sidebar-bottom">
     <div class="sidebar-preference"><label for="themeSelect" data-i18n="theme_label">Appearance</label><select id="themeSelect" aria-label="Appearance" data-i18n-attr="aria-label:theme_label"><option value="system" data-i18n="theme_system">System</option><option value="light" data-i18n="theme_light">Light</option><option value="dark" data-i18n="theme_dark">Dark</option></select></div>
     <div class="sidebar-preference"><label for="langSelect" data-i18n="lang_label">Language</label><select id="langSelect" aria-label="Language" data-i18n-attr="aria-label:lang_label"><option value="en">English</option><option value="de">Deutsch</option></select></div>
-    <small>Halobridge <span id="appVersion">v0.1.43</span></small>
+    <small>Halobridge <span id="appVersion">v0.1.45</span></small>
   </div>
 </aside>
 <main class="shell" id="mainContent" tabindex="-1">
@@ -178,6 +178,7 @@
         <div class="deploy-fields">
           <label><span data-i18n="npu_profiles">Backend profiles</span><select id="npuProfiles"><option value="" data-i18n="npu_all_profiles">All installed profiles</option></select></label>
           <label><span data-i18n="npu_custom">Custom fine-tunes (comma-separated /models directories)</span><input id="npuCustom" type="text" placeholder="/models/my-guard"></label>
+          <label><span data-i18n="npu_agent_guard">Agent guard (preview; 0.19.0+)</span><select id="npuAgentGuard"><option value="" data-i18n="npu_guard_preserve">Keep each profile's setting</option><option value="off" data-i18n="npu_guard_off">Off</option><option value="watch" data-i18n="npu_guard_watch">Watch · report only</option><option value="hold" data-i18n="npu_guard_hold">Hold · screen tool calls</option></select><small data-i18n="npu_guard_note">Opt-in NPU preview, not a security boundary. Prepares Spotter and decider-4b; up to about 6.4 GB host memory.</small></label>
         </div>
         <p class="muted" data-i18n="npu_shared_hint">Files are shared across profiles and prepared before restarting. The previous version stays available for rollback.</p>
         <div class="deploy-actions"><button id="npuPlanBtn" data-i18n="npu_preview">Preview downloads</button><button id="npuDownloadBtn" disabled data-i18n="npu_download">Download files only</button><button id="npuInstallBtn" class="primary" disabled data-i18n="npu_apply">Download &amp; activate</button></div>
