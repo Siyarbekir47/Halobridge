@@ -887,7 +887,7 @@ class ContainerUpdater:
         await self._run("systemctl", "--user", "start", self.models[model], timeout=start_timeout)
 
     async def _prepare_npu_update(self, configurations, image):
-        from npu import check_runtime, custom_model_path, host_status, profile_models, patch_quadlet
+        from npu import check_runtime, custom_model_path, host_status, profile_models, patch_quadlet, runtime_mounts
         from shared_assets import host_path
         enabled = [parse_quadlet(value["content"].decode("utf-8"), self._paths()[name])
                    for name, value in configurations.items() if b"HALOGEN_NPU_MODELS=" in value["content"]
@@ -896,7 +896,7 @@ class ContainerUpdater:
         profiles = enabled
         if not enabled:
             return {}
-        state = host_status()
+        state = host_status(image=image)
         if not state["ready"]:
             raise UpdateError("; ".join(state["errors"]))
         # Cache the previous image's record before an update so rollback and
@@ -906,7 +906,7 @@ class ContainerUpdater:
         manifest = await self.npu_assets.manifest(image, self._run, refresh=True)
         wanted = list(dict.fromkeys(model for profile in enabled
                      for model in profile_models(profile)))
-        mounts = [tuple(v) for v in state["xrt_mounts"]]
+        profile_mounts = {p.quadlet_path: runtime_mounts(p, state, image) for p in enabled}
         bases = []
         for profile in enabled:
             custom = []
@@ -921,14 +921,14 @@ class ContainerUpdater:
                     mount = (str(source), target, "ro")
                     if mount not in custom:
                         custom.append(mount)
-            detected = await check_runtime(self._run, image, mounts, custom, custom_models=selected)
+            detected = await check_runtime(self._run, image, profile_mounts[profile.quadlet_path], custom, custom_models=selected)
             bases.extend(base for base in detected if base not in bases)
         selection = self.npu_assets.selection(manifest, wanted, profiles, bases)
         self._save_job(phase="preparing_npu", message="Preparing versioned NPU files; the current backend keeps serving.")
         await selection.prepare(None, self._download_checkpoint_asset,
                                 lambda line: self._save_job(message=line))
         return {profile.quadlet_path: patch_quadlet(configurations[profile.model_id]["content"],
-                shared_root=selection.root, mounts=mounts) for profile in enabled}
+                shared_root=selection.root, mounts=profile_mounts[profile.quadlet_path]) for profile in enabled}
 
     async def _update(self, version: str) -> None:
         maintenance = False

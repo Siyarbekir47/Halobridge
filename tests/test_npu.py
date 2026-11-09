@@ -372,7 +372,7 @@ class HostTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"library")
             mounts = xrt_mounts(root)
-            self.assertEqual(len(mounts), 6)
+            self.assertEqual(len(mounts), 9)
             self.assertTrue(all(mode == "ro" for _, _, mode in mounts))
             with patch("npu.xrt_mounts", return_value=mounts):
                 self.assertTrue(system_mount_allowed(*mounts[0]))
@@ -852,6 +852,28 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.current_model,'halogen-swift15')
 
 
+    async def test_ocr_protocols_and_raw_benchmark_preserve_the_original_payloads(self):
+        self.backend_entries += [{'id':'OvisOCR3','task':'generate','architecture':{
+            'input_modalities':['text','image'],'output_modalities':['text']}}]
+        self.manager.npu_names = lambda _: set(NPU_MODELS)|{'OvisOCR3'}
+        cases=[('/v1/chat/completions',{'model':'OvisOCR3','max_tokens':16384,'messages':[
+            {'role':'user','content':[{'type':'image_url','image_url':{'url':'data:image/png;base64,YQ=='}},
+                                     {'type':'text','text':'Convert this page to Markdown.'}]}]}),
+            ('/v1/messages',{'model':'OvisOCR3','max_tokens':16384,'messages':[
+                {'role':'user','content':[{'type':'image','source':{'type':'base64','media_type':'image/png','data':'YQ=='}},
+                                         {'type':'text','text':'Parse this page.'}]}]}),
+            ('/v1/responses',{'model':'OvisOCR3','max_output_tokens':16384,'input':[
+                {'role':'user','content':[{'type':'input_image','image_url':'data:image/png;base64,YQ=='},
+                                         {'type':'input_text','text':'Parse this page.'}]}]}),
+            ('/v1/completions',{'model':'halogen-swift15','prompt':'Emoji reuse boundary: \U0001f600 continuation',
+                                'max_tokens':256,'temperature':0,'ignore_eos':True})]
+        for route,body in cases:
+            response=await self.client.post(route,json=body)
+            self.assertEqual(response.status,200,await response.text())
+            self.assertEqual(self.received[-1],(route,body))
+        self.manager.perform_switch.assert_not_awaited()
+
+
 class EngineUpdateTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.patch = patch.multiple(updater_tests, OLD="0.16.0", NEW="0.16.2")
@@ -1123,6 +1145,46 @@ class InstallTests(unittest.IsolatedAsyncioTestCase):
                 await self.deploy.npu_plan('',guard=guard)
         self.assertEqual(self.downloads,[])
         self.assertEqual(self.path.read_bytes(),self.original)
+
+    async def test_ocr_preview_probes_image_xrt_and_only_prepares_ocr_programs(self):
+        self.use_real_catalog('0.20.0')
+        checkpoint=Path(next(h for h,t,m in self.profile.volumes if t=='/models'))/'OvisOCR3'; checkpoint.mkdir(parents=True)
+        for name in ('config.json','tokenizer.json','model.safetensors'): (checkpoint/name).write_text('{}')
+        async def run(*args,**kwargs):
+            return 'task=generate base=ovisocr3' if 'probe' in args else 'usage: halogen-npu'
+        self.deploy._run=AsyncMock(side_effect=run)
+        with patch('npu_install.host_status',return_value={**READY,'xrt_mounts':[['/unselected-host-xrt','/opt/xilinx/xrt','ro']]}):
+            plan=await self.deploy.npu_plan('/models/OvisOCR3')
+        self.assertEqual(len(plan['plans'][0]['files']),20)
+        self.assertTrue(all(f['name'].startswith('ovisocr3/') for f in plan['plans'][0]['files']))
+        self.assertTrue(plan['host']['ready'])
+        self.assertNotIn('/unselected-host-xrt',str(self.deploy._run.await_args_list))
+        self.assertEqual(self.path.read_bytes(),self.original)
+        self.assertEqual(self.downloads,[])
+        self.manager.start_service.assert_not_awaited()
+
+    async def test_disabled_legacy_profile_does_not_block_guard_on_image_xrt(self):
+        from profiles import uncensored_template
+        self.profile.image=IMAGE.rsplit(':',1)[0]+':0.20.0'
+        self.profile.env['HALOGEN_AGENT_GUARD']='hold'
+        self.path.write_text(render_quadlet(self.profile))
+        legacy=uncensored_template('0.19.0',self.root/'models',self.root/'cache')
+        (self.config.models.quadlet_dir/'halogen-uncensored.container').write_text(render_quadlet(legacy))
+        def status(*args,image=None):
+            return READY if image.endswith(':0.20.0') else {**READY,'ready':False,'errors':['XRT missing']}
+        with patch('npu_install.host_status',side_effect=status):
+            self.assertTrue((await self.deploy.npu_plan(''))['host']['ready'])
+            self.assertFalse((await self.deploy.npu_plan('qwen3.5-2b'))['host']['ready'])
+
+    async def test_modern_npu_install_uses_image_xrt_instead_of_detected_host_libraries(self):
+        self.profile.image=IMAGE.rsplit(':',1)[0]+':0.20.0'
+        self.path.write_text(render_quadlet(self.profile))
+        self.manager.backend_health.return_value['version']={'api':'0.20.0','engine':'0.20.0'}
+        with patch('npu_install.host_status',return_value={**READY,'xrt_mounts':[['/unselected-host-xrt','/opt/xilinx/xrt','ro']]}):
+            await self.install()
+        self.assertEqual(self.deploy.job['state'],'done',self.deploy.job)
+        self.assertNotIn('/opt/xilinx',self.path.read_text())
+        self.assertNotIn('/unselected-host-xrt',str(self.deploy._run.await_args_list))
 
     async def test_unbundled_image_preview_reads_local_catalog_and_caches_it(self):
         self.use_real_catalog("0.99.0")  # Synthetic future version, not a published release.

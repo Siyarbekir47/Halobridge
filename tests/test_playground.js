@@ -5,6 +5,24 @@ const path = require('node:path');
 const p = require('../src/halobridge_data/playground.js');
 const endpoint = id => p.ENDPOINTS.find(e => e.id === id);
 
+test('document pages retain order and OCR capacity; benchmark uses raw ignore_eos', async () => {
+  const e=endpoint('npu_ocr'), body=p.sample(e,'OvisOCR3');
+  assert.equal(body.max_tokens,16384);
+  assert.equal(body.enable_thinking,false);
+  const pages=[{name:'page1.png',size:4},{name:'page2.png',size:4}];
+  const prepared=JSON.parse(await p.preparePayload(e,body,pages,async f=>'data:image/png;base64,'+f.name));
+  assert.equal(prepared.messages[0].content[0].image_url.url,'data:image/png;base64,page1.png');
+  assert.equal(prepared.messages[0].content[1].image_url.url,'data:image/png;base64,page2.png');
+  assert.equal(prepared.messages[0].content[2].text,'Convert this page to Markdown.');
+  await assert.rejects(p.preparePayload(e,body,[...pages,pages[0]]),/pg_file_count/);
+  await assert.rejects(p.preparePayload(e,body,[{name:'scan.pdf',size:4}]),/pg_image_hint/);
+  const benchmark=p.sample(endpoint('completions_benchmark'),'gpu');
+  assert.equal(benchmark.ignore_eos,true);
+  assert.equal(benchmark.temperature,0);
+  assert.ok(benchmark.prompt);
+  assert.ok(!('ignore_eos' in p.sample(endpoint('chat'),'gpu')));
+});
+
 test('Liquid multimodal requests retain audio, frame order, and spoken response bytes', async () => {
   const read = async f => f.name.endsWith('.wav') ? 'data:audio/wav;base64,UklGRg==' : 'data:image/png;base64,' + f.name;
   const wav = {name:'talk.wav',size:4};

@@ -9,8 +9,8 @@ import stat
 from pathlib import Path
 
 from npu import (DOC_URL, MODEL_MIN_VERSION, NPU_MODELS, TASK_ROUTES, check_runtime, host_setup, host_status,
-                 custom_model_path, model_name, profile_models, profile_model_names, patch_quadlet)
-from profiles import parse_quadlet, validate_profile
+                 custom_model_path, model_name, profile_models, profile_model_names, patch_quadlet, runtime_mounts)
+from profiles import DEFAULT_ENGINE_VERSION, OFFICIAL_IMAGE_REPO, parse_quadlet, validate_profile
 from semver import normalize_version, version_tuple
 from shared_assets import AssetError, atomic_json, host_path
 
@@ -27,14 +27,20 @@ class NpuInstallMixin:
             raise AssetError("Install a backend profile before configuring NPU models")
         return profiles
 
+    def _npu_host_status(self, profiles):
+        states = [host_status(image=p.image) for p in profiles] or [host_status(image=f"{OFFICIAL_IMAGE_REPO}:{DEFAULT_ENGINE_VERSION}")]
+        return {**states[0], "ready": all(s["ready"] for s in states),
+                "errors": list(dict.fromkeys(e for s in states for e in s["errors"]))}
+
     async def npu_status(self):
-        state = host_status()
+        profiles = list(self.npu_assets.profiles())
+        state = self._npu_host_status(profiles)
         state.update({"models": [{"id": model, "task": task, "endpoint": "/v1/systemone" if model in {"d3-lite", "d3-nano"} else TASK_ROUTES[task]}
                                   for model, task in NPU_MODELS.items()],
                       "profiles": [{"id": p.profile_id, "image": p.image,
                                     "models": p.env.get("HALOGEN_NPU_MODELS", ""),
-                                    "guard": p.env.get("HALOGEN_AGENT_GUARD", "off")}
-                                   for p in self.npu_assets.profiles()],
+                                    "guard": p.env.get("HALOGEN_AGENT_GUARD", "off"),
+                                    "host": host_status(image=p.image)} for p in profiles],
                       "setup": host_setup(Path(self.config.dashboard.state_dir))})
         return state
 
@@ -46,7 +52,8 @@ class NpuInstallMixin:
         if {model_name(m) for m in models} & set(self.manager.models):
             raise AssetError("NPU model IDs must not conflict with backend profile model IDs")
         result = {"models": models, "profiles": [p.profile_id for p in profiles],
-                  "host": host_status(), "documentation": DOC_URL, "plans": []}
+                  "host": self._npu_host_status([p for p in profiles if profile_models(p, value, guard)]),
+                  "documentation": DOC_URL, "plans": []}
         if not models:
             result["download_bytes"] = 0
             return result
@@ -56,6 +63,9 @@ class NpuInstallMixin:
                                          for m in profile_models(p, value, guard)))
             if not selected:
                 continue
+            for profile in profiles:
+                if profile.image == image and profile_models(profile, value, guard):
+                    runtime_mounts(profile, host_status(image=image))
             version = version_tuple(image.rsplit(":", 1)[-1]) or (0, 0, 0)
             if version < (0, 16, 2):
                 raise AssetError("Update all selected profiles to Halogen 0.16.2 or newer before NPU Setup")
@@ -95,7 +105,7 @@ class NpuInstallMixin:
         if download_only and not plan["models"]:
             raise DeployError("Select at least one NPU model to download")
         if plan["models"] and not download_only:
-            state = host_status()
+            state = self._npu_host_status([p for p in self._npu_profiles(requested) if profile_models(p, value, guard)])
             if not state["ready"]:
                 raise DeployError("; ".join(state["errors"]))
         kind = "quick-npu-download" if download_only else "quick-npu"
@@ -109,14 +119,14 @@ class NpuInstallMixin:
     async def _npu_custom_bases(self, image, models, profiles):
         if not any(model.startswith("/") for model in models):
             return []
-        state = host_status()
+        state = host_status(image=image)
         if not state["ready"]:
             raise AssetError("Custom NPU checkpoints need host setup before their architecture can be probed; run halobridge npu-check")
         bases = []
         for profile in profiles:
             if profile.image != image:
                 continue
-            detected = await check_runtime(self._run, image, [tuple(v) for v in state["xrt_mounts"]],
+            detected = await check_runtime(self._run, image, runtime_mounts(profile, state, image),
                                            self._npu_custom_mounts(profile, models), custom_models=models)
             bases.extend(base for base in detected if base not in bases)
         return bases
@@ -149,7 +159,6 @@ class NpuInstallMixin:
             models = list(dict.fromkeys(m for p in profiles for m in profile_models(p, value, guard)))
             self.job["step"] = 1
             if models:
-                mounts = [tuple(v) for v in host_status()["xrt_mounts"]] if not download_only else []
                 for image in dict.fromkeys(p.image for p in profiles):
                     selected = list(dict.fromkeys(m for p in profiles if p.image == image
                                                  for m in profile_models(p, value, guard)))
@@ -173,6 +182,7 @@ class NpuInstallMixin:
                     return
                 for profile in profiles:
                     selected = profile_models(profile, value, guard)
+                    mounts = runtime_mounts(profile, host_status(image=profile.image)) if selected else []
                     custom = self._npu_custom_mounts(profile, selected)
                     if selected:
                         await self._npu_runtime_check(profile.image, mounts, custom)
@@ -186,7 +196,7 @@ class NpuInstallMixin:
                 errors = validate_profile(profile) + self._validate_host_paths(profile)
                 if errors:
                     raise AssetError("; ".join(errors))
-            if models and not host_status()["ready"]:
+            if models and not self._npu_host_status([p for p in profiles if profile_models(p, value, guard)])["ready"]:
                 raise AssetError("Host NPU prerequisites changed during preparation; run halobridge npu-check")
             async with self.deploy_lock:
                 self.job["step"] = 3
