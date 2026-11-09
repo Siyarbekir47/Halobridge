@@ -39,14 +39,17 @@ NPU_MODELS = {
     "qwen3-tts-1.7b-customvoice": "speak",
 }
 CUSTOM_TASKS = {"decision", "embedding", "score", "classify", "classifier"}
-CUSTOM_PROGRAMS = {"lfm3-1.7b": (0, 18, 21), "lfm3-1.7b-fast": (0, 18, 21), "d1-2b": (0, 18, 22),
+CUSTOM_PROGRAMS = {"ovisocr3": (0, 20, 0), "lfm3-1.7b": (0, 18, 21), "lfm3-1.7b-fast": (0, 18, 21), "d1-2b": (0, 18, 22),
                    **{name + suffix: (0, 18, 23) for name in ("lfm3-vl-2b", "lfm3-audio-2b", "lfm3-omni-2b")
                       for suffix in ("", "-fast")}}
 AGENT_GUARD_MODELS = ("halogen-spotter-0.6b", "decider-4b")
-# The 0.19.0 image omits Spotter's revision. This commit's HF LFS sizes and
-# SHA-256 values match both file records in that exact image catalog.
+# These image catalogs omit revisions. Each pinned HF commit's file sizes and
+# SHA-256 values were checked against every file record for that model.
 CATALOG_REVISION_PINS = {"351ab0519d16d4d5442562246b49df34635ec656fe2970c952cd2ef30a76553d":
-                         {"halogen-spotter-0.6b": "827eb67e9631fae618ed66b1b4d1b8ba74be8fca"}}
+                         {"halogen-spotter-0.6b": "827eb67e9631fae618ed66b1b4d1b8ba74be8fca"},
+                         "ffb92f3e407af1613b6b5e3f683e39e2a5df46608286901327128a8339bb8ffe":
+                         {"halogen-spotter-0.6b": "827eb67e9631fae618ed66b1b4d1b8ba74be8fca",
+                          "ovisocr3": "588f22c6909e7c69d440072d96bb0d646f4f1998"}}
 MODEL_MIN_VERSION = {"halogen-spotter-0.6b": (0, 19, 0), "flux2-klein-4b": (0, 17, 0),
                      "decider-4b": (0, 17, 4), "qwen3-embedding-4b": (0, 17, 4),
                      "qwen3-reranker-4b": (0, 17, 4),
@@ -63,8 +66,8 @@ MODEL_MIN_VERSION = {"halogen-spotter-0.6b": (0, 19, 0), "flux2-klein-4b": (0, 1
 # use separate bundles (SHA-256 51a5a669... / 97557b92..., tested in full).
 # Only explicitly verified versions share a bundle; later images are read locally.
 # The 0.18.12 and 0.18.13 bundles are distinct models.txt files from their GHCR images.
-BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0", "0.18.16": "0.18.14", "0.18.18": "0.18.14", "0.18.19": "0.18.14", "0.18.20": "0.18.14"}
-BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13", "0.18.14", "0.18.21", "0.18.22", "0.18.23", "0.19.0"} | set(BUNDLED_CATALOG_ALIASES)
+BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0", "0.18.16": "0.18.14", "0.18.18": "0.18.14", "0.18.19": "0.18.14", "0.18.20": "0.18.14", "0.19.1": "0.19.0"}
+BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13", "0.18.14", "0.18.21", "0.18.22", "0.18.23", "0.19.0", "0.20.0"} | set(BUNDLED_CATALOG_ALIASES)
 TASK_ROUTES = {
     "decision": "/v1/chat/completions", "generate": "/v1/chat/completions",
     "embedding": "/v1/embeddings", "score": "/v1/rerank",
@@ -79,7 +82,7 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 PATH_RE = re.compile(r"^/models/[A-Za-z0-9_./-]+$")
 REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 XRT_LIBS = ("libxrt_coreutil.so.2", "libxrt_core.so.2", "libxrt_driver_xdna.so.2")
-DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.19.0/docs/NPU.md"
+DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/NPU.md"
 
 
 def custom_model_path(value: str) -> str:
@@ -234,7 +237,7 @@ class NpuManifest:
         own = info.get("devices", model)
         parts = {(own, "devices")}
         vision = info.get("vis")
-        if model == "lfm3-vl-2b":
+        if model in {"lfm3-vl-2b", "ovisocr3"}:
             vision = model
         if not vision:
             vision = next((owner for owner in (model, own) if any(
@@ -329,13 +332,46 @@ def xrt_mounts(root: Path = Path("/")) -> list[tuple[str, str, str]]:
             for name in XRT_LIBS:
                 source = str((lib / name).resolve())
                 result += [(source, f"/opt/xilinx/xrt/lib/{name}", "ro"),
-                           (source, "/" + str((lib / name).relative_to(root)), "ro")]
+                           (source, "/" + str((lib / name).relative_to(root)), "ro"),
+                           (source, f"/opt/xilinx/lib/x86_64-linux-gnu/{name}", "ro")]
             return result
     return []
 
 
 def system_mount_allowed(host: str, container: str, mode: str) -> bool:
     return (host, container, mode) in xrt_mounts()
+
+
+def image_has_xrt(image):
+    from semver import version_tuple
+    return bool(image and image.startswith("ghcr.io/peonist-ai/halogen-flash-server:")
+                and (version_tuple(image.rsplit(":", 1)[-1]) or ()) >= (0, 19, 1))
+
+
+def is_xrt_target(target):
+    path = PurePosixPath(target)
+    return target == "/opt/xilinx/xrt" or (path.name in XRT_LIBS and str(path.parent) in {
+        "/opt/xilinx/xrt/lib", "/opt/xilinx/lib/x86_64-linux-gnu",
+        "/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu"})
+
+
+def runtime_mounts(profile, state, image=None):
+    """Keep explicit overrides complete; new profiles use image XRT on 0.19.1+."""
+    mounts = [tuple(v) for v in profile.volumes if is_xrt_target(v[1])]
+    if not mounts:
+        return [] if image_has_xrt(image or profile.image) else [tuple(v) for v in state.get("xrt_mounts", [])]
+    whole = [v for v in mounts if v[1] == "/opt/xilinx/xrt"]
+    parts = {PurePosixPath(t).name: (h, t, m) for h, t, m in mounts
+             if str(PurePosixPath(t).parent) == "/opt/xilinx/xrt/lib"}
+    if (whole and len(whole) != len(mounts)) or (not whole and set(parts) != set(XRT_LIBS)):
+        raise AssetError("XRT override must mount all three libraries or the complete /opt/xilinx/xrt directory")
+    if any(mode != "ro" for _, _, mode in mounts):
+        raise AssetError("XRT system libraries must be mounted read-only without SELinux relabeling")
+    for name, (host, _, _) in parts.items():
+        alias = (host, f"/opt/xilinx/lib/x86_64-linux-gnu/{name}", "ro")
+        if alias not in mounts:
+            mounts.append(alias)
+    return mounts
 
 
 def fabric_devices(root: Path):
@@ -356,7 +392,7 @@ def fabric_devices(root: Path):
     return devices
 
 
-def host_status(root: Path = Path("/")) -> dict:
+def host_status(root: Path = Path("/"), *, image=None) -> dict:
     errors = []
     node = root / "dev/accel/accel0"
     if root == Path("/") and not sys.platform.startswith("linux"):
@@ -372,7 +408,7 @@ def host_status(root: Path = Path("/")) -> dict:
     if any(value in command for value in ("amd_iommu=off", "iommu=off")):
         errors.append("IOMMU is disabled; remove amd_iommu=off / iommu=off (iommu=pt is compatible)")
     mounts = xrt_mounts(root)
-    if not mounts:
+    if not mounts and not image_has_xrt(image):
         errors.append("XRT and its NPU plugin are missing; install the host's matching XRT libraries")
     clocks = []
     for device in fabric_devices(root):
@@ -387,7 +423,8 @@ def host_status(root: Path = Path("/")) -> dict:
     if not clocks or not all(clock["held"] for clock in clocks):
         errors.append("GPU fabric clock is not held; install and start halogen-fabric-clock.service before enabling NPU")
     return {"ready": not errors, "errors": errors, "device": str(node),
-            "xrt_mounts": [list(mount) for mount in mounts], "fabric_clocks": clocks, "documentation": DOC_URL}
+            "xrt_mounts": [list(mount) for mount in mounts], "xrt_source": "image" if image_has_xrt(image) else "host",
+            "fabric_clocks": clocks, "documentation": DOC_URL}
 
 
 def host_setup(state_dir: Path) -> dict:
@@ -457,9 +494,7 @@ def patch_quadlet(content: bytes, *, models: str | None = None, guard: str | Non
                 parts = stripped[len(b"Volume="):].decode().rsplit(":", 2)
                 if len(parts) == 3:
                     target = PurePosixPath(parts[1])
-                    xrt = str(target) == "/opt/xilinx/xrt" or (
-                        target.name in XRT_LIBS and str(target.parent) in
-                        {"/opt/xilinx/xrt/lib", "/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu"})
+                    xrt = is_xrt_target(str(target))
                     if parts[1] in destinations or parts[1] == "/models/npu" or (xrt and (mounts or models == "")):
                         continue
         out.append(line)
@@ -550,9 +585,10 @@ class NpuAssets:
 
     async def validate_profile_start(self, profile):
         models = profile_models(profile)
-        state = host_status()
+        state = host_status(image=profile.image)
         if not state["ready"]:
             raise AssetError("; ".join(state["errors"]))
+        runtime_mounts(profile, state)
         root = host_path(profile, "/models/npu")
         if root is None:
             raise AssetError("NPU shared mount is missing; use NPU Setup to prepare this profile")

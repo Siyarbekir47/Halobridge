@@ -1408,7 +1408,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         )
     sub.add_parser("doctor", help="Check setup")
     sub.add_parser("update-check", help="Check update status without installing")
-    sub.add_parser("npu-check", help="Check NPU device, XRT, IOMMU and fabric clock")
+    npu_parser = sub.add_parser("npu-check", help="Check NPU device, runtime prerequisites, IOMMU and fabric clock")
+    npu_parser.add_argument("--image", help="Target Halogen image (defaults to the current template version)")
     sub.add_parser("npu-host-setup", help="Print verified download and installation commands for the fabric clock service")
 
     return parser.parse_args(argv)
@@ -1521,12 +1522,13 @@ def cli(argv: Optional[list[str]] = None) -> None:
         raise SystemExit(asyncio.run(run_update_check(config)))
     elif command == "npu-check":
         from npu import host_status
-        status = host_status()
+        from profiles import DEFAULT_ENGINE_VERSION, OFFICIAL_IMAGE_REPO
+        status = host_status(image=args.image or f"{OFFICIAL_IMAGE_REPO}:{DEFAULT_ENGINE_VERSION}")
         print(json.dumps(status, indent=2))
         raise SystemExit(0 if status["ready"] else 1)
     elif command == "npu-host-setup":
         from npu import host_setup
-        print("Install the host NPU driver, firmware and matching XRT with its NPU plugin first.")
+        print("Install the host NPU driver and firmware. Halogen 0.19.1+ includes XRT; older images need host XRT with its NPU plugin.")
         print("IOMMU must be enabled. Then install the GPU fabric clock unit:")
         print("\n".join(host_setup(Path(config.dashboard.state_dir))["commands"]))
     else:

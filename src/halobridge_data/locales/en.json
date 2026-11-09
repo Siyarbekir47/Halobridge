@@ -524,7 +524,7 @@
   "npu_title": "NPU models alongside your GPU model",
   "npu_hint": "Requires NPU host setup. Text models need Halogen 0.16.2+, images 0.17.0+, 4B variants 0.17.4+, ASR 0.18.0+, and TTS 0.18.14+. Choose at most one ASR and one TTS model. Large models share memory; alternating them is slower. On 0.18.15+, short requests and guard checks can interleave with long jobs by default. The NPU reserves 4 GiB of host memory; insufficient memory returns 503 (host_memory).",
   "npu_host_setup": "Host setup & diagnostics",
-  "npu_host_hint": "Install the NPU driver, firmware and matching XRT plugin. Enable IOMMU and hold the GPU fabric clock with the host service.",
+  "npu_host_hint": "Install the NPU driver and firmware, enable IOMMU and hold the GPU fabric clock. Halogen 0.19.1+ includes XRT; older images need the host libraries and NPU plugin.",
   "npu_docs": "Upstream setup instructions",
   "npu_select_models": "NPU tasks",
   "npu_profiles": "Backend profiles",
@@ -541,7 +541,7 @@
   "npu_action_host_blocked": "You can download and verify the files now. Activation is blocked by the host prerequisites listed above. Open Host setup & diagnostics to resolve them, then preview again.",
   "npu_action_ready": "Download & activate prepares the files, configures the selected profiles and restarts the active backend after requests finish. Existing verified files are reused.",
   "npu_action_space": "Free disk space before downloading or activating this selection.",
-  "npu_host_admin": "Host drivers, firmware and XRT require administrator setup. Remove disabled IOMMU boot options and reboot before activation.",
+  "npu_host_admin": "Host driver, firmware and boot options require administrator setup. Host XRT is optional on 0.19.1+; complete existing overrides are preserved.",
   "npu_confirm": "Confirm selection & restart",
   "npu_host_ready": "Host is ready for NPU models.",
   "npu_host_blocked": "Host setup needed:",
@@ -557,7 +557,7 @@
   "npu_task_classify": "Moderation with safety labels",
   "npu_task_generate": "Text summaries and short answers; thinking off",
   "npu_disable_note": "Disable NPU models; downloaded files are retained",
-  "npu_custom_note": "Own checkpoints are probed before activation and mounted read-only, so conversion runs at each start. LFM3 VL/Audio/Omni need 0.18.23+; :fast serves <directory>-fast. Supply the whole model folder, including audio_tokenizer/ for speech output. Only matching programs are downloaded. Host XRT must be 2.20+.",
+  "npu_custom_note": "Own checkpoints are probed before activation and mounted read-only, so conversion runs at each start. LFM3 VL/Audio/Omni need 0.18.23+; :fast serves <directory>-fast. Supply the whole model folder, including audio_tokenizer/ for speech output. Only matching programs are downloaded. Halogen 0.19.1+ includes XRT; older images require host XRT 2.20+. OvisOCR3 needs 0.20.0+, without :fast.",
   "profile_npu": "NPU models",
   "deploy_f_npu_models": "NPU model names or /models directories (comma-separated)",
   "deploy_f_npu_queue": "NPU queue capacity (default: 64)",
@@ -654,5 +654,10 @@
   "pg_example_npu_lfm3_transcriptions": "LFM3 Audio/Omni · transcription",
   "pg_example_npu_lfm3_speech": "LFM3 Audio/Omni · text to speech",
   "pg_example_npu_lfm3_voice": "LFM3 Audio/Omni · voice reply",
-  "pg_need_lfm3_media": "Requires Halogen 0.18.23+ and your own activated VL, Audio or Omni checkpoint. Use its exact directory ID (or <directory>-fast). Speech output needs audio_tokenizer/. Voice, language and audio format are editable in Request JSON. Omni video needs at least 4 frames; WAV audio only."
+  "pg_need_lfm3_media": "Requires Halogen 0.18.23+ and your own activated VL, Audio or Omni checkpoint. Use its exact directory ID (or <directory>-fast). Speech output needs audio_tokenizer/. Voice, language and audio format are editable in Request JSON. Omni video needs at least 4 frames; WAV audio only.",
+  "pg_example_npu_ocr": "OvisOCR3 · document to Markdown",
+  "pg_example_completions_benchmark": "Text completions · fixed-length benchmark",
+  "pg_need_ocr": "Requires Halogen 0.20.0+ and your own activated OvisOCR3 checkpoint. One or two page images, no PDF upload. Returns Markdown, HTML tables and LaTeX; dense pages may need over 9,000 tokens. The example allows 16,384. Flash keeps the GPU.",
+  "pg_ocr_files": "Choose one or two page images in order; up to 25 MiB each. PDF files must first be converted to pictures.",
+  "pg_need_ignore_eos": "Requires Halogen 0.19.1+ and the GPU text-completions endpoint. ignore_eos requests exactly max_tokens, including beyond a natural stop. Repeating end-of-text loops can inflate speed; this is a benchmark option, not a real-text speed measurement."
 }

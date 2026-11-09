@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.44 supports Halogen 0.19.0. Install the Halobridge update, then
+Halobridge 0.1.45 supports Halogen 0.20.0. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -35,7 +35,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.19.0 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.20.0 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## Test in the dashboard
@@ -58,8 +58,9 @@ and telemetry. No inference runs on opening the tab or selecting an example.
 Use **Models → NPU models → Own checkpoints** after updating the selected GPU
 profiles. Supply complete local checkpoints under an existing `/models` mount:
 `config.json`, `model.safetensors` and `tokenizer.json`; d1-2B additionally needs
-`calibration.json`. Host setup/XRT is required to probe the architecture before
-previewing custom programs; XRT must be 2.20 or newer. Ordinary built-in model
+`calibration.json`. Host setup is required to probe the architecture before
+previewing custom programs. Halogen 0.19.1+ includes XRT; older images require
+host XRT 2.20+ with its NPU plugin. Ordinary built-in model
 downloads can still be prepared before host setup.
 
 | Selection | Served ID | Use |
@@ -165,7 +166,58 @@ and Responses expose verdicts through engine logs and `/metrics`, including
 and `halogen:agent_guard_calls_held_total`. Raw bodies and SSE chunks pass through.
 
 This is opt-in preview behavior, not a security boundary. It was measured on
-office tasks, not coding-agent attacks. Consult the [upstream guard guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.19.0/docs/agent-guard.md).
+office tasks, not coding-agent attacks. Consult the [upstream guard guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/agent-guard.md).
+
+### OvisOCR3 document parsing (0.20.0)
+
+Supply the complete `ATH-MaaS/OvisOCR3` checkpoint under a profile's models
+mount, then enter `/models/OvisOCR3` in Own checkpoints. It needs the standard
+`config.json`, `model.safetensors` and `tokenizer.json`; keep the processor files
+from the model folder too. `:fast` is not supported. Setup probes its architecture
+and prepares only the pinned `ovisocr3/devices/` and `ovisocr3/vis/` programs.
+Weights remain user-supplied under Apache 2.0. All previous NPU assets are reused.
+
+Use **API Playground -> OvisOCR3 document to Markdown**. Upload one or two page
+images in order (up to 25 MiB each); PDF pages must first be rendered to images.
+The example sends `max_tokens: 16384`, `temperature: 0` and thinking off. Dense
+pages may need more than 9,000 output tokens. The model returns Markdown, HTML
+for tables and LaTeX for formulas. Native requests support Chat Completions,
+Messages and Responses, streaming included. Get its exact ID from `/v1/models`.
+Text/images only, without video or audio.
+
+The GPU remains on Flash. Under heavy NPU generation, Flash weights can be
+paged out; `HALOGEN_WEIGHTS_LOCK=1` keeps them resident when sufficient memory
+is available. This flag is already exposed in the profile editor. There is no
+automatic context/slot or weight-lock change during the engine update.
+
+### Container XRT and fixed-length runs (0.19.1+)
+
+New profiles use image XRT 2.25.37 on Halogen 0.19.1+. Host driver, firmware,
+IOMMU and fabric-clock checks still apply. Existing complete host-XRT overrides
+are retained; a partial override is rejected before downloads or activation.
+Per-file distro overrides include `/opt/xilinx/lib/x86_64-linux-gnu/` aliases
+for XRT 2.25+. Remove every XRT mount row in the profile editor, preview/apply
+and restart to switch an existing profile to image XRT. Older images still
+require host XRT. `halobridge npu-check --image ghcr.io/peonist-ai/halogen-flash-server:0.19.0`
+checks that older requirement explicitly; the bare command checks the current
+template version. NPU Setup checks the selected profiles' actual image versions.
+
+Raw `POST /v1/completions` accepts `ignore_eos: true` for exactly `max_tokens`
+output tokens. The **fixed-length benchmark** Playground example sets it with
+temperature zero. Chat, Messages and Responses keep their normal stop behavior.
+After a natural end, repeating loops can inflate throughput; this option does
+not measure real-text speed by itself. Bodies and errors pass through unchanged.
+
+The 0.20.0 image catalog omits revisions for Spotter and OvisOCR3. For that exact
+catalog SHA-256, verified pins are `827eb67e9631fae618ed66b1b4d1b8ba74be8fca` and
+`588f22c6909e7c69d440072d96bb0d646f4f1998` respectively. All 20 OCR program file
+sizes/digests match the Ovis revision. Changed incomplete catalogs remain rejected.
+The 0.19.1 catalog is byte-identical to 0.19.0.
+
+ROCm 10.1 and the 0.20.0 prompt kernels can change greedy replies in the last
+bits. GPU checkpoints are unchanged. Malformed strict-tool schemas retain their
+native 400 response. The bridge adds no schema rewriting or estimated generation
+measurements.
 
 ## Model metadata and benchmark discovery
 
@@ -222,7 +274,7 @@ shapes receive an upstream 422 response.
 
 Enable `flux2-klein-4b`. Its verified files need about **7.5 GiB on disk** and
 the loaded model needs about **8 GB of host memory**, alongside the GPU model.
-It requires the same NPU driver, firmware, XRT and held fabric clock as the
+It requires the same NPU driver, firmware, IOMMU and held fabric clock as the
 other NPU tasks.
 
 ```bash
@@ -252,7 +304,7 @@ request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.19.0 and select **one** ASR model in
+Update the target GPU profiles to 0.20.0 and select **one** ASR model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -338,7 +390,7 @@ curl --fail-with-body -sS localhost:8731/v1/embeddings \
 
 EmbeddingGemma image inputs use `image_url` parts with inline base64, and audio
 inputs use `input_audio` parts with `data` and `format:"wav"`; see the
-[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.19.0/docs/NPU.md).
+[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/NPU.md).
 
 ### Image edits and variations
 
@@ -669,7 +721,7 @@ GPU checkpoints remain unchanged from 0.16.2 through 0.18.22. Prompt-cache fixes
 
 ### Tool compatibility and vision discovery (0.18.18)
 
-Update profiles directly to 0.19.0 in **System → Engine updates**. The
+Update profiles directly to 0.20.0 in **System → Engine updates**. The
 0.18.17/0.18.18 fixes use the existing endpoints: kept conversations remain
 isolated in a full KV pool, automatic keeps no longer wait on themselves, and
 short prompts stay responsive beside long ones despite metrics reads or paused
@@ -804,5 +856,5 @@ curl --fail-with-body -sS localhost:8731/metrics \
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.19.0/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.19.0/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/CHANGELOG.md).

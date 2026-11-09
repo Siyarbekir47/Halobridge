@@ -1131,6 +1131,8 @@ async function refreshNpu() {
   try {
     npuData = await deployRequest('/dashboard/api/deploy/npu');
     const selectedProfile = $('npuProfiles').value;
+    const targetHost = (npuData.profiles || []).find(p => p.id === selectedProfile)?.host;
+    if (targetHost) Object.assign(npuData, targetHost);
     const checked = new Set([...$('npuModelChoices').querySelectorAll('input:checked')].map(el => el.value));
     if (!npuDirty) {
       checked.clear();
