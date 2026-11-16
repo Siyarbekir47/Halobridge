@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.45 supports Halogen 0.20.0. Install the Halobridge update, then
+Halobridge 0.1.46 supports Halogen 0.20.5. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -35,7 +35,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.20.0 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.20.5 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## Test in the dashboard
@@ -145,12 +145,14 @@ input, not `question`. Halobridge forwards these bodies without rewriting them.
 ### Agent guard preview (0.19.0)
 
 In **Models → NPU setup**, choose `watch` or `hold`, preview downloads and
-apply. This prepares `halogen-spotter-0.6b` and `decider-4b` in shared storage
-before restarting, including when no other NPU model is selected. `off`
+apply. This prepares `halogen-spotter-0.6b` in shared storage; `hold` and
+`watch` on engines older than 0.20.5 also prepare `decider-4b`. Preparation
+finishes before restarting, including when no other NPU model is selected. `off`
 disables guard behavior; other selected NPU models stay available. The profile
 editor also exposes `HALOGEN_AGENT_GUARD`, but new dependencies must be prepared
-through NPU Setup before restarting. The engine updater and rollback include
-both implicit guard models. Startup never enables automatic model downloads.
+through NPU Setup before restarting. The engine updater uses the target engine's
+guard dependencies, and rollback validates the previous version's dependencies.
+Explicit decider selections remain enabled. Startup never enables automatic downloads.
 
 The 0.19.0 image catalog leaves Spotter's revision blank. For that exact catalog
 SHA-256, Halobridge pins HF commit `827eb67e9631fae618ed66b1b4d1b8ba74be8fca`,
@@ -166,7 +168,7 @@ and Responses expose verdicts through engine logs and `/metrics`, including
 and `halogen:agent_guard_calls_held_total`. Raw bodies and SSE chunks pass through.
 
 This is opt-in preview behavior, not a security boundary. It was measured on
-office tasks, not coding-agent attacks. Consult the [upstream guard guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/agent-guard.md).
+office tasks, not coding-agent attacks. Consult the [upstream guard guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/docs/agent-guard.md).
 
 ### OvisOCR3 document parsing (0.20.0)
 
@@ -192,7 +194,7 @@ automatic context/slot or weight-lock change during the engine update.
 
 ### Container XRT and fixed-length runs (0.19.1+)
 
-New profiles use image XRT 2.25.37 on Halogen 0.19.1+. Host driver, firmware,
+New profiles use image XRT (2.25.37 on 0.19.1–0.20.4; 2.27 on 0.20.5+). Host driver, firmware,
 IOMMU and fabric-clock checks still apply. Existing complete host-XRT overrides
 are retained; a partial override is rejected before downloads or activation.
 Per-file distro overrides include `/opt/xilinx/lib/x86_64-linux-gnu/` aliases
@@ -218,6 +220,52 @@ ROCm 10.1 and the 0.20.0 prompt kernels can change greedy replies in the last
 bits. GPU checkpoints are unchanged. Malformed strict-tool schemas retain their
 native 400 response. The bridge adds no schema rewriting or estimated generation
 measurements.
+
+### Halogen 0.20.1–0.20.5
+
+Update installed profiles through **System → Engine updates**. GPU checkpoints,
+context limits and slots stay unchanged. The updater prepares the image's new
+LFM3/d3 programs in a versioned shared tree before stopping the active backend,
+retaining the old tree and image catalog for rollback. LFM3 converted weights
+from earlier releases require conversion again. Image XRT is now 2.27; existing
+complete host overrides are retained until removed explicitly.
+
+0.20.1 automatically caches reply ends in ordinary RAM (about 112 MiB per entry,
+one extra entry per slot). `HALOGEN_FORK_MAP=auto` and
+`HALOGEN_FORK_AUTO_KEEPS` are accepted but ignored; keep existing values only for
+older profiles. Named `X-Halogen-Keep` / `X-Halogen-From` and
+`HALOGEN_FORK_MAP=claude-code` with `HALOGEN_FORK=1` remain supported.
+After upgrading to 0.20.5, earlier disk prompt caches rebuild on first use.
+Managed cache cleanup still applies at the configured disk-pressure threshold.
+
+New profile-editor settings (0.20.5+), all optional:
+
+| Setting | Purpose |
+| --- | --- |
+| `HALOGEN_DN_STATE=fp32` | Restore the previous state precision; empty uses the faster default. Changing precision rebuilds disk prompt caches. |
+| `HALOGEN_TOKENIZER_NATIVE=0` | Restore legacy tokenization; default 1 correctly handles Hindi, Thai and combining-mark scripts. |
+| `HALOGEN_NPU_KILL_S=1800` | Restart a stalled NPU job after 30 minutes; 0 disables it. GPU requests keep serving; waiting NPU requests receive 503. A process stuck inside the kernel driver is not killed. |
+| `HALOGEN_SERVE_TRACE=1` | Enable detailed server diagnostics, including `dn swap` and `decode prefetch` lines. |
+
+`watch` now needs Spotter only (under 1 GB); `hold` also needs decider-4b
+(up to about 6.4 GB). No automatic guard activation or user-setting rewrite occurs.
+
+The existing APIs gain these engine fixes without client-side setup:
+
+- `/v1/messages`: Claude Code's system `tool_addition` / `tool_removal` blocks
+  and late MCP tool definitions pass through unchanged.
+- `/v1/chat/completions`: `response_format.json_schema` accepts up to 32
+  tool-shaped `anyOf` branches. Existing schemas and native validation stay intact.
+- Chat, Messages and Responses honor `tool_choice: "none"` after earlier calls.
+- `usage.completion_tokens_details.reasoning_closed_by` may report
+  `end_of_turn_in_reasoning`; this metadata passes through, without estimating
+  missing reasoning tokens or generation timing.
+- Known Halogen models that are not loaded return the engine's error when routed
+  there. External Claude client names still target the active GPU on Messages;
+  declared NPU models unavailable during activation remain a retryable 503.
+
+See the [0.20.5 changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/CHANGELOG.md)
+and [profile flags](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/docs/FLAGS.md).
 
 ## Model metadata and benchmark discovery
 
@@ -304,7 +352,7 @@ request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.20.0 and select **one** ASR model in
+Update the target GPU profiles to 0.20.5 and select **one** ASR model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -390,7 +438,7 @@ curl --fail-with-body -sS localhost:8731/v1/embeddings \
 
 EmbeddingGemma image inputs use `image_url` parts with inline base64, and audio
 inputs use `input_audio` parts with `data` and `format:"wav"`; see the
-[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/NPU.md).
+[pinned NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/docs/NPU.md).
 
 ### Image edits and variations
 
@@ -430,7 +478,8 @@ curl --fail-with-body -N -sS localhost:8731/v1/chat/completions \
 
 `HALOGEN_KV8=1` is an opt-in memory saving mode with small numerical differences;
 it cannot be combined with `HALOGEN_COMPOSABLE_CONTEXT=1`. The profile editor
-also exposes `HALOGEN_FORK_MAP=auto`, `HALOGEN_FORK_AUTO_KEEPS`, template selection,
+also preserves the legacy `HALOGEN_FORK_MAP=auto` and `HALOGEN_FORK_AUTO_KEEPS`
+settings (ignored since 0.20.1), alongside template selection,
 GPU selection, cache-prefix reuse, drafting thresholds/grouping and access logs.
 Existing context and slots are preserved. Empty values retain upstream defaults.
 
@@ -721,7 +770,7 @@ GPU checkpoints remain unchanged from 0.16.2 through 0.18.22. Prompt-cache fixes
 
 ### Tool compatibility and vision discovery (0.18.18)
 
-Update profiles directly to 0.20.0 in **System → Engine updates**. The
+Update profiles directly to 0.20.5 in **System → Engine updates**. The
 0.18.17/0.18.18 fixes use the existing endpoints: kept conversations remain
 isolated in a full KV pool, automatic keeps no longer wait on themselves, and
 short prompts stay responsive beside long ones despite metrics reads or paused
@@ -780,7 +829,7 @@ resume points, not concurrent slots; changing them does not change `HALOGEN_KV_S
 Use **System → Engine updates** to update installed profiles. 0.18.16 fixes
 kept replies being mixed when conversations move in the KV pool and turns off
 0.18.15's automatic reply-end keeps after reports of long stalls. Empty
-`HALOGEN_FORK_MAP` is off again; an explicitly configured `auto` stays on.
+`HALOGEN_FORK_MAP` is off again; an explicitly configured `auto` stays on through 0.20.0.
 The editor accepts `claude-code,auto` to enable both maps with
 `HALOGEN_FORK=1`. Existing settings, checkpoints and shared files are retained.
 The 0.18.16 NPU catalog is identical to 0.18.14, so verified files are reused.
@@ -856,5 +905,5 @@ curl --fail-with-body -sS localhost:8731/metrics \
 
 Existing embeddings, reranking, moderation, decision and NPU text-generation
 examples remain in the [README](../README.md#api-examples). For exact request
-limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/NPU.md)
-and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/CHANGELOG.md).
+limits and upstream behavior, see the pinned [NPU guide](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/docs/NPU.md)
+and [changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/CHANGELOG.md).

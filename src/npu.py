@@ -50,6 +50,13 @@ CATALOG_REVISION_PINS = {"351ab0519d16d4d5442562246b49df34635ec656fe2970c952cd2e
                          "ffb92f3e407af1613b6b5e3f683e39e2a5df46608286901327128a8339bb8ffe":
                          {"halogen-spotter-0.6b": "827eb67e9631fae618ed66b1b4d1b8ba74be8fca",
                           "ovisocr3": "588f22c6909e7c69d440072d96bb0d646f4f1998"}}
+# Only d3/LFM3 programs changed in these catalogs; the two unpinned model
+# records are byte-identical to the verified 0.20.0 records.
+for _key in ("ffd15d40a6d990ddaa94a13918a0ab56a4d151d769aea4dc8cc1fe206de6a172",
+             "2bd3520c95285159cae4d5007548fa62a986de76df201a92a07672a01307412f",
+             "004923db1eb4703ad720322ff520ed2aea3aadcd4968fef814facf4d050ca81d"):
+    CATALOG_REVISION_PINS[_key] = dict(CATALOG_REVISION_PINS[
+        "ffb92f3e407af1613b6b5e3f683e39e2a5df46608286901327128a8339bb8ffe"])
 MODEL_MIN_VERSION = {"halogen-spotter-0.6b": (0, 19, 0), "flux2-klein-4b": (0, 17, 0),
                      "decider-4b": (0, 17, 4), "qwen3-embedding-4b": (0, 17, 4),
                      "qwen3-reranker-4b": (0, 17, 4),
@@ -66,8 +73,8 @@ MODEL_MIN_VERSION = {"halogen-spotter-0.6b": (0, 19, 0), "flux2-klein-4b": (0, 1
 # use separate bundles (SHA-256 51a5a669... / 97557b92..., tested in full).
 # Only explicitly verified versions share a bundle; later images are read locally.
 # The 0.18.12 and 0.18.13 bundles are distinct models.txt files from their GHCR images.
-BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0", "0.18.16": "0.18.14", "0.18.18": "0.18.14", "0.18.19": "0.18.14", "0.18.20": "0.18.14", "0.19.1": "0.19.0"}
-BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13", "0.18.14", "0.18.21", "0.18.22", "0.18.23", "0.19.0", "0.20.0"} | set(BUNDLED_CATALOG_ALIASES)
+BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0", "0.18.16": "0.18.14", "0.18.18": "0.18.14", "0.18.19": "0.18.14", "0.18.20": "0.18.14", "0.19.1": "0.19.0", "0.20.1": "0.20.0", "0.20.4": "0.20.3"}
+BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13", "0.18.14", "0.18.21", "0.18.22", "0.18.23", "0.19.0", "0.20.0", "0.20.2", "0.20.3", "0.20.5"} | set(BUNDLED_CATALOG_ALIASES)
 TASK_ROUTES = {
     "decision": "/v1/chat/completions", "generate": "/v1/chat/completions",
     "embedding": "/v1/embeddings", "score": "/v1/rerank",
@@ -82,7 +89,7 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 PATH_RE = re.compile(r"^/models/[A-Za-z0-9_./-]+$")
 REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 XRT_LIBS = ("libxrt_coreutil.so.2", "libxrt_core.so.2", "libxrt_driver_xdna.so.2")
-DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/NPU.md"
+DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/docs/NPU.md"
 
 
 def custom_model_path(value: str) -> str:
@@ -134,7 +141,10 @@ def profile_models(profile, value=None, guard=None) -> list[str]:
     models = parse_models(value) if value else []
     guard = profile.env.get("HALOGEN_AGENT_GUARD", "off") if guard is None else guard
     if guard in {"watch", "hold"}:
-        models = list(dict.fromkeys([*models, *AGENT_GUARD_MODELS]))
+        from semver import version_tuple
+        modern_watch = guard == "watch" and (version_tuple(profile.image.rsplit(":", 1)[-1]) or ()) >= (0, 20, 5)
+        dependencies = AGENT_GUARD_MODELS[:1] if modern_watch else AGENT_GUARD_MODELS
+        models = list(dict.fromkeys([*models, *dependencies]))
     return models
 
 

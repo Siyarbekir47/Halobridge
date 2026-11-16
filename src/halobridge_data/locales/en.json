@@ -606,7 +606,7 @@
   "deploy_f_strict_tools": "Strict tool schemas on 0.18.2+ (0 off / 1 on)",
   "deploy_f_client_markers": "Client chat markers on 0.18.2+ (empty = text)",
   "deploy_f_qsa_sel": "Old GPU firmware workaround (empty = automatic)",
-  "deploy_f_fork_map": "Session mapping (also supports claude-code,auto; requires sessions; unset is off since 0.18.16)",
+  "deploy_f_fork_map": "Session mapping (claude-code requires sessions; auto ignored since 0.20.1)",
   "deploy_f_chat_template": "Chat template path (0.18.6+)",
   "deploy_f_template_check": "Template reuse check (warn/off)",
   "deploy_f_gpu_device": "GPU device index (empty = automatic)",
@@ -633,7 +633,7 @@
   "deploy_f_guard_flag": "Unsafe probability threshold (default: 0.8)",
   "deploy_f_guard_lag": "Guard backlog in characters (default: 4096)",
   "deploy_f_guard_final": "Final guard verdict wait (seconds; default: 3)",
-  "deploy_f_auto_keeps": "Automatically kept reply states (default: 4)",
+  "deploy_f_auto_keeps": "Legacy automatic reply keeps (ignored since 0.20.1)",
   "npu_model_embeddinggemma-2": "Text, image and WAV audio embeddings; 0.18.3+",
   "npu_model_wemm-embedding-4b": "Text and image embeddings; shares decider-4b programs; 0.18.3+",
   "npu_model_d3-lite": "Decision 3.0; text and one image; up to 255 choices; 0.18.11+",
@@ -643,7 +643,7 @@
   "npu_guard_off": "Off",
   "npu_guard_watch": "Watch · report only",
   "npu_guard_hold": "Hold · screen tool calls",
-  "npu_guard_note": "Opt-in NPU preview, not a security boundary. Prepares Spotter and decider-4b; up to about 6.4 GB host memory. Coding-agent attacks have not been measured.",
+  "npu_guard_note": "Opt-in NPU preview, not a security boundary. On 0.20.5+, watch prepares Spotter only (under 1 GB); hold also needs decider-4b (up to about 6.4 GB). Older watch loads both. Coding-agent attacks have not been measured.",
   "deploy_f_agent_guard": "Agent guard preview (0.19.0+; off / watch / hold; prepare through NPU Setup)",
   "npu_model_halogen-spotter-0.6b": "Tool-result screening for the agent guard preview · 0.19.0+",
   "pg_example_agent_guard": "Agent guard · inspect a tool result",
@@ -659,5 +659,9 @@
   "pg_example_completions_benchmark": "Text completions · fixed-length benchmark",
   "pg_need_ocr": "Requires Halogen 0.20.0+ and your own activated OvisOCR3 checkpoint. One or two page images, no PDF upload. Returns Markdown, HTML tables and LaTeX; dense pages may need over 9,000 tokens. The example allows 16,384. Flash keeps the GPU.",
   "pg_ocr_files": "Choose one or two page images in order; up to 25 MiB each. PDF files must first be converted to pictures.",
-  "pg_need_ignore_eos": "Requires Halogen 0.19.1+ and the GPU text-completions endpoint. ignore_eos requests exactly max_tokens, including beyond a natural stop. Repeating end-of-text loops can inflate speed; this is a benchmark option, not a real-text speed measurement."
+  "pg_need_ignore_eos": "Requires Halogen 0.19.1+ and the GPU text-completions endpoint. ignore_eos requests exactly max_tokens, including beyond a natural stop. Repeating end-of-text loops can inflate speed; this is a benchmark option, not a real-text speed measurement.",
+  "deploy_f_dn_state": "Saved conversation precision (0.20.5+; empty: engine default; fp32: previous behavior)",
+  "deploy_f_tokenizer_native": "Native checkpoint tokenizer (0.20.5+; default: 1; 0: legacy tokenization)",
+  "deploy_f_npu_kill": "Stalled NPU job recovery in seconds (0.20.5+; default: 1800; 0: off)",
+  "deploy_f_serve_trace": "Detailed server diagnostics (0.20.5+; default: 0)"
 }

@@ -893,7 +893,6 @@ class ContainerUpdater:
                    for name, value in configurations.items() if b"HALOGEN_NPU_MODELS=" in value["content"]
                    or b"HALOGEN_AGENT_GUARD=" in value["content"]]
         enabled = [profile for profile in enabled if profile_models(profile)]
-        profiles = enabled
         if not enabled:
             return {}
         state = host_status(image=image)
@@ -903,6 +902,11 @@ class ContainerUpdater:
         # later offline starts can validate legacy NPU volumes too.
         for previous in dict.fromkeys(profile.image for profile in enabled):
             await self.npu_assets.manifest(previous, self._run, refresh=True)
+        # Guard dependencies are determined by the target engine, while the
+        # previous image record above remains available for rollback.
+        from dataclasses import replace
+        enabled = [replace(profile, image=image) for profile in enabled]
+        profiles = enabled
         manifest = await self.npu_assets.manifest(image, self._run, refresh=True)
         wanted = list(dict.fromkeys(model for profile in enabled
                      for model in profile_models(profile)))
