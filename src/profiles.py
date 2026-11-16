@@ -45,6 +45,8 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_CHECKPOINT": FieldSpec("path"),
     "HALOGEN_NGRAM_TABLE": FieldSpec("path"),
     "HALOGEN_WEIGHTS_LOCK": FieldSpec("flag"),
+    "HALOGEN_DN_STATE": FieldSpec("enum", choices=("fp32",)),
+    "HALOGEN_TOKENIZER_NATIVE": FieldSpec("flag"),
     "HALOGEN_TOKENIZER": FieldSpec("path"),
     "HALOGEN_VISION_TOWER": FieldSpec("text"),
     "HALOGEN_MTP_HEAD": FieldSpec("path"),
@@ -56,6 +58,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_NPU_VERIFY": FieldSpec("flag"),
     "HALOGEN_NPU_PORT": FieldSpec("int", 1024, 65535),
     "HALOGEN_NPU_STALL_S": FieldSpec("float", 0, 86400),
+    "HALOGEN_NPU_KILL_S": FieldSpec("int", 0, 86400),
     "HALOGEN_NPU_RESTARTS": FieldSpec("int", 0, 65536),
     "HALOGEN_NPU_SPLICE": FieldSpec("flag"),
     "HALOGEN_NPU_HOST_FLOOR_GIB": FieldSpec("float", 0, 4096),
@@ -115,6 +118,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_CACHE_LEAD": FieldSpec("flag"),
     "HALOGEN_SPEC_GROUP": FieldSpec("int", 0, 4),
     "HALOGEN_ACCESS_LOG": FieldSpec("enum", choices=("quiet", "all", "off")),
+    "HALOGEN_SERVE_TRACE": FieldSpec("flag"),
     "HALOGEN_FORK_AUTO_KEEPS": FieldSpec("int", 0, 65536),
     "HALOGEN_GUARD_STREAMS": FieldSpec("int", 1, 65536),
     "HALOGEN_GUARD_FLAG": FieldSpec("float", 0, 1),
@@ -167,6 +171,8 @@ ENV_FIELDS: dict[str, FieldSpec] = {
 }
 
 FEATURE_MIN_VERSION = {
+    **{key: (0, 20, 5) for key in ("HALOGEN_DN_STATE", "HALOGEN_TOKENIZER_NATIVE",
+                                  "HALOGEN_NPU_KILL_S", "HALOGEN_SERVE_TRACE")},
     "HALOGEN_AGENT_GUARD": (0, 19, 0),
     "HALOGEN_CACHE_BRANCHES": (0, 13, 3),
     "HALOGEN_TOOL_DEFER": (0, 18, 18),
@@ -267,7 +273,10 @@ def validate_profile(profile: Profile) -> list[str]:
     if profile.env.get("HALOGEN_API_KEY") and profile.env.get("HALOGEN_API_KEY_FILE"):
         errors.append("env: set API_KEY or API_KEY_FILE, not both")
     maps = profile.env.get("HALOGEN_FORK_MAP", "").split(",")
-    if any(name in {"claude-code", "auto"} for name in maps) and profile.env.get("HALOGEN_FORK") != "1":
+    active_maps = set(maps)
+    if (version_tuple(profile.image.rsplit(":", 1)[-1]) or ()) >= (0, 20, 1):
+        active_maps.discard("auto")  # Accepted but ignored by modern engines.
+    if active_maps & {"claude-code", "auto"} and profile.env.get("HALOGEN_FORK") != "1":
         errors.append("env HALOGEN_FORK_MAP: requires HALOGEN_FORK=1")
     if "auto" in maps and (version_tuple(profile.image.rsplit(":", 1)[-1]) or ()) < (0, 18, 3):
         errors.append("env HALOGEN_FORK_MAP=auto: requires Halogen 0.18.3 or newer")
@@ -481,7 +490,7 @@ def profile_to_dict(profile: Profile) -> dict:
 
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
-DEFAULT_ENGINE_VERSION = "0.20.0"
+DEFAULT_ENGINE_VERSION = "0.20.5"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"

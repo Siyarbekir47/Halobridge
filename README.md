@@ -396,7 +396,7 @@ config, processor files, conversion manifest and license live in
 plus the installer's 5 GiB free-space reserve. Repeated setup reuses verified
 files and preserves runtime changes.
 
-New CYBER-FROST templates use **Halogen 0.20.0** (minimum 0.17.5), **262144 context/KV pool**,
+New CYBER-FROST templates use **Halogen 0.20.5** (minimum 0.17.5), **262144 context/KV pool**,
 **two slots**, and the same generation defaults as Swift Abliterated. Its model
 card only exercised 32768 context and one slot; the larger configuration still
 needs a smoke test on the target host. No NPU models are enabled by default.
@@ -640,7 +640,30 @@ storage. Requests use the normal router and history; selecting another GPU profi
 can trigger a model switch. NPU models must first be installed and activated in
 **Models**. See [endpoint examples and prerequisites](docs/API.md).
 
-## Halogen 0.20.0 support
+## Halogen 0.20.5 support
+
+Halobridge 0.1.46 supports Halogen 0.20.5. Update installed backends in
+**System → Engine updates**. The engine improves concurrent decoding, cached
+follow-ups, LFM3 prompt reading/generation and d3 decisions, and fixes Claude
+Code's mid-session tool changes and structured output with up to 32 `anyOf`
+branches. Existing endpoints work as before; no GPU checkpoint download is needed.
+
+NPU programs for LFM3 and d3 are prepared and verified before restarting; older
+files remain available for rollback. On 0.20.5+, guard `watch` prepares only
+Spotter (under 1 GB), while `hold` also needs decider-4b (up to about 6.4 GB).
+An explicitly selected decider stays enabled. Image XRT is now 2.27; complete
+host overrides remain supported.
+
+The profile editor exposes `HALOGEN_DN_STATE=fp32` for the previous saved-state
+precision, `HALOGEN_TOKENIZER_NATIVE=0` for legacy tokenization,
+`HALOGEN_NPU_KILL_S` (default 1800, 0 disables stalled-job recovery), and
+`HALOGEN_SERVE_TRACE=1` for detailed diagnostics. Leave fields empty for engine
+defaults. Since 0.20.1, automatic reply-end caching replaces `FORK_MAP=auto`;
+existing auto settings are preserved but ignored. Named keeps and `claude-code`
+mapping still work. Earlier disk prompt caches rebuild after the engine update;
+context limits and slot counts are preserved. See [upgrade details](docs/API.md#halogen-02010205).
+
+### Features introduced in 0.20.0
 
 New: **OvisOCR3 document parsing** on the NPU, with your own `ATH-MaaS/OvisOCR3`
 checkpoint under `/models/OvisOCR3`. NPU Setup prepares verified text/vision
@@ -665,8 +688,9 @@ transcription and spoken-reply examples. Flash checkpoints are unchanged.
 
 **Models → NPU setup → Agent guard** enables the optional 0.19.0 preview:
 `watch` reports tool-result verdicts; `hold` can withhold side-effecting calls.
-It defaults to off, prepares Spotter plus decider-4b before restarting, and can
-use up to about 6.4 GB of host memory. It is not a security boundary, and coding
+It defaults to off and prepares the required models before restarting: Spotter
+for watch on 0.20.5+, both models for hold or older watch. Hold can use up to
+about 6.4 GB of host memory. It is not a security boundary, and coding
 agents have not been measured. See [guard setup and API behavior](docs/API.md#agent-guard-preview-0190).
 
 
@@ -685,7 +709,7 @@ Read-only mounts convert into the container at each start. Examples for chat,
 raw text, d1 decisions, boxes, video frames and structured vision are in **API
 Playground** and [the API guide](docs/API.md#liquid-npu-checkpoints-0182101822).
 
-New templates use Halogen 0.20.0. Existing profiles keep their settings until
+New templates use Halogen 0.20.5. Existing profiles keep their settings until
 you update their engine in **System → Engine updates**. Flash checkpoints,
 context limits and slot counts are unchanged. NPU file updates use the selected
 image's verified catalog; shared files are reused. The 0.18.18 catalog was
@@ -693,11 +717,12 @@ verified byte-for-byte against 0.18.14 and 0.18.16, so upgrading reuses those NP
 For other catalog changes, Halobridge downloads and verifies the selected
 models before restarting, retaining the previous files for rollback.
 
-Update directly to 0.20.0. Since 0.18.16, further fixes protect kept
+Update directly to 0.20.5. Since 0.18.16, further fixes protect kept
 conversations when the KV pool is full, remove long waits on automatic keeps
 and keep short requests responsive during long prompts even while metrics are
-scraped or another reply is paused. Automatic reply-end keeps remain off by
-default; explicit `claude-code,auto` mapping is preserved.
+scraped or another reply is paused. Automatic named reply-end keeps are retired
+on 0.20.1+: ordinary RAM prompt caching replaces them. Explicit mapping values
+are preserved; `claude-code` remains active and `auto` is ignored.
 
 Claude Code's MCP tool search now works without rejecting tool references or
 invalidating the previous prompt cache when tools load. The profile editor
@@ -812,8 +837,8 @@ The profile editor also exposes session limits, request records, backend API key
 
 Halobridge supports the new NPU image and System One routes, priority admission,
 and the engine's new cache, schema and decode settings. Update Halobridge, then
-use **System → Engine updates** to update the backend profiles to **0.20.0**.
-New Official, Orca, Swift and CYBER-FROST templates use 0.20.0; existing settings and engine versions are preserved during model repair.
+use **System → Engine updates** to update the backend profiles to **0.20.5**.
+New Official, Orca, Swift and CYBER-FROST templates use 0.20.5; existing settings and engine versions are preserved during model repair.
 
 The GPU checkpoints are unchanged from 0.16.2. The engine update brings faster
 decode and long-prompt processing, speculative decoding for two conversations,
@@ -824,11 +849,11 @@ Leave `HALOGEN_MTP_DEPTH` empty for the engine's adaptive depth; an explicit
 value continues to fix the depth.
 
 See the [endpoint guide](docs/API.md) for use cases, prerequisites and runnable
-examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/CHANGELOG.md)
+examples, and the [upstream changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/CHANGELOG.md)
 for the engine changes. The upstream Compose recipe is an alternative deployment;
 Halobridge's managed setup continues to use Podman Quadlets.
 
-## NPU models with Halogen 0.20.0
+## NPU models with Halogen 0.20.5
 
 The GPU model and the selected NPU models run together behind Halobridge's
 existing port. Requests select an NPU model by its `model` ID; they do not
@@ -851,9 +876,9 @@ loaded by the currently active backend.
 
 ### Host preparation
 
-1. Update the selected backend profiles to **Halogen 0.20.0** using
+1. Update the selected backend profiles to **Halogen 0.20.5** using
    the dashboard's engine updater. Your GPU checkpoint remains selected.
-2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/NPU.md#host)
+2. Follow [upstream NPU host instructions](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/docs/NPU.md#host)
    for the Linux `amdxdna` driver and firmware. XRT and its NPU plugin are included in Halogen 0.19.1+; older images need host XRT 2.20+. The service
    user needs access to `/dev/accel/accel0`. Enable IOMMU; `amd_iommu=off` and
    `iommu=off` are incompatible, while `iommu=pt` is supported.
@@ -1010,7 +1035,7 @@ moderation accept up to 4096. The decision limit is 4096 on earlier engines. `qw
 option without sampling. Moderation reports labels and probabilities rather
 than meaningful OpenAI category scores. NPU and GPU work share the chip's
 memory bandwidth and power budget. See the
-[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.0/docs/NPU.md)
+[NPU API and limits](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/docs/NPU.md)
 for supported request options.
 
 ### Own NPU fine-tunes and advanced flags

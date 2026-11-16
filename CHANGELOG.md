@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.46
+
+- Support Halogen 0.20.5 and refreshed LFM3/d3 NPU programs.
+- Prepare only Spotter for watch mode on 0.20.5+.
+- Expose tokenizer, state precision, NPU recovery and trace settings.
+- Preserve Claude tool changes, structured output and native usage metadata.
+
 ## 0.1.45
 
 - Support Halogen 0.20.0 and verified OvisOCR3 programs.

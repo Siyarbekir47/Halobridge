@@ -905,6 +905,7 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_NPU_EMB_BATCH', 'select:0,1', 'deploy_f_npu_batch'],
   ['HALOGEN_NPU_VERIFY', 'select:0,1', 'deploy_f_npu_verify'],
   ['HALOGEN_NPU_STALL_S', 'number', 'deploy_f_npu_stall'],
+  ['HALOGEN_NPU_KILL_S', 'number', 'deploy_f_npu_kill'],
   ['HALOGEN_NPU_RESTARTS', 'number', 'deploy_f_npu_restarts'],
   ['HALOGEN_NPU_SPLICE', 'select:0,1', 'deploy_f_npu_splice'],
   ['HALOGEN_NPU_HOST_FLOOR_GIB', 'number', 'deploy_f_npu_host_floor'],
@@ -918,6 +919,9 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_GUARD_FINAL_S', 'number', 'deploy_f_guard_final'],
 ];
 const ENGINE_ENV_FIELDS = [
+  ['HALOGEN_DN_STATE', 'select:fp32', 'deploy_f_dn_state'],
+  ['HALOGEN_TOKENIZER_NATIVE', 'select:0,1', 'deploy_f_tokenizer_native'],
+  ['HALOGEN_SERVE_TRACE', 'select:0,1', 'deploy_f_serve_trace'],
   ['HALOGEN_CACHE_EVICT', 'select:0,1', 'deploy_f_cache_evict'],
   ['HALOGEN_CACHE_BRANCHES', 'number', 'deploy_f_cache_branches'],
   ['HALOGEN_MTP', 'select:0,1', 'deploy_f_mtp'],

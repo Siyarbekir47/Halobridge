@@ -396,6 +396,8 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.hold, self.entered = asyncio.Event(), asyncio.Event()
         self.backend_entries = [{"id": "halogen-swift15"}] + [{"id": name, "task": {"classify": "moderation", "speak": "speech"}.get(task, task)} for name, task in NPU_MODELS.items()] + [{"id": "unexpected"}]
         self.headers = []
+        self.raw_bodies = []
+        self.response_status = 200
         async def backend(request):
             if request.path == "/v1/models":
                 return web.json_response({"data": self.backend_entries})
@@ -406,12 +408,14 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             if request.path.startswith("/halogen/handles"):
                 self.received.append((request.path, request.method))
                 return web.json_response({"handles": ["session-a"]}, headers={"X-Halogen-From": "used"})
-            payload = await request.json()
+            raw = await request.read()
+            self.raw_bodies.append(raw)
+            payload = json.loads(raw)
             self.received.append((request.path, payload))
             self.headers.append(dict(request.headers))
             if self.response_override is not None:
                 body, content_type = self.response_override
-                return web.Response(body=body, content_type=content_type)
+                return web.Response(body=body, content_type=content_type, status=self.response_status)
             if request.path == "/v1/audio/speech" and payload.get("voice"):
                 response = web.StreamResponse(headers={"Content-Type": "audio/pcm", "X-Speech-Test": "preserved"})
                 await response.prepare(request)
@@ -729,6 +733,69 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.received, [])
         self.manager.perform_switch.assert_not_awaited()
 
+    async def test_messages_tool_changes_and_kept_state_headers_pass_through(self):
+        payload = {'model': 'claude-sonnet-4-5', 'max_tokens': 100, 'stream': True,
+                   'messages': [
+                       {'role': 'user', 'content': 'Check the connector'},
+                       {'role': 'system', 'content': [
+                           {'type': 'tool_addition', 'tool': {'definition': {
+                               'name': 'late_tool', 'description': 'A late MCP tool',
+                               'input_schema': {'type': 'object', 'properties': {}}}}},
+                           {'type': 'tool_removal', 'name': 'old_tool'}]},
+                       {'role': 'user', 'content': 'Use late_tool'}]}
+        raw = json.dumps(payload, indent=2).encode()
+        response = await self.client.post('/v1/messages', data=raw, headers={
+            'Content-Type': 'application/json', 'anthropic-version': '2023-06-01',
+            'X-Halogen-From': 'same-state', 'X-Halogen-Keep': 'same-state'})
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual(self.raw_bodies[-1], raw)
+        self.assertEqual(self.headers[-1]['X-Halogen-From'], 'same-state')
+        self.assertEqual(self.headers[-1]['X-Halogen-Keep'], 'same-state')
+        self.assertEqual(self.manager.current_model, 'halogen-swift15')
+
+    async def test_large_anyof_and_native_reasoning_metadata_are_not_rewritten(self):
+        schema = {'anyOf': [{'type': 'object', 'properties': {'tool': {'const': f'tool_{i}'},
+                    'arguments': {'type': 'object'}}, 'required': ['tool', 'arguments']} for i in range(32)]}
+        payload = {'model': 'halogen-swift15', 'messages': [{'role': 'user', 'content': 'Select a tool'}],
+                   'response_format': {'type': 'json_schema', 'json_schema': {'name': 'tools', 'schema': schema}}}
+        body = json.dumps({'choices': [], 'usage': {'prompt_tokens': 7, 'completion_tokens': 4,
+            'completion_tokens_details': {'reasoning_closed_by': 'end_of_turn_in_reasoning'}}}).encode()
+        self.response_override = body, 'application/json'
+        response = await self.client.post('/v1/chat/completions', json=payload)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(await response.read(), body)
+        self.assertEqual(self.received[-1][1], payload)
+
+    async def test_tool_choice_none_preserves_prior_calls_on_all_apis(self):
+        cases = {
+            '/v1/chat/completions': {'messages': [
+                {'role': 'assistant', 'content': None, 'tool_calls': [
+                    {'id': 'c1', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}]},
+                {'role': 'tool', 'tool_call_id': 'c1', 'content': 'Done'}]},
+            '/v1/messages': {'messages': [
+                {'role': 'assistant', 'content': [{'type': 'tool_use', 'id': 'c1', 'name': 'lookup', 'input': {}}]},
+                {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'c1', 'content': 'Done'}]}]},
+            '/v1/responses': {'input': [
+                {'type': 'function_call', 'call_id': 'c1', 'name': 'lookup', 'arguments': '{}'},
+                {'type': 'function_call_output', 'call_id': 'c1', 'output': 'Done'}]},
+        }
+        for route, history in cases.items():
+            payload = {'model': 'halogen-swift15', 'max_tokens': 10, 'tool_choice': 'none', **history}
+            raw = json.dumps(payload, indent=2).encode()
+            response = await self.client.post(route, data=raw, headers={'Content-Type': 'application/json'})
+            self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(self.raw_bodies[-1], raw)
+
+    async def test_messages_native_unloaded_model_404_is_preserved(self):
+        body = b'{"error":{"type":"model_not_found","message":"Model is not loaded"}}'
+        self.response_override, self.response_status = (body, 'application/json'), 404
+        response = await self.client.post('/v1/messages', json={'model': 'LFM3-1.7B', 'max_tokens': 5,
+            'messages': [{'role': 'user', 'content': 'Hello'}]})
+        self.assertEqual(response.status, 404)
+        self.assertEqual(await response.read(), body)
+        self.assertEqual(self.received[-1][1]['model'], 'LFM3-1.7B')
+        self.assertEqual(self.manager.current_model, 'halogen-swift15')
+
     async def test_messages_stream_and_count_tokens_preserve_anthropic_shapes(self):
         payload = {"model": "halogen-swift15", "messages": [{"role": "user", "content": "hello"}],
                    "max_tokens": 32, "stream": True}
@@ -952,6 +1019,27 @@ class EngineUpdateTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("HALOGEN_DOWNLOAD",profile.env)
         self.assertFalse(self.fixture.manager.maintenance)
 
+    async def test_watch_upgrade_uses_target_dependencies_and_keeps_old_catalog(self):
+        self.updater.job = {'phase': 'preparing_npu'}
+        configurations = {}
+        for path in self.originals:
+            profile = parse_quadlet(path.read_text())
+            profile.image = IMAGE.rsplit(':', 1)[0] + ':0.20.4'
+            profile.env.pop('HALOGEN_NPU_MODELS', None)
+            profile.env['HALOGEN_AGENT_GUARD'] = 'watch'
+            content = render_quadlet(profile).encode()
+            path.write_bytes(content)
+            configurations[profile.model_id] = {'content': content}
+        writes = await self.updater._prepare_npu_update(configurations, IMAGE.rsplit(':', 1)[0] + ':0.20.5')
+        self.assertIn('halogen-spotter-0.6b.hnpw', self.downloads)
+        self.assertNotIn('decider-4b.hnpw', self.downloads)
+        self.assertEqual(set(writes), set(self.originals))
+        self.assertTrue((self.assets.state_dir / 'npu-manifests/0.20.4.json').is_file())
+        for name, value in configurations.items():
+            self.assertEqual(self.updater._paths()[name].read_bytes(), value['content'])
+        self.assertFalse(self.fixture.manager.maintenance)
+        self.assertEqual({p: p.read_bytes() for p in self.old_files}, self.old_files)
+
     async def test_engine_update_prepares_new_npu_program_before_downtime(self):
         await self.fixture.execute()
         self.assertEqual(self.updater.job["phase"], "succeeded", self.updater.job)
@@ -1138,6 +1226,29 @@ class InstallTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.manager.maintenance)
         self.assertEqual(self.manager.start_service.await_count,2)
         self.assertEqual(json.loads(self.deploy.npu_journal.read_text())['phase'],'rolled_back')
+
+    async def test_modern_watch_installs_without_decider_and_explicit_decider_is_preserved(self):
+        from npu import profile_model_names
+        self.profile.image = IMAGE.rsplit(':', 1)[0] + ':0.20.5'
+        self.path.write_text(render_quadlet(self.profile))
+        self.manager.backend_health.return_value['version'] = {'api': '0.20.5', 'engine': '0.20.5'}
+        async def entries():
+            return [{'id': self.profile.model_id}] + [
+                {'id': x} for x in profile_model_names(parse_quadlet(self.path.read_text()))]
+        self.manager.backend_model_entries.side_effect = entries
+        plan = await self.deploy.npu_plan('', guard='watch')
+        self.assertEqual(plan['models'], ['halogen-spotter-0.6b'])
+        await self.deploy.quick_npu({'models': '', 'guard': 'watch'})
+        await self.deploy._job_task
+        self.assertEqual(self.deploy.job['state'], 'done', self.deploy.job)
+        self.assertIn('halogen-spotter-0.6b.hnpw', self.downloads)
+        self.assertNotIn('decider-4b.hnpw', self.downloads)
+        self.downloads.clear()
+        await self.deploy.quick_npu({'models': 'decider-4b', 'guard': 'watch'})
+        await self.deploy._job_task
+        self.assertEqual(self.deploy.job['state'], 'done', self.deploy.job)
+        self.assertIn('decider-4b.hnpw', self.downloads)
+        self.assertEqual(parse_quadlet(self.path.read_text()).env['HALOGEN_NPU_MODELS'], 'decider-4b')
 
     async def test_guard_invalid_mode_and_old_engine_rejected_before_download(self):
         for guard in ('hold','invalid',{},True):
