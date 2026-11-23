@@ -21,7 +21,7 @@ import shutil
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from aiohttp import web
@@ -291,6 +291,11 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
             if system_mount_allowed(host_path, _container, _mode):
                 continue
             root = self._validate_host_path(host_path)
+            if root.is_file():
+                continue
+            from draft_heads import DRAFT_HEADS
+            if PurePosixPath(_container).name in {asset.name for asset in DRAFT_HEADS.values()}:
+                raise DeployError("Prepare the draft head with Quick Setup before installing directories")
             if _container == profile.env.get("HALOGEN_API_KEY_FILE"):
                 if not root.is_file():
                     raise DeployError("Create the backend API key file before installing directories")
@@ -829,6 +834,10 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
                 # New installs isolate checkpoints from the canonical shared tree.
                 profile.volumes[0] = (str(models_root / "official"), "/models", "Z")
                 bind_shared_assets(profile, locations)
+                from draft_heads import prepare_drafter
+                content = await prepare_drafter(render_quadlet(profile).encode(), self.assets, profile.image,
+                                                self._download_asset, self._append_job_line)
+                profile = parse_quadlet(content.decode())
                 payload = profile_to_dict(profile)
                 self.install_dirs(payload)
                 preview = self.dry_run(payload)
@@ -839,6 +848,9 @@ class DeployManager(SwiftInstallMixin, NpuInstallMixin):
                 from swift_install import shared_quadlet_content
                 content = target.read_text(encoding="utf-8")
                 shared = shared_quadlet_content(content, locations)
+                from draft_heads import prepare_drafter
+                shared = (await prepare_drafter(shared.encode(), self.assets, parse_quadlet(shared).image,
+                                               self._download_asset, self._append_job_line)).decode()
                 if content != shared:
                     self._backup_existing(target)
                     self._atomic_write(target, shared.encode())

@@ -39,7 +39,7 @@ NPU_MODELS = {
     "qwen3-tts-1.7b-customvoice": "speak",
 }
 CUSTOM_TASKS = {"decision", "embedding", "score", "classify", "classifier"}
-CUSTOM_PROGRAMS = {"ovisocr3": (0, 20, 0), "lfm3-1.7b": (0, 18, 21), "lfm3-1.7b-fast": (0, 18, 21), "d1-2b": (0, 18, 22),
+CUSTOM_PROGRAMS = {"ovisocr3": (0, 20, 0), "lfm3-1.7b-qad": (0, 20, 6), "lfm3-1.7b": (0, 18, 21), "lfm3-1.7b-fast": (0, 18, 21), "d1-2b": (0, 18, 22),
                    **{name + suffix: (0, 18, 23) for name in ("lfm3-vl-2b", "lfm3-audio-2b", "lfm3-omni-2b")
                       for suffix in ("", "-fast")}}
 AGENT_GUARD_MODELS = ("halogen-spotter-0.6b", "decider-4b")
@@ -73,8 +73,8 @@ MODEL_MIN_VERSION = {"halogen-spotter-0.6b": (0, 19, 0), "flux2-klein-4b": (0, 1
 # use separate bundles (SHA-256 51a5a669... / 97557b92..., tested in full).
 # Only explicitly verified versions share a bundle; later images are read locally.
 # The 0.18.12 and 0.18.13 bundles are distinct models.txt files from their GHCR images.
-BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0", "0.18.16": "0.18.14", "0.18.18": "0.18.14", "0.18.19": "0.18.14", "0.18.20": "0.18.14", "0.19.1": "0.19.0", "0.20.1": "0.20.0", "0.20.4": "0.20.3"}
-BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13", "0.18.14", "0.18.21", "0.18.22", "0.18.23", "0.19.0", "0.20.0", "0.20.2", "0.20.3", "0.20.5"} | set(BUNDLED_CATALOG_ALIASES)
+BUNDLED_CATALOG_ALIASES = {"0.18.1": "0.18.0", "0.18.16": "0.18.14", "0.18.18": "0.18.14", "0.18.19": "0.18.14", "0.18.20": "0.18.14", "0.19.1": "0.19.0", "0.20.1": "0.20.0", "0.20.4": "0.20.3", "0.20.6": "0.20.7"}
+BUNDLED_VERSIONS = {"0.16.2", "0.17.2", "0.17.3", "0.17.4", "0.17.5", "0.18.0", "0.18.2", "0.18.11", "0.18.12", "0.18.13", "0.18.14", "0.18.21", "0.18.22", "0.18.23", "0.19.0", "0.20.0", "0.20.2", "0.20.3", "0.20.5", "0.20.7"} | set(BUNDLED_CATALOG_ALIASES)
 TASK_ROUTES = {
     "decision": "/v1/chat/completions", "generate": "/v1/chat/completions",
     "embedding": "/v1/embeddings", "score": "/v1/rerank",
@@ -89,15 +89,25 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 PATH_RE = re.compile(r"^/models/[A-Za-z0-9_./-]+$")
 REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 XRT_LIBS = ("libxrt_coreutil.so.2", "libxrt_core.so.2", "libxrt_driver_xdna.so.2")
-DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/docs/NPU.md"
+DOC_URL = "https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.7/docs/NPU.md"
 
 
 def custom_model_path(value: str) -> str:
-    return value.removesuffix(":fast")
+    return value.rsplit(":", 1)[0] if value.endswith((":fast", ":qad")) else value
 
 
 def model_name(value: str) -> str:
-    return PurePosixPath(custom_model_path(value)).name + ("-fast" if value.endswith(":fast") else "")
+    suffix = "-" + value.rsplit(":", 1)[1] if value.endswith((":fast", ":qad")) else ""
+    return PurePosixPath(custom_model_path(value)).name + suffix
+
+
+def custom_files_ready(source, model):
+    if source is None or not all((source / f).is_file() for f in ("config.json", "tokenizer.json")):
+        return False
+    if model.endswith(":qad"):
+        return (source / "LFM3-1.7B-QAD-Q4_0.gguf").is_file()
+    return (source / "model.safetensors").is_file() or (
+        not model.endswith(":fast") and (source / "LFM3-1.7B-QAD-Q4_0.gguf").is_file())
 
 
 def custom_base_supported(model, info):
@@ -298,28 +308,33 @@ async def check_runtime(run, image, mounts, custom_mounts=(), *, custom_models=(
         raise AssetError("The NPU engine cannot load with this host's XRT libraries")
     bases, detected = [], {}
     for host, target, mode in custom_mounts:
-        output = await run("podman", "run", "--rm", "--network=none", "--entrypoint",
-                           "/usr/local/bin/halogen-npu",
-                           *(arg for h, t, m in (*mounts, (host, target, mode))
-                             for arg in ("--volume", f"{h}:{t}:{m}")), image, "probe", target, timeout=120)
-        info = dict(part.split("=", 1) for part in output.split() if "=" in part)
-        base = info.get("base")
-        if (base not in NPU_MODELS and base not in CUSTOM_PROGRAMS
-                or not custom_base_supported(base, {"task": info.get("task")})):
-            raise AssetError(f"Unsupported NPU fine-tune: {target}")
-        from semver import version_tuple
-        if base in CUSTOM_PROGRAMS and (version_tuple(image.rsplit(":", 1)[-1]) or (0, 0, 0)) < CUSTOM_PROGRAMS[base]:
-            raise AssetError(f"{base} requires a newer engine")
-        if base == "d1-2b" and not (Path(host) / "calibration.json").is_file():
-            raise AssetError(f"{target} needs calibration.json")
-        bases.append(base)
-        detected[target] = base
+        forms = list(dict.fromkeys("qad" if model.endswith(":qad") else "" for model in custom_models
+                                  if custom_model_path(model) == target)) or [""]
+        for form in forms:
+            output = await run("podman", "run", "--rm", "--network=none", "--entrypoint",
+                               "/usr/local/bin/halogen-npu",
+                               *(arg for h, t, m in (*mounts, (host, target, mode))
+                                 for arg in ("--volume", f"{h}:{t}:{m}")), image, "probe", target,
+                               *(["--form", "qad"] if form else []), timeout=120)
+            info = dict(part.split("=", 1) for part in output.split() if "=" in part)
+            base = info.get("base")
+            if (base not in NPU_MODELS and base not in CUSTOM_PROGRAMS
+                    or not custom_base_supported(base, {"task": info.get("task")})
+                    or form == "qad" and base != "lfm3-1.7b-qad"):
+                raise AssetError(f"Unsupported NPU fine-tune: {target}")
+            from semver import version_tuple
+            if base in CUSTOM_PROGRAMS and (version_tuple(image.rsplit(":", 1)[-1]) or (0, 0, 0)) < CUSTOM_PROGRAMS[base]:
+                raise AssetError(f"{base} requires a newer engine")
+            if base == "d1-2b" and not (Path(host) / "calibration.json").is_file():
+                raise AssetError(f"{target} needs calibration.json")
+            bases.append(base)
+            detected[target, form] = base
     if custom_models:
         bases = []
         for model in custom_models:
             if not model.startswith("/"):
                 continue
-            base = detected[custom_model_path(model)]
+            base = detected[custom_model_path(model), "qad" if model.endswith(":qad") else ""]
             if model.endswith(":fast"):
                 if base + "-fast" not in CUSTOM_PROGRAMS:
                     raise AssetError(":fast is supported only for LFM3 checkpoints")
@@ -622,8 +637,7 @@ class NpuAssets:
         for model in models:
             if model.startswith("/"):
                 source = host_path(profile, custom_model_path(model))
-                if source is None or not all((source / name).is_file() for name in
-                                             ("config.json", "model.safetensors", "tokenizer.json")):
+                if not custom_files_ready(source, model):
                     raise AssetError(f"NPU fine-tune missing or incomplete: {model}; repair with NPU Setup")
         if any(m.startswith("/") for m in models) and not bases:
             raise AssetError("NPU fine-tune device programs missing; repair with NPU Setup")

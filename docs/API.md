@@ -1,6 +1,6 @@
 # Halogen endpoints through Halobridge
 
-Halobridge 0.1.46 supports Halogen 0.20.5. Install the Halobridge update, then
+Halobridge 0.1.47 supports Halogen 0.20.7. Install the Halobridge update, then
 update the backend profiles in **System → Engine updates**. For NPU endpoints,
 complete the host setup and select the required models in **Models → NPU models
 alongside your GPU model**. NPU requests keep the active GPU model loaded.
@@ -35,7 +35,7 @@ A request for another installed GPU profile switches the GPU backend.
 | `GET /cache` | Running backend | Inspect prompt-cache hits, dropped/replaced entries, evictions and pool usage. |
 
 The first five NPU models run on 0.16.2. System One needs 0.16.3+, Flux needs
-0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.20.5 for all features. Enable a model
+0.17.0+, the decision/embedding/reranker 4B variants need 0.17.4+, ASR needs 0.18.0+, and TTS needs 0.18.14+. Use 0.20.7 for all features. Enable a model
 on every profile where it should remain available after a GPU model switch.
 
 ## Test in the dashboard
@@ -67,6 +67,7 @@ downloads can still be prepared before host setup.
 |---|---|---|
 | `/models/LFM3-1.7B` | `LFM3-1.7B` | Chat, streaming and tool calls on `/v1/chat/completions` |
 | `/models/LFM3-1.7B:fast` | `LFM3-1.7B-fast` | Faster 5-bit format of the same checkpoint, with a quality tradeoff |
+| `/models/LFM3-1.7B:qad` | `LFM3-1.7B-qad` | Liquid's own QAD 4-bit GGUF weights; Halogen 0.20.6+ |
 | `/models/LFM3-1.7B-Base` | `LFM3-1.7B-Base` | Raw text on `/v1/completions` |
 | `/models/d1-2B` | `d1-2B` | Text/image/video decisions and boxes on `/v1/systemone` |
 
@@ -267,6 +268,63 @@ The existing APIs gain these engine fixes without client-side setup:
 See the [0.20.5 changelog](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/CHANGELOG.md)
 and [profile flags](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.5/docs/FLAGS.md).
 
+### Halogen 0.20.6–0.20.7
+
+No new API endpoints or Flash checkpoints are required. 0.20.6 fixes shared
+long prompts being prefetched repeatedly around 32k boundaries and incorrect
+context reuse under memory pressure in concurrent agent sessions. 0.20.7 makes
+concurrency mode the default, improves single-request decode, and includes the
+0.20.6 vision-encoder improvements. Requests and native timing metadata retain
+their existing wire formats.
+
+**Profile controls:** `HALOGEN_CONC_MODE` is empty by default. On 0.20.7 it
+automatically selects concurrency mode when supported; GGUF, w4b and MTP-off
+use the previous mode. `0` selects the previous mode explicitly; `1` requires a
+current HGN checkpoint and MTP. The editor rejects these known incompatible
+combinations before applying them. Changing the mode can change greedy wording.
+Slot count and context are never increased automatically. `HALOGEN_PROMPT_CACHE`
+defaults to 2 (resume anywhere); 1 caches at prefill-chunk boundaries so resumed
+and cold answers agree, at a reuse/speed tradeoff. `HALOGEN_CK_OVERLAY=none`
+retains the head inside a v2/HT43 checkpoint; a custom path remains untouched.
+
+**Official draft heads:** engine updates and checkpoint selection prepare only
+the required head before draining requests, and Quick Setup does the same. Target 0.20.6 uses
+`qwen38-flash-next-drafter-r2.hgn`; 0.20.7 uses
+`qwen38-flash-next-drafter-r2-ht4.hgn` (1,488,276,864 bytes). Both are pinned to
+`peonist-ai/halogen-qwen3.8-flash-next@05ec74b75cd68c4d6486d15825f2fc73b2ffe304`;
+the latter's SHA-256 is `f9aa330800cc921fe20f4cf997d660f519c67b0052af0c8078b6b648972b07e6`.
+The checked file is stored under `models_root/shared/halogen-drafter/<revision>/`
+and file-mounted beside the checkpoint with `ro,z`. Existing valid copies are
+reused. No full GPU checkpoint or unrelated shared asset is fetched by this step.
+Preparation failures leave the active backend serving. Activation rollback
+restores the prior Quadlet and retains downloads for retry. Missing/corrupt
+managed heads fail startup validation without downloading. Explicit overrides,
+disabled MTP, and third-party checkpoint heads are preserved.
+
+**LFM3 QAD:** put Liquid's `LFM3-1.7B-QAD-Q4_0.gguf` in the LFM3-1.7B folder,
+then select `/models/LFM3-1.7B:qad` in **Models → NPU setup → Own checkpoints**.
+Keep `config.json`, `tokenizer.json` and `generation_config.json` from the model.
+`model.safetensors` is not needed for QAD-only use. Normal, `:fast` and `:qad`
+can share one directory; Setup probes QAD with the engine's `--form qad` and
+prepares only its pinned programs. Read-only mounts reconvert at each start.
+QAD uses the Liquid GGUF weights, so it does not retain another fine-tune's
+weights. A GGUF-only folder selected without `:qad` serves its directory name;
+the explicit suffix serves `<directory>-qad`.
+
+Use **API Playground → LFM3 chat** with the exact served ID, or:
+
+```bash
+curl --fail-with-body -sS http://localhost:8731/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"LFM3-1.7B-qad","messages":[{"role":"user","content":"Explain prompt caching in two sentences."}],"max_tokens":128}'
+```
+
+The 0.20.6 and 0.20.7 NPU catalogs are byte-identical
+(`eb434269616c65d6fc79d94c4f9ad8976e90cbff08f6a77c29e0a9229c5bc597`).
+Previous NPU weights/programs are unchanged; only QAD programs are added.
+See [upstream release notes](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.7/CHANGELOG.md)
+and [LFM3 setup](https://github.com/peonist-ai/halogen-flash-server/blob/v0.20.7/docs/NPU.md).
+
 ## Model metadata and benchmark discovery
 
 `GET /v1/models` preserves the active GPU backend's model metadata, including
@@ -352,7 +410,7 @@ request history stores duration, status, model and response size, not the image.
 
 ## Speech: turn a WAV recording into text
 
-Update the target GPU profiles to 0.20.5 and select **one** ASR model in
+Update the target GPU profiles to 0.20.7 and select **one** ASR model in
 NPU Setup: `qwen3-asr-0.6b` (about 1.6 GB host RAM) or `qwen3-asr-1.7b`
 (about 4 GB, more accurate). Halobridge prepares the model, tokenizer, device
 programs and audio encoder together; they are shared across profiles.
@@ -770,7 +828,7 @@ GPU checkpoints remain unchanged from 0.16.2 through 0.18.22. Prompt-cache fixes
 
 ### Tool compatibility and vision discovery (0.18.18)
 
-Update profiles directly to 0.20.5 in **System → Engine updates**. The
+Update profiles directly to 0.20.7 in **System → Engine updates**. The
 0.18.17/0.18.18 fixes use the existing endpoints: kept conversations remain
 isolated in a full KV pool, automatic keeps no longer wait on themselves, and
 short prompts stay responsive beside long ones despite metrics reads or paused

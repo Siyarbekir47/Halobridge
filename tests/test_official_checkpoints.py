@@ -97,7 +97,7 @@ class OfficialCheckpointTests(unittest.IsolatedAsyncioTestCase):
         deploy = DeployManager(self.manager, make_config(self.root))
         for kind in ("official", "official-quick", "uncensored", "uncensored-quick"):
             template = deploy.template(kind)["profile"]
-            self.assertTrue(template["image"].endswith(":0.20.5"))
+            self.assertTrue(template["image"].endswith(":0.20.7"))
         self.assertEqual(deploy.template("official")["profile"]["env"]["HALOGEN_CHECKPOINT"], CHECKPOINT_V2_PATH)
 
     async def test_download_verify_shared_activate_and_switch_back(self):
@@ -134,6 +134,24 @@ class OfficialCheckpointTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(web.HTTPConflict):
             await self.updater.start_checkpoint("ht43")
         self.assertEqual(self.downloads, [])
+
+    async def test_modern_selector_prepares_shared_draft_head_before_downtime(self):
+        import draft_heads
+        self.VERSION='0.20.7'
+        self.updater.current_version=self.VERSION
+        for path in self.updater._paths().values():
+            path.write_bytes(path.read_bytes().replace(b':0.16.0',b':0.20.7'))
+        data=b'HGN1checked draft'
+        head=replace(draft_heads.DRAFT_HEADS[(0,20,7)],size=len(data),digest=hashlib.sha256(data).hexdigest())
+        self.bytes[head.name]=data
+        with patch.dict(draft_heads.DRAFT_HEADS,{(0,20,7):head}):
+            job=await self.select('ht43')
+        self.assertEqual(job['phase'],'succeeded',job)
+        self.assertIn(head.name,self.downloads)
+        profile=parse_quadlet(self.path.read_text())
+        self.assertEqual(profile.env['HALOGEN_CHECKPOINT'],'/models/qwen38-flash-next-ht43.hgn')
+        self.assertIn((str(self.assets.shared_path(head)),'/models/'+head.name,'ro,z'),profile.volumes)
+        self.assertEqual(self.assets.shared_path(head).read_bytes(),data)
 
     async def test_configured_old_engine_also_blocks_ht43(self):
         self.path.write_bytes(self.path.read_bytes().replace(b":0.16.0", b":0.15.3"))

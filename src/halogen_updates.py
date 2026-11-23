@@ -734,6 +734,19 @@ class ContainerUpdater:
                 )
                 if self.manager.current_model != model:
                     raise UpdateError("Active model changed during checkpoint preparation.")
+            prepared_content = quadlet_checkpoint_upgrade(
+                configurations[model]["content"], info["target"],
+                download_repo=OFFICIAL_WEIGHTS_REPO if info["needs_download"] and not locations else None,
+                writable_models=info["needs_download"] and not locations,
+            )
+            if locations:
+                from swift_install import shared_quadlet_content
+                prepared_content = shared_quadlet_content(prepared_content.decode("utf-8"), locations).encode("utf-8")
+                prepared_content = self._without_checkpoint_download(prepared_content)
+            from draft_heads import prepare_drafter
+            prepared_content = await prepare_drafter(prepared_content, self.checkpoint_assets,
+                                                    configurations[model]["image"], self._download_checkpoint_asset,
+                                                    lambda line: self._save_job(message=line))
             self._save_job(phase="draining", message="Waiting for model switches and active requests.")
             await asyncio.wait_for(self.manager.begin_maintenance(), self.drain_timeout)
             maintenance = True
@@ -761,17 +774,7 @@ class ContainerUpdater:
             for name, path in paths.items():
                 if path.is_symlink() or path.read_bytes() != configurations[name]["content"]:
                     raise UpdateError("Quadlet was changed externally during the upgrade.")
-                content = quadlet_checkpoint_upgrade(
-                    configurations[name]["content"],
-                    info["target"],
-                    download_repo=OFFICIAL_WEIGHTS_REPO if info["needs_download"] and not locations else None,
-                    writable_models=info["needs_download"] and not locations,
-                )
-                if locations:
-                    from swift_install import shared_quadlet_content
-                    content = shared_quadlet_content(content.decode("utf-8"), locations).encode("utf-8")
-                    content = self._without_checkpoint_download(content)
-                atomic_write(path, content, modes[name])
+                atomic_write(path, prepared_content, modes[name])
             await self._run("systemctl", "--user", "daemon-reload")
             self._save_job(
                 phase="restarting",
@@ -887,7 +890,7 @@ class ContainerUpdater:
         await self._run("systemctl", "--user", "start", self.models[model], timeout=start_timeout)
 
     async def _prepare_npu_update(self, configurations, image):
-        from npu import check_runtime, custom_model_path, host_status, profile_models, patch_quadlet, runtime_mounts
+        from npu import check_runtime, custom_model_path, custom_files_ready, host_status, profile_models, patch_quadlet, runtime_mounts
         from shared_assets import host_path
         enabled = [parse_quadlet(value["content"].decode("utf-8"), self._paths()[name])
                    for name, value in configurations.items() if b"HALOGEN_NPU_MODELS=" in value["content"]
@@ -919,8 +922,7 @@ class ContainerUpdater:
                 if model.startswith("/"):
                     target = custom_model_path(model)
                     source = host_path(profile, target)
-                    if source is None or not all((source / name).is_file() for name in
-                                                 ("config.json", "model.safetensors", "tokenizer.json")):
+                    if not custom_files_ready(source, model):
                         raise UpdateError(f"Incomplete NPU fine-tune: {model}")
                     mount = (str(source), target, "ro")
                     if mount not in custom:
@@ -943,6 +945,15 @@ class ContainerUpdater:
             image_id = await self._inspect_image(image)
             prepared_configurations = self._configuration()
             npu_writes = await self._prepare_npu_update(prepared_configurations, image)
+            from draft_heads import prepare_drafter
+            for name, value in prepared_configurations.items():
+                path = self._paths()[name]
+                content = npu_writes.get(path, value["content"])
+                prepared = await prepare_drafter(content, self.checkpoint_assets, image,
+                                                self._download_checkpoint_asset,
+                                                lambda line: self._save_job(message=line))
+                if prepared != content:
+                    npu_writes[path] = prepared
             self._save_job(phase="draining", message="Waiting for model switches and active requests.")
             await asyncio.wait_for(self.manager.begin_maintenance(), self.drain_timeout)
             maintenance = True

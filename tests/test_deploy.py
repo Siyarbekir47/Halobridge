@@ -515,6 +515,9 @@ class QuickDeployTests(PosixTestCase):
         self.tmp = Path(self._dir.name)
         self.deploy = make_manager(self.tmp)
         locations = self.deploy.assets.locations()
+        from draft_heads import DRAFT_HEADS
+        for asset in DRAFT_HEADS.values():
+            locations[asset.name] = str(self.deploy.assets.shared_path(asset))
         for value in locations.values():
             path = Path(value)
             path.parent.mkdir(parents=True, exist_ok=True)
