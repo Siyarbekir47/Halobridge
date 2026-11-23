@@ -919,6 +919,9 @@ const NPU_ENV_FIELDS = [
   ['HALOGEN_GUARD_FINAL_S', 'number', 'deploy_f_guard_final'],
 ];
 const ENGINE_ENV_FIELDS = [
+  ['HALOGEN_CONC_MODE', 'select:0,1', 'deploy_f_conc_mode'],
+  ['HALOGEN_PROMPT_CACHE', 'select:0,1,2', 'deploy_f_prompt_cache'],
+  ['HALOGEN_CK_OVERLAY', 'text', 'deploy_f_ck_overlay'],
   ['HALOGEN_DN_STATE', 'select:fp32', 'deploy_f_dn_state'],
   ['HALOGEN_TOKENIZER_NATIVE', 'select:0,1', 'deploy_f_tokenizer_native'],
   ['HALOGEN_SERVE_TRACE', 'select:0,1', 'deploy_f_serve_trace'],

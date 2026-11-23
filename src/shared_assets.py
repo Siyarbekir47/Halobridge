@@ -135,6 +135,15 @@ class SharedAssets:
 
     def candidates(self, asset) -> list[Path]:
         paths = [self.shared_path(asset), self.staging_root(asset) / asset.name]
+        from draft_heads import DRAFT_HEADS
+        if asset in DRAFT_HEADS.values():
+            for profile in self.profiles():
+                if profile.profile_id == "official":
+                    target = PurePosixPath(profile.env.get("HALOGEN_CHECKPOINT", "/models/qwen38-flash-next-v2.hgn"))
+                    path = host_path(profile, str(target.parent / asset.name))
+                    if path and path not in paths:
+                        paths.append(path)
+            return paths
         for profile in self.profiles():
             # Identical tokenizer bytes may be imported; different sidecar
             # weights are never candidates, even when filenames/sizes match.
@@ -204,7 +213,11 @@ class SharedAssets:
         atomic_json(self.cache_path, self.cache)
         return True
 
-    def entries(self, variant=None, *, checkpoint=None, checkpoint_root=None):
+    def entries(self, variant=None, *, checkpoint=None, checkpoint_root=None, files=None):
+        if files is not None:
+            for asset in files:
+                yield asset, self.shared_path(asset), self.candidates(asset)
+            return
         if checkpoint is not None:
             dest = checkpoint_root / checkpoint.name
             yield checkpoint, dest, [dest, self.staging_root(checkpoint, checkpoint_root=checkpoint_root) / checkpoint.name]
@@ -256,11 +269,11 @@ class SharedAssets:
         if free < size + SPACE_RESERVE:
             raise AssetError(f"Insufficient disk space at {dest}: need {size + SPACE_RESERVE} bytes, have {free}")
 
-    async def prepare(self, variant, download, log, *, checkpoint=None, checkpoint_root=None):
+    async def prepare(self, variant, download, log, *, checkpoint=None, checkpoint_root=None, files=None):
         """download(asset, staging_root) resumes exact pinned files. No backend work."""
         async with self.lock:
             prepared, requirements = [], []
-            for asset, dest, candidates in self.entries(variant, checkpoint=checkpoint, checkpoint_root=checkpoint_root):
+            for asset, dest, candidates in self.entries(variant, checkpoint=checkpoint, checkpoint_root=checkpoint_root, files=files):
                 if self.validate_path:
                     self.validate_path(str(dest))
                 source = None
@@ -333,6 +346,8 @@ class SharedAssets:
                 self.cache[str(dest.resolve())] = {"fingerprint": self.fingerprint(dest),
                                                     "digest": asset.digest, "algorithm": asset.algorithm}
                 atomic_json(self.cache_path, self.cache)
+            if files is not None:
+                return {asset.name: str(self.shared_path(asset)) for asset in files}
             return self.locations(variant) if variant else self.locations()
 
     async def promote_verified(self, source, dest):
@@ -360,6 +375,12 @@ class SharedAssets:
         """Managed shared bindings are offline: fail before stopping a backend."""
         variant = model_id.removeprefix("halogen-")
         profile = next((p for p in self.profiles() if p.model_id == model_id), None)
+        if profile:
+            from draft_heads import DRAFT_HEADS
+            for host, target, _mode in profile.volumes:
+                asset = next((a for a in DRAFT_HEADS.values() if PurePosixPath(target).name == a.name), None)
+                if asset and not await self.verify(Path(host), asset):
+                    raise AssetError("Missing or invalid managed draft head; repair with Quick Setup or Engine updates (no startup download)")
         swift = variant in SWIFT_VARIANTS
         if not swift and (not profile or not profile.env.get("HALOGEN_NGRAM_TABLE", "").startswith("/shared/")):
             return

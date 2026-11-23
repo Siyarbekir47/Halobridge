@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.47
+
+- Support Halogen 0.20.7 and default concurrency mode.
+- Prepare verified official draft heads in shared storage before activation.
+- Support LFM3 QAD checkpoints and matching NPU programs.
+- Expose concurrency, prompt-cache and draft-head controls.
+
 ## 0.1.46
 
 - Support Halogen 0.20.5 and refreshed LFM3/d3 NPU programs.

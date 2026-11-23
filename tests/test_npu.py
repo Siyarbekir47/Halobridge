@@ -606,10 +606,11 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.active_requests, 0)
 
     async def test_liquid_models_discover_and_route_without_gpu_switch_or_body_rewrite(self):
-        self.manager.npu_names = lambda _: {"d1-2B", "LFM3-1.7B", "LFM3-1.7B-fast"}
+        self.manager.npu_names = lambda _: {"d1-2B", "LFM3-1.7B", "LFM3-1.7B-fast", "LFM3-1.7B-qad"}
         self.backend_entries = [{"id":"halogen-swift15"}, {"id":"d1-2B", "task":"sets"},
                                 {"id":"LFM3-1.7B", "task":"generate"},
-                                {"id":"LFM3-1.7B-fast", "task":"generate"}]
+                                {"id":"LFM3-1.7B-fast", "task":"generate"},
+                                {"id":"LFM3-1.7B-qad", "task":"generate"}]
         for route, payload in (
             ('/v1/systemone', {'model':'d1-2B', 'state':None,
                 'media':[{'type':'video','frames':['data:image/png;base64,YQ==','data:image/png;base64,Yg=='],'fps':24}],
@@ -617,6 +618,7 @@ class ProxyTests(unittest.IsolatedAsyncioTestCase):
             ('/v1/chat/completions', {'model':'LFM3-1.7B-fast', 'messages':[{'role':'user','content':'Hello'}],
                 'tools':[{'type':'function','function':{'name':'weather','parameters':{'type':'object'}}}]}),
             ('/v1/completions', {'model':'LFM3-1.7B','prompt':'Once upon a time','max_tokens':128}),
+            ('/v1/chat/completions', {'model':'LFM3-1.7B-qad','messages':[{'role':'user','content':'Hello'}]}),
         ):
             response = await self.client.post(route, json=payload)
             self.assertEqual(response.status, 200, await response.text())
@@ -1256,6 +1258,24 @@ class InstallTests(unittest.IsolatedAsyncioTestCase):
                 await self.deploy.npu_plan('',guard=guard)
         self.assertEqual(self.downloads,[])
         self.assertEqual(self.path.read_bytes(),self.original)
+
+    async def test_qad_preview_accepts_gguf_only_and_selects_only_matching_programs(self):
+        self.use_real_catalog('0.20.7')
+        source=Path(next(h for h,t,m in self.profile.volumes if t=='/models'))/'Liquid'
+        source.mkdir(parents=True)
+        for name in ('config.json','tokenizer.json','LFM3-1.7B-QAD-Q4_0.gguf'):
+            (source/name).write_text('{}')
+        async def run(*args,**kwargs):
+            return 'task=generate base=lfm3-1.7b-qad' if 'probe' in args else 'usage: halogen-npu'
+        self.deploy._run=AsyncMock(side_effect=run)
+        plan=await self.deploy.npu_plan('/models/Liquid:qad')
+        self.assertEqual(plan['models'],['/models/Liquid:qad'])
+        self.assertEqual(len(plan['plans'][0]['files']),11)
+        self.assertTrue(all(f['name'].startswith('lfm3-1.7b-qad/') for f in plan['plans'][0]['files']))
+        self.assertIn('--form', str(self.deploy._run.await_args_list))
+        self.assertEqual(self.path.read_bytes(),self.original)
+        self.assertEqual(self.downloads,[])
+        self.manager.start_service.assert_not_awaited()
 
     async def test_ocr_preview_probes_image_xrt_and_only_prepares_ocr_programs(self):
         self.use_real_catalog('0.20.0')

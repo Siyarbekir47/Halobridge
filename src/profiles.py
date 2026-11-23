@@ -47,6 +47,8 @@ ENV_FIELDS: dict[str, FieldSpec] = {
     "HALOGEN_WEIGHTS_LOCK": FieldSpec("flag"),
     "HALOGEN_DN_STATE": FieldSpec("enum", choices=("fp32",)),
     "HALOGEN_TOKENIZER_NATIVE": FieldSpec("flag"),
+    "HALOGEN_CONC_MODE": FieldSpec("flag"),
+    "HALOGEN_PROMPT_CACHE": FieldSpec("enum", choices=("0", "1", "2")),
     "HALOGEN_TOKENIZER": FieldSpec("path"),
     "HALOGEN_VISION_TOWER": FieldSpec("text"),
     "HALOGEN_MTP_HEAD": FieldSpec("path"),
@@ -171,6 +173,7 @@ ENV_FIELDS: dict[str, FieldSpec] = {
 }
 
 FEATURE_MIN_VERSION = {
+    "HALOGEN_CONC_MODE": (0, 20, 6),
     **{key: (0, 20, 5) for key in ("HALOGEN_DN_STATE", "HALOGEN_TOKENIZER_NATIVE",
                                   "HALOGEN_NPU_KILL_S", "HALOGEN_SERVE_TRACE")},
     "HALOGEN_AGENT_GUARD": (0, 19, 0),
@@ -280,6 +283,10 @@ def validate_profile(profile: Profile) -> list[str]:
         errors.append("env HALOGEN_FORK_MAP: requires HALOGEN_FORK=1")
     if "auto" in maps and (version_tuple(profile.image.rsplit(":", 1)[-1]) or ()) < (0, 18, 3):
         errors.append("env HALOGEN_FORK_MAP=auto: requires Halogen 0.18.3 or newer")
+    if profile.env.get("HALOGEN_CONC_MODE") == "1":
+        checkpoint = PurePosixPath(profile.env.get("HALOGEN_CHECKPOINT", ""))
+        if profile.env.get("HALOGEN_MTP") == "0" or checkpoint.suffix == ".gguf" or checkpoint.name == "qwen38-flash-next-w4b.hgn":
+            errors.append("env HALOGEN_CONC_MODE=1: requires MTP and a current HGN checkpoint; leave unset for automatic fallback")
     pool = profile.env.get("HALOGEN_KV_POOL_POSITIONS", "")
     try:
         oversized_pool = int(pool) > 1_048_576
@@ -312,7 +319,7 @@ def validate_profile(profile: Profile) -> list[str]:
                 errors.append("env: NPU model IDs must differ from the backend model ID")
             version = version_tuple(profile.image.rsplit(":", 1)[-1])
             for model in models:
-                minimum = (0, 18, 21) if model.endswith(":fast") else MODEL_MIN_VERSION.get(model)
+                minimum = (0, 20, 6) if model.endswith(":qad") else (0, 18, 21) if model.endswith(":fast") else MODEL_MIN_VERSION.get(model)
                 if minimum and version and version < minimum:
                     errors.append(f"env: NPU model {model} requires Halogen {'.'.join(map(str, minimum))} or newer")
         except ValueError:
@@ -490,7 +497,7 @@ def profile_to_dict(profile: Profile) -> dict:
 
 
 OFFICIAL_IMAGE_REPO = "ghcr.io/peonist-ai/halogen-flash-server"
-DEFAULT_ENGINE_VERSION = "0.20.5"
+DEFAULT_ENGINE_VERSION = "0.20.7"
 OFFICIAL_WEIGHTS_REPO = "peonist-ai/halogen-qwen3.8-flash-next"
 UNCENSORED_HF_REPO = "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF"
 UNCENSORED_DEFAULT_GGUF_NAME = "Qwen3.8-Flash-Next-Uncensored-IQ4_XS-00001-of-00003.gguf"

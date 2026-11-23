@@ -9,7 +9,7 @@ import stat
 from pathlib import Path
 
 from npu import (DOC_URL, MODEL_MIN_VERSION, NPU_MODELS, TASK_ROUTES, check_runtime, host_setup, host_status,
-                 custom_model_path, model_name, profile_models, profile_model_names, patch_quadlet, runtime_mounts)
+                 custom_model_path, custom_files_ready, model_name, profile_models, profile_model_names, patch_quadlet, runtime_mounts)
 from profiles import DEFAULT_ENGINE_VERSION, OFFICIAL_IMAGE_REPO, parse_quadlet, validate_profile
 from semver import normalize_version, version_tuple
 from shared_assets import AssetError, atomic_json, host_path
@@ -70,7 +70,7 @@ class NpuInstallMixin:
             if version < (0, 16, 2):
                 raise AssetError("Update all selected profiles to Halogen 0.16.2 or newer before NPU Setup")
             for model in selected:
-                minimum = (0, 18, 21) if model.endswith(":fast") else MODEL_MIN_VERSION.get(model, (0, 16, 2))
+                minimum = (0, 20, 6) if model.endswith(":qad") else (0, 18, 21) if model.endswith(":fast") else MODEL_MIN_VERSION.get(model, (0, 16, 2))
                 if version < minimum:
                     raise AssetError(f"NPU model {model} requires Halogen {'.'.join(map(str, minimum))} or newer")
             manifest = await self.npu_assets.manifest(image, self._run)
@@ -141,8 +141,8 @@ class NpuInstallMixin:
             if source is None:
                 raise AssetError(f"Custom NPU model is not mounted: {model}")
             source = self._validate_host_path(str(source))
-            if not all((source / name).is_file() for name in ("config.json", "model.safetensors", "tokenizer.json")):
-                raise AssetError(f"Incomplete NPU fine-tune: {source}; need config.json, model.safetensors and tokenizer.json")
+            if not custom_files_ready(source, model):
+                raise AssetError(f"Incomplete NPU fine-tune: {source}; need config.json, tokenizer.json and model.safetensors (or LFM3-1.7B-QAD-Q4_0.gguf for :qad)")
             mount = (str(source), target, "ro,z")
             if mount not in mounts:
                 mounts.append(mount)

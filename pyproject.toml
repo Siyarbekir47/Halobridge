@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "halobridge"
-version = "0.1.46"
+version = "0.1.47"
 description = "Router and dashboard for halogen-flash-server"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,6 +41,7 @@ py-modules = [
   "halogen_dashboard",
   "halogen_updates",
   "official_checkpoints",
+  "draft_heads",
   "halobridge_updates",
   "halobridge_update_worker",
   "settings",

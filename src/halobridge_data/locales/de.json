@@ -74,7 +74,7 @@
   "pg_example_npu_lfm3": "LFM3 · Chat und Tools",
   "pg_example_npu_lfm3_base": "LFM3 Base · reiner Text",
   "pg_need_d1": "Benötigt Halogen ab 0.18.22 und einen eigenen aktivierten d1-2B-Checkpoint mit calibration.json. Verzeichnisname als Modell-ID eingeben. Bis zu 16 Fragen; Medien müssen in den Kontext mit 2.048 Tokens passen.",
-  "pg_need_lfm3": "Benötigt Halogen ab 0.18.21 und einen eigenen aktivierten LFM3-1.7B-Checkpoint. Verzeichnisname oder <Verzeichnis>-fast für :fast als Modell-ID eingeben. Base-Checkpoints verwenden Text-Completions. Der Checkpoint hat eine eigene LFM-Lizenz.",
+  "pg_need_lfm3": "Benötigt Halogen ab 0.18.21 und eigenen aktivierten LFM3-1.7B-Checkpoint. Verzeichnisname, <Verzeichnis>-fast oder <Verzeichnis>-qad (ab 0.20.6 mit Liquid-QAD-GGUF) eingeben. Base-Checkpoints nutzen Text-Completions. Die eigene LFM-Lizenz des Checkpoints gilt.",
   "pg_need_vision_structured": "Benötigt Halogen ab 0.18.20 und den Vision-Tower. Bildanfragen unterstützen JSON-Schemas und strikte Tools; kein zusätzliches Profil-Flag nötig.",
   "pg_d1_frames": "1–4 Bilder als aufeinanderfolgende Frames auswählen. Quellbildrate im Anfrage-JSON (fps) einstellen; das Beispiel beginnt bei 2 fps. Der Browser dekodiert keine Videodateien.",
   "pg_example_tools": "Chat · strikter Tool-Aufruf",
@@ -529,7 +529,7 @@
   "npu_select_models": "NPU-Aufgaben",
   "npu_profiles": "Backend-Profile",
   "npu_all_profiles": "Alle installierten Profile",
-  "npu_custom": "Eigene Checkpoints (/models-Verzeichnisse, mit Komma getrennt; optional :fast für LFM3)",
+  "npu_custom": "Eigene Checkpoints (kommagetrennte /models-Verzeichnisse; :fast oder :qad für LFM3)",
   "npu_shared_hint": "Dateien werden von den Profilen gemeinsam genutzt und vor dem Neustart vorbereitet. Die vorherige Version bleibt für die Wiederherstellung erhalten.",
   "npu_preview": "Downloadbedarf prüfen",
   "npu_apply": "Laden & aktivieren",
@@ -557,7 +557,7 @@
   "npu_task_classify": "Moderation mit Sicherheitsbewertung",
   "npu_task_generate": "Zusammenfassungen und kurze Antworten; ohne Thinking",
   "npu_disable_note": "NPU-Modelle deaktivieren; heruntergeladene Dateien bleiben erhalten",
-  "npu_custom_note": "Eigene Checkpoints werden vor Aktivierung geprüft und nur lesbar eingebunden; die Konvertierung läuft bei jedem Start. LFM3 VL/Audio/Omni benötigen ab 0.18.23; :fast nutzt <Verzeichnis>-fast. Vollständigen Modellordner bereitstellen, inklusive audio_tokenizer/ für Sprachausgabe. Nur passende Programme werden geladen. Halogen ab 0.19.1 enthält XRT; ältere Images brauchen Host-XRT ab 2.20. OvisOCR3 ab 0.20.0, ohne :fast.",
+  "npu_custom_note": "Eigene Checkpoints werden vor Aktivierung geprüft und lesbar eingebunden; Konvertierung bei jedem Start. LFM3 VL/Audio/Omni brauchen 0.18.23+; :fast liefert <Verzeichnis>-fast. LFM3-1.7B :qad braucht 0.20.6+ und Liquids LFM3-1.7B-QAD-Q4_0.gguf; Modell-ID: <Verzeichnis>-qad. Vollständigen Modellordner bereitstellen, für Sprachausgabe auch audio_tokenizer/. Nur passende Programme werden geladen. Ab 0.19.1 enthält Halogen XRT. OvisOCR3 braucht 0.20.0+, ohne :fast oder :qad.",
   "profile_npu": "NPU-Modelle",
   "deploy_f_npu_models": "NPU-Modellnamen oder /models-Verzeichnisse (mit Komma getrennt)",
   "deploy_f_npu_queue": "NPU-Warteschlange (Standard: 64)",
@@ -663,5 +663,8 @@
   "deploy_f_dn_state": "Genauigkeit gespeicherter Dialoge (ab 0.20.5; leer: Engine-Standard; fp32: bisheriges Verhalten)",
   "deploy_f_tokenizer_native": "Nativer Checkpoint-Tokenizer (ab 0.20.5; Standard: 1; 0: bisherige Tokenisierung)",
   "deploy_f_npu_kill": "Wiederherstellung blockierter NPU-Aufträge in Sekunden (ab 0.20.5; Standard: 1800; 0: aus)",
-  "deploy_f_serve_trace": "Ausführliche Serverdiagnose (ab 0.20.5; Standard: 0)"
+  "deploy_f_serve_trace": "Ausführliche Serverdiagnose (ab 0.20.5; Standard: 0)",
+  "deploy_f_conc_mode": "Concurrency-Modus (ab 0.20.6; leer: automatisch ab 0.20.7; 0: bisheriger Modus)",
+  "deploy_f_prompt_cache": "Prompt-Cache (2: beliebige Fortsetzung; 1: exakte Wiederverwendung an Chunk-Grenzen; 0: aus)",
+  "deploy_f_ck_overlay": "Draft-Head / alte Präzisionsdatei (leer: automatisch; none: keine Zusatzdatei)"
 }

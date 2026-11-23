@@ -74,7 +74,7 @@
   "pg_example_npu_lfm3": "LFM3 · chat and tools",
   "pg_example_npu_lfm3_base": "LFM3 Base · raw text",
   "pg_need_d1": "Requires Halogen 0.18.22+ and your own activated d1-2B checkpoint with calibration.json. Enter its directory name as model ID. Up to 16 questions; media must fit the 2,048-token context.",
-  "pg_need_lfm3": "Requires Halogen 0.18.21+ and your own activated LFM3-1.7B checkpoint. Enter its directory name, or <directory>-fast for :fast. Base checkpoints use raw text completions. The checkpoint has its own LFM license.",
+  "pg_need_lfm3": "Requires Halogen 0.18.21+ and your own activated LFM3-1.7B checkpoint. Enter its directory name, <directory>-fast, or <directory>-qad (0.20.6+ with Liquid QAD GGUF). Base checkpoints use raw text completions. The checkpoint has its own LFM license.",
   "pg_need_vision_structured": "Requires Halogen 0.18.20+ and the vision tower. Image requests support JSON schemas and strict tools; no extra profile flag is needed.",
   "pg_d1_frames": "Choose 1–4 image frames in sequence. Set their source frame rate in Request JSON (fps); this example starts at 2 fps. Video-file decoding is not performed in the browser.",
   "pg_example_tools": "Chat · strict tool call",
@@ -529,7 +529,7 @@
   "npu_select_models": "NPU tasks",
   "npu_profiles": "Backend profiles",
   "npu_all_profiles": "All installed profiles",
-  "npu_custom": "Own checkpoints (comma-separated /models directories; optional :fast for LFM3)",
+  "npu_custom": "Own checkpoints (comma-separated /models directories; :fast or :qad for LFM3)",
   "npu_shared_hint": "Files are shared across profiles and prepared before restarting. The previous version stays available for rollback.",
   "npu_preview": "Preview downloads",
   "npu_apply": "Download & activate",
@@ -557,7 +557,7 @@
   "npu_task_classify": "Moderation with safety labels",
   "npu_task_generate": "Text summaries and short answers; thinking off",
   "npu_disable_note": "Disable NPU models; downloaded files are retained",
-  "npu_custom_note": "Own checkpoints are probed before activation and mounted read-only, so conversion runs at each start. LFM3 VL/Audio/Omni need 0.18.23+; :fast serves <directory>-fast. Supply the whole model folder, including audio_tokenizer/ for speech output. Only matching programs are downloaded. Halogen 0.19.1+ includes XRT; older images require host XRT 2.20+. OvisOCR3 needs 0.20.0+, without :fast.",
+  "npu_custom_note": "Own checkpoints are probed before activation and mounted read-only, so conversion runs at each start. LFM3 VL/Audio/Omni need 0.18.23+; :fast serves <directory>-fast. LFM3-1.7B :qad needs 0.20.6+ and Liquid's LFM3-1.7B-QAD-Q4_0.gguf, serving <directory>-qad. Supply the whole model folder, including audio_tokenizer/ for speech output. Only matching programs are downloaded. Halogen 0.19.1+ includes XRT. OvisOCR3 needs 0.20.0+, without :fast or :qad.",
   "profile_npu": "NPU models",
   "deploy_f_npu_models": "NPU model names or /models directories (comma-separated)",
   "deploy_f_npu_queue": "NPU queue capacity (default: 64)",
@@ -663,5 +663,8 @@
   "deploy_f_dn_state": "Saved conversation precision (0.20.5+; empty: engine default; fp32: previous behavior)",
   "deploy_f_tokenizer_native": "Native checkpoint tokenizer (0.20.5+; default: 1; 0: legacy tokenization)",
   "deploy_f_npu_kill": "Stalled NPU job recovery in seconds (0.20.5+; default: 1800; 0: off)",
-  "deploy_f_serve_trace": "Detailed server diagnostics (0.20.5+; default: 0)"
+  "deploy_f_serve_trace": "Detailed server diagnostics (0.20.5+; default: 0)",
+  "deploy_f_conc_mode": "Concurrency mode (0.20.6+; empty: automatic on 0.20.7; 0: previous mode)",
+  "deploy_f_prompt_cache": "Prompt cache (2: resume anywhere; 1: exact chunk-boundary reuse; 0: off)",
+  "deploy_f_ck_overlay": "Draft head / legacy precision sidecar (empty: automatic; none: no sidecar)"
 }
